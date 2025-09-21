@@ -29,7 +29,9 @@ export class TerrainRenderer extends BaseRenderer {
   private sunLight!: THREE.DirectionalLight;
   private moonLight!: THREE.DirectionalLight;
   private ambientLight!: THREE.AmbientLight;
-  private timeOfDay = 0.15625; // 0-1, where 0.25 = noon, 0.75 = midnight, 0.15625 = 3:45 AM
+  private sunSphere!: THREE.Mesh;
+  private moonSphere!: THREE.Mesh;
+  private timeOfDay = 0.0; // 0-1, where 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm
   private dayNightCycleActive = false;
   private cycleSpeed = 0.0001; // Speed of day/night cycle
 
@@ -50,9 +52,10 @@ export class TerrainRenderer extends BaseRenderer {
     this.gridSize = gridSize;
     this.terrainSize = terrainSize;
 
-    // Setup scene
-    this.scene.background = new THREE.Color(0x87CEEB); // Sky blue
-    this.scene.fog = new THREE.Fog(0x87CEEB, 100, 500);
+    // Setup scene with better fog for distance falloff
+    const fogColor = 0xa0c8e0; // Slightly muted sky blue for better blending
+    this.scene.background = new THREE.Color(fogColor);
+    this.scene.fog = new THREE.Fog(fogColor, 50, 180); // Closer fog for smoother falloff
 
     // Setup camera - position opposite to main light for better illumination
     this.camera.position.set(-45, 35, -45);
@@ -166,17 +169,17 @@ export class TerrainRenderer extends BaseRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Better quality soft shadows
 
-    // Ambient light - will be adjusted based on time of day
-    this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.3);
+    // Ambient light - will be adjusted based on time of day (reduced for less overexposure)
+    this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.2);
     this.scene.add(this.ambientLight);
 
-    // Sun light - warm yellow/white
-    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.5);
+    // Sun light - warm yellow/white (reduced intensity to prevent overexposure)
+    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.0);
     this.sunLight.castShadow = true;
 
     // Configure sun shadow camera for better quality
-    this.sunLight.shadow.mapSize.width = 2048;
-    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.mapSize.width = 4096;
+    this.sunLight.shadow.mapSize.height = 4096;
     this.sunLight.shadow.camera.near = 10;
     this.sunLight.shadow.camera.far = 200;
     this.sunLight.shadow.camera.left = -60;
@@ -186,13 +189,13 @@ export class TerrainRenderer extends BaseRenderer {
     this.sunLight.shadow.bias = -0.0005;
     this.scene.add(this.sunLight);
 
-    // Moon light - cool blue/white
-    this.moonLight = new THREE.DirectionalLight(0xb0c4ff, 0.4);
+    // Moon light - deeper blue tint, dimmer
+    this.moonLight = new THREE.DirectionalLight(0x6080ff, 0.25);
     this.moonLight.castShadow = true;
 
     // Configure moon shadow camera (softer shadows)
-    this.moonLight.shadow.mapSize.width = 1024;
-    this.moonLight.shadow.mapSize.height = 1024;
+    this.moonLight.shadow.mapSize.width = 2048;
+    this.moonLight.shadow.mapSize.height = 2048;
     this.moonLight.shadow.camera.near = 10;
     this.moonLight.shadow.camera.far = 200;
     this.moonLight.shadow.camera.left = -60;
@@ -201,6 +204,22 @@ export class TerrainRenderer extends BaseRenderer {
     this.moonLight.shadow.camera.bottom = -60;
     this.moonLight.shadow.bias = -0.001;
     this.scene.add(this.moonLight);
+
+    // Create visible sun sphere
+    const sunGeometry = new THREE.SphereGeometry(5, 16, 16);
+    const sunMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffff99
+    });
+    this.sunSphere = new THREE.Mesh(sunGeometry, sunMaterial);
+    this.scene.add(this.sunSphere);
+
+    // Create visible moon sphere
+    const moonGeometry = new THREE.SphereGeometry(4, 16, 16);
+    const moonMaterial = new THREE.MeshBasicMaterial({
+      color: 0xddddff
+    });
+    this.moonSphere = new THREE.Mesh(moonGeometry, moonMaterial);
+    this.scene.add(this.moonSphere);
 
     // Initialize lighting positions
     this.updateDayNightCycle();
@@ -213,42 +232,75 @@ export class TerrainRenderer extends BaseRenderer {
     // Convert time to radians for circular motion
     const angle = this.timeOfDay * Math.PI * 2;
 
-    // Early autumn sun arc - tilted 30 degrees from vertical
-    const sunTilt = Math.PI / 6; // 30 degrees tilt
-    // Maximum elevation is 60 degrees (not 90)
+    // Sun arc configuration - more realistic path
+    const sunTilt = Math.PI / 6; // 30 degrees tilt for realistic seasonal arc
+    const arcRotation = 0; // No rotation for now, will be controllable
 
-    // Calculate sun position on tilted arc
-    const sunX = Math.sin(angle) * 50;
-    const sunY = Math.cos(angle) * Math.cos(sunTilt) * 50; // Height affected by tilt
-    const sunZ = Math.cos(angle) * Math.sin(sunTilt) * 50; // Depth affected by tilt
+    // Calculate sun position with better arc
+    const orbitRadius = 150; // Much further away to avoid camera occlusion
+    const verticalScale = 0.5; // Lower maximum height for better shadow angles
+    const baseX = Math.sin(angle) * orbitRadius;
+    const baseY = Math.cos(angle) * Math.cos(sunTilt) * orbitRadius * verticalScale;
+    const baseZ = Math.cos(angle) * Math.sin(sunTilt) * orbitRadius;
 
-    // Set sun position (only above horizon during day)
+    // Apply rotation around Y axis
+    const sunX = baseX * Math.cos(arcRotation) - baseZ * Math.sin(arcRotation);
+    const sunY = baseY;
+    const sunZ = baseX * Math.sin(arcRotation) + baseZ * Math.cos(arcRotation);
+
+    // Set sun position and make sphere follow
     this.sunLight.position.set(sunX, Math.max(0, sunY), sunZ);
-    this.sunLight.visible = sunY > -5; // Visible slightly below horizon for sunset
+    this.sunLight.visible = sunY > -5;
+    this.sunSphere.position.copy(this.sunLight.position);
+    this.sunSphere.visible = this.sunLight.visible;
+
+    // Make sun look at center for consistent lighting
+    if (this.sunLight.visible) {
+      this.sunLight.target.position.set(0, 0, 0);
+      this.sunLight.target.updateMatrixWorld();
+
+      // Update shadow camera to follow sun position
+      this.sunLight.shadow.camera.position.copy(this.sunLight.position);
+      this.sunLight.shadow.camera.lookAt(0, 0, 0);
+      this.sunLight.shadow.camera.updateProjectionMatrix();
+    }
 
     // Moon is opposite to sun
     const moonX = -sunX;
     const moonY = -sunY;
     const moonZ = -sunZ;
 
-    // Set moon position (only above horizon during night)
+    // Set moon position and make sphere follow
     this.moonLight.position.set(moonX, Math.max(0, moonY), moonZ);
-    this.moonLight.visible = moonY > -5; // Visible slightly below horizon
+    this.moonLight.visible = moonY > -5;
+    this.moonSphere.position.copy(this.moonLight.position);
+    this.moonSphere.visible = this.moonLight.visible;
+
+    // Make moon look at center for consistent lighting
+    if (this.moonLight.visible) {
+      this.moonLight.target.position.set(0, 0, 0);
+      this.moonLight.target.updateMatrixWorld();
+
+      // Update shadow camera to follow moon position
+      this.moonLight.shadow.camera.position.copy(this.moonLight.position);
+      this.moonLight.shadow.camera.lookAt(0, 0, 0);
+      this.moonLight.shadow.camera.updateProjectionMatrix();
+    }
 
     // Adjust light intensities based on sun elevation
-    const sunElevation = Math.max(0, sunY / 50); // 0 to 1
-    const moonElevation = Math.max(0, moonY / 50); // 0 to 1
+    const sunElevation = Math.max(0, sunY / (orbitRadius * verticalScale)); // 0 to 1
+    const moonElevation = Math.max(0, moonY / (orbitRadius * verticalScale)); // 0 to 1
 
-    // Sun intensity varies with elevation
-    this.sunLight.intensity = sunElevation * 1.5;
+    // Sun intensity varies with elevation (reduced to prevent overexposure)
+    this.sunLight.intensity = sunElevation * 1.0;
 
-    // Moon intensity varies with elevation
-    this.moonLight.intensity = moonElevation * 0.4;
+    // Moon intensity varies with elevation (dimmer)
+    this.moonLight.intensity = moonElevation * 0.25;
 
     // Ambient light varies throughout the day
     // Brighter during day, darker at night
     const dayFactor = Math.max(0, Math.cos(angle)); // 1 at noon, -1 at midnight
-    const ambientIntensity = 0.2 + dayFactor * 0.3; // 0.2 to 0.5
+    const ambientIntensity = 0.15 + dayFactor * 0.2; // 0.15 to 0.35 (reduced to prevent overexposure)
     this.ambientLight.intensity = ambientIntensity;
 
     // Adjust ambient color - warmer during sunrise/sunset
@@ -268,6 +320,40 @@ export class TerrainRenderer extends BaseRenderer {
       );
     } else {
       this.sunLight.color.setHex(0xfffaed); // Normal sun color
+    }
+
+    // Update fog color based on time of day (toned down brightness)
+    const fogDayColor = new THREE.Color(0x708090); // Day fog - muted gray-blue
+    const fogNightColor = new THREE.Color(0x1a2030); // Night fog - very dark blue
+    const fogSunsetColor = new THREE.Color(0x806050); // Sunset fog - muted warm tone
+
+    // Calculate fog color based on sun position
+    if (sunElevation > 0.5) {
+      // Day time
+      this.scene.fog!.color.copy(fogDayColor);
+      if (this.scene.background instanceof THREE.Color) {
+        this.scene.background.copy(fogDayColor);
+      }
+    } else if (sunElevation > 0 && sunElevation <= 0.3) {
+      // Sunrise/sunset
+      const sunsetFactor = sunElevation / 0.3;
+      this.scene.fog!.color.lerpColors(fogSunsetColor, fogDayColor, sunsetFactor);
+      if (this.scene.background instanceof THREE.Color) {
+        this.scene.background.lerpColors(fogSunsetColor, fogDayColor, sunsetFactor);
+      }
+    } else if (moonElevation > 0) {
+      // Night time with moon
+      this.scene.fog!.color.copy(fogNightColor);
+      if (this.scene.background instanceof THREE.Color) {
+        this.scene.background.copy(fogNightColor);
+      }
+    } else {
+      // Twilight/dawn
+      const twilightFactor = Math.max(Math.abs(sunElevation), Math.abs(moonElevation)) * 5;
+      this.scene.fog!.color.lerpColors(fogNightColor, fogSunsetColor, twilightFactor);
+      if (this.scene.background instanceof THREE.Color) {
+        this.scene.background.lerpColors(fogNightColor, fogSunsetColor, twilightFactor);
+      }
     }
   }
 
@@ -315,8 +401,8 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private createTerrain(): void {
-    // Create terrain geometry - use lower subdivision for smoother terrain
-    const subdivisions = 63; // 64x64 grid for smooth terrain
+    // Create terrain geometry - higher subdivision for better detail
+    const subdivisions = 127; // 128x128 grid for detailed terrain
     const geometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
@@ -345,23 +431,26 @@ export class TerrainRenderer extends BaseRenderer {
     // No need to update vertices - GPU handles displacement via heightTexture
 
     // Create ocean water plane at sea level (always visible)
+    // Match terrain size exactly for proper alignment
     const oceanGeometry = new THREE.PlaneGeometry(
-      this.terrainSize * 1.1, // Slightly larger than terrain for clean edges
-      this.terrainSize * 1.1,
-      1, // Simple plane for ocean
-      1
+      this.terrainSize, // Match terrain size exactly
+      this.terrainSize,
+      128, // Higher resolution for better shore blending
+      128
     );
     oceanGeometry.rotateX(-Math.PI / 2);
 
     const oceanMaterial = createWaterMaterialTSL({
-      color: new THREE.Color(0x006994),
-      opacity: 0.85,
+      opacity: 0.9,
       heightTexture: this.heightTexture, // Pass height texture for depth calculation
       waterLevel: 2.1 / 15 // Normalized water level (2.1 units / 15 height scale)
     });
 
     this.oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
-    this.oceanMesh.position.y = 2.1; // Water level for visible ocean (0.14 normalized, clearly below beach at 0.15)
+    this.oceanMesh.position.y = 2.1; // Water level (0.14 normalized)
+    this.oceanMesh.position.x = 0; // Ensure centered
+    this.oceanMesh.position.z = 0; // Ensure centered
+    this.oceanMesh.renderOrder = 1; // Render after terrain for proper blending
     this.scene.add(this.oceanMesh);
 
     // Create dynamic water surface (initially invisible) - for rivers/lakes
@@ -424,8 +513,25 @@ private generateTestTerrain(): void {
         // Distance from center
         const dist = Math.sqrt(nx * nx + ny * ny);
 
-        // Start with base island shape - smaller main island
-        let height = Math.max(0, 1 - dist * 3.5) * 0.28; // Smaller, more compact base island
+        // Start with base island shape - use smoother falloff for beaches
+        // Create a more gradual slope near water level
+        const islandBase = 1 - dist * 2.8;
+        let height = 0;
+
+        if (islandBase > 0) {
+          // Create very gradual beach slopes
+          if (islandBase < 0.08) {
+            // Ultra-shallow underwater approach to beach
+            height = 0.10 + islandBase * 0.5;
+          } else if (islandBase < 0.20) {
+            // Gentle beach slope
+            const beachProgress = (islandBase - 0.08) / 0.12;
+            height = 0.14 + beachProgress * 0.04;
+          } else {
+            // Normal island elevation inland
+            height = 0.18 + (islandBase - 0.20) * 0.20;
+          }
+        }
 
         // Add smooth mountain features to main island
         if (height > 0.02) {
@@ -464,18 +570,20 @@ private generateTestTerrain(): void {
         }
 
         // Add smaller islands and sandbanks
-        // Rocky outcrop to the northeast - more prominent
+        // Rocky outcrop to the northeast - with gentler shores
         const island1X = 0.28;
         const island1Y = 0.22;
         const island1Dist = Math.sqrt((nx - island1X) * (nx - island1X) + (ny - island1Y) * (ny - island1Y));
         if (island1Dist < 0.15) {
-          const island1Height = Math.max(0, 1 - island1Dist * 8) * 0.25;
-          // Add some rocky texture
-          const rockNoise = Math.sin(nx * 20) * Math.cos(ny * 20) * 0.01;
+          // Gentler slope for small island
+          const islandFactor = 1 - island1Dist / 0.15;
+          const island1Height = 0.14 + Math.pow(islandFactor, 1.5) * 0.10;
+          // Add subtle rocky texture
+          const rockNoise = Math.sin(nx * 20) * Math.cos(ny * 20) * 0.005;
           height = Math.max(height, island1Height + rockNoise);
         }
 
-        // Small crescent atoll to the southwest
+        // Small crescent atoll to the southwest - very shallow
         const island2X = -0.32;
         const island2Y = -0.18;
         const island2Dist = Math.sqrt((nx - island2X) * (nx - island2X) + (ny - island2Y) * (ny - island2Y));
@@ -483,7 +591,9 @@ private generateTestTerrain(): void {
         // Create crescent shape
         const crescentFactor = 1 + Math.cos(island2Angle) * 0.3;
         if (island2Dist < 0.08 * crescentFactor) {
-          const island2Height = Math.max(0, 1 - island2Dist * 15) * 0.17;
+          // Very shallow atoll just above water
+          const atollFactor = 1 - island2Dist / (0.08 * crescentFactor);
+          const island2Height = 0.145 + Math.pow(atollFactor, 2) * 0.02;
           height = Math.max(height, island2Height);
         }
 
@@ -499,23 +609,27 @@ private generateTestTerrain(): void {
         const sandbank2Height = Math.max(0, 1 - sandbank2Dist * 1.5) * 0.035;
         height = Math.max(height, sandbank2Height);
 
-        // Create ultra-shallow beach slopes in the narrow beach zone
-        // Water is at 0.14 (2.1/15), beach zone is 0.135-0.145 (very narrow)
+        // Enhanced beach smoothing for ultra-shallow slopes
         const waterLevel = 0.14;
-        if (height > 0.15 && height < 0.25) {
-          // Force ultra-shallow slope near water line
-          const distFromWater = Math.abs(height - waterLevel);
-          if (distFromWater < 0.03) {
-            // Very gentle cubic easing for beach slope
-            const beachT = distFromWater / 0.03;
-            height = waterLevel + (height > waterLevel ? 1 : -1) * 0.03 * Math.pow(beachT, 3);
-          }
 
-          // Smooth transition to higher terrain
-          if (height > 0.18 && height < 0.22) {
-            const t = (height - 0.18) / 0.04;
-            const smoothT = t * t * (3 - 2 * t);
-            height = 0.18 + smoothT * 0.04;
+        // Apply smoothing to create gentle beach slopes
+        if (height > 0.10 && height < 0.25) {
+          const distFromWater = height - waterLevel;
+
+          // Below water: very gentle slope up to water level
+          if (distFromWater < 0) {
+            const underwaterDepth = Math.abs(distFromWater);
+            if (underwaterDepth < 0.04) {
+              // Very shallow underwater slope
+              height = waterLevel - Math.pow(underwaterDepth / 0.04, 1.5) * 0.04;
+            }
+          }
+          // Above water: create wide, gentle beach
+          else if (distFromWater < 0.06) {
+            // Smooth beach slope using cosine interpolation
+            const beachProgress = distFromWater / 0.06;
+            const smoothProgress = (1 - Math.cos(beachProgress * Math.PI)) * 0.5;
+            height = waterLevel + smoothProgress * 0.06;
           }
         }
 

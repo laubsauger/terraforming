@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { positionLocal, texture, uv, vec3, float, normalLocal, mix, smoothstep, clamp, fract, step, abs } from 'three/tsl';
+import { positionLocal, texture, uv, vec3, float, normalLocal, mix, smoothstep, clamp, fract, step } from 'three/tsl';
 import type { Texture } from 'three';
 
 export interface TerrainMaterialTSLOptions {
@@ -61,21 +61,50 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   // Define height thresholds for different terrain types
   // Water is at 0.14 (2.1/15), so beach should be a very narrow band above that
   const wetLevel = float(0.135);   // Just below water - wet sand/mud
-  const beachLevel = float(0.145); // Very narrow beach band (only 0.01 range = 15cm with 15 scale)
-  const grassLevel = float(0.17);  // Grass starts quickly after beach
+  const beachLevel = float(0.145); // Very narrow beach band
+  const sandLevel = float(0.155);  // Sand extends a bit above beach
+  const grassLevel = float(0.18);  // Grass starts higher to avoid cliffs
   const rockLevel = float(0.45);   // Rocky terrain
 
   // Smooth transitions between terrain types
   const wetToBeach = smoothstep(wetLevel, beachLevel, normalizedHeight);
-  const beachToGrass = smoothstep(beachLevel, grassLevel, normalizedHeight);
+  const beachToSand = smoothstep(beachLevel, sandLevel, normalizedHeight);
+  const sandToGrass = smoothstep(sandLevel, grassLevel, normalizedHeight);
   const grassToRock = smoothstep(grassLevel, rockLevel, normalizedHeight);
   const rockToSnow = smoothstep(rockLevel, float(0.9), normalizedHeight);
 
-  // Mix colors based on elevation
+  // Mix colors based on elevation - add extra sand buffer
   const color0 = mix(wetSandColor, sandColor, wetToBeach);
-  const color1 = mix(color0, grassColor, beachToGrass);
-  const color2 = mix(color1, rockColor, grassToRock);
-  let terrainColor = mix(color2, snowColor, rockToSnow);
+  const color1 = mix(color0, sandColor, beachToSand); // Keep sand color longer
+  const color2 = mix(color1, grassColor, sandToGrass);
+  const color3 = mix(color2, rockColor, grassToRock);
+  let terrainColor = mix(color3, snowColor, rockToSnow);
+
+  // Add underwater coloring for terrain below water level
+  const waterLevel = float(0.14); // Water level at 2.1/15
+  const isUnderwater = step(normalizedHeight, waterLevel);
+  const underwaterDepth = clamp(waterLevel.sub(normalizedHeight), float(0), float(1));
+
+  // Define underwater tint colors based on depth
+  const shallowWaterTint = vec3(0.4, 0.7, 0.8);   // Light blue-green for shallow
+  const mediumWaterTint = vec3(0.2, 0.4, 0.6);    // Medium blue
+  const deepWaterTint = vec3(0.05, 0.15, 0.3);    // Dark blue for deep
+
+  // Create smooth depth-based underwater color transitions
+  const shallowToMedium = smoothstep(float(0), float(0.04), underwaterDepth);
+  const mediumToDeep = smoothstep(float(0.04), float(0.10), underwaterDepth);
+
+  // Mix underwater tint colors based on depth
+  const underwaterTint = mix(
+    mix(shallowWaterTint, mediumWaterTint, shallowToMedium),
+    deepWaterTint,
+    mediumToDeep
+  );
+
+  // Apply underwater tint to terrain color
+  // Mix more strongly with depth (from 30% at surface to 70% at depth)
+  const tintStrength = mix(float(0.3), float(0.7), underwaterDepth);
+  terrainColor = mix(terrainColor, terrainColor.mul(underwaterTint), isUnderwater.mul(tintStrength));
 
   // Add topographic contour lines if enabled
   if (showContours) {

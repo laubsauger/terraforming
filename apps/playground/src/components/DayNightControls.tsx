@@ -11,9 +11,12 @@ interface DayNightControlsProps {
 }
 
 export function DayNightControls({ engine, className = '' }: DayNightControlsProps) {
-  const [timeOfDay, setTimeOfDay] = useState(0.25); // Start at noon
+  const [timeOfDay, setTimeOfDay] = useState(0.0); // Start at midnight (00:00)
   const [isPlaying, setIsPlaying] = useState(false);
   const [cycleSpeed, setCycleSpeed] = useState(0.0005); // Default speed
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [sunTilt, setSunTilt] = useState(30); // Degrees
+  const [arcRotation, setArcRotation] = useState(0); // Degrees
 
   // Update engine when time changes
   useEffect(() => {
@@ -64,11 +67,11 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
   };
 
   return (
-    <div className={`space-y-4 rounded-lg bg-background/95 backdrop-blur border p-4 ${className}`}>
+    <div className={`space-y-4 rounded-lg bg-black/70 backdrop-blur border border-white/10 p-4 ${className}`}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 text-white">
           {getTimeIcon(timeOfDay)}
-          <Label className="text-sm font-medium">
+          <Label className="text-sm font-medium text-white">
             Day/Night Cycle
           </Label>
         </div>
@@ -76,7 +79,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           variant="ghost"
           size="icon"
           onClick={() => setIsPlaying(!isPlaying)}
-          className="h-8 w-8"
+          className="h-8 w-8 text-white hover:text-white hover:bg-white/20"
         >
           {isPlaying ? (
             <Pause className="h-4 w-4" />
@@ -87,7 +90,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
       </div>
 
       <div className="space-y-2">
-        <div className="flex justify-between text-xs text-muted-foreground">
+        <div className="flex justify-between text-xs text-gray-400">
           <span>Time: {getTimeLabel(timeOfDay)}</span>
           <span>{Math.round(timeOfDay * 100)}%</span>
         </div>
@@ -98,7 +101,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           step={0.5}
           className="w-full"
         />
-        <div className="flex justify-between text-xs text-muted-foreground">
+        <div className="flex justify-between text-xs text-gray-400">
           <span>00:00</span>
           <span>06:00</span>
           <span>12:00</span>
@@ -109,7 +112,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
 
       {isPlaying && (
         <div className="space-y-2">
-          <Label className="text-xs text-muted-foreground">
+          <Label className="text-xs text-gray-400">
             Cycle Speed: {cycleSpeed > 0.001 ? 'Fast' : cycleSpeed > 0.0005 ? 'Normal' : 'Slow'}
           </Label>
           <Slider
@@ -128,7 +131,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           variant="ghost"
           size="sm"
           onClick={() => setTimeOfDay(0.0)}
-          className="text-xs"
+          className="text-xs text-white hover:text-white hover:bg-white/20"
         >
           Midnight
         </Button>
@@ -136,7 +139,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           variant="ghost"
           size="sm"
           onClick={() => setTimeOfDay(0.125)}
-          className="text-xs"
+          className="text-xs text-white hover:text-white hover:bg-white/20"
         >
           Dawn
         </Button>
@@ -144,7 +147,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           variant="ghost"
           size="sm"
           onClick={() => setTimeOfDay(0.25)}
-          className="text-xs"
+          className="text-xs text-white hover:text-white hover:bg-white/20"
         >
           Noon
         </Button>
@@ -152,7 +155,7 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
           variant="ghost"
           size="sm"
           onClick={() => setTimeOfDay(0.625)}
-          className="text-xs"
+          className="text-xs text-white hover:text-white hover:bg-white/20"
         >
           Dusk
         </Button>

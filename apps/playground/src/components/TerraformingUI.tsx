@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Engine } from '@terraforming/engine';
 import type { PerfSample } from '@terraforming/types';
 import { shallow } from 'zustand/shallow';
@@ -53,6 +53,7 @@ const OVERLAY_OPTIONS: OverlayOption[] = [
 
 export function TerraformingUI({ engine, store, className, onSnapshot }: TerraformingUIProps) {
   const storeRef = useRef<StoreApi<UiStore>>();
+  const [showPerfHud, setShowPerfHud] = useState(false);
 
   if (!storeRef.current) {
     storeRef.current = store ?? createUiStore();
@@ -125,7 +126,8 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
     engine.sources.set('lava', lavaSources);
   }, [engine, lavaSources]);
 
-  const { latest } = usePerfSamples(engine);
+  // Only use perf samples when PerfHud is shown
+  const { latest } = showPerfHud ? usePerfSamples(engine) : { latest: null };
 
   const handleSnapshot = () => {
     onSnapshot?.(latest ?? null);
@@ -141,7 +143,22 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
         setSelected={setOverlays}
         options={OVERLAY_OPTIONS}
       />
-      <PerfHudSection sample={latest} onSnapshot={handleSnapshot} />
+
+      {/* PerfHud Toggle */}
+      <div className="space-y-2">
+        <button
+          onClick={() => setShowPerfHud(!showPerfHud)}
+          className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors flex items-center justify-between"
+        >
+          <span>Performance HUD</span>
+          <span className="text-xs text-gray-400">{showPerfHud ? 'Hide' : 'Show'}</span>
+        </button>
+
+        {/* Only mount PerfHud when shown for performance */}
+        {showPerfHud && (
+          <PerfHudSection sample={latest} onSnapshot={handleSnapshot} />
+        )}
+      </div>
     </aside>
   );
 }
