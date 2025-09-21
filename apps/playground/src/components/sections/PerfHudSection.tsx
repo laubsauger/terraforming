@@ -1,41 +1,56 @@
 import type { PerfSample } from '@terraforming/types';
 import { UiSection } from '@playground/components/primitives/UiSection';
+import { Button } from '@playground/components/ui/button';
 
 interface PerfHudSectionProps {
   sample: PerfSample | null;
+  onSnapshot: () => void;
 }
 
-export function PerfHudSection({ sample }: PerfHudSectionProps) {
+export function PerfHudSection({ sample, onSnapshot }: PerfHudSectionProps) {
   return (
     <UiSection title="Perf HUD">
-      {sample ? (
-        <div className="tf-card">
-          <div className="tf-metric-heading">
-            <span className="tf-metric-title">Frame #{sample.frameId}</span>
-            <span>
-              CPU {sample.cpuFrameMs.toFixed(2)} ms · GPU{' '}
-              {sample.gpuFrameMs === null ? 'N/A' : `${sample.gpuFrameMs.toFixed(2)} ms`}
-            </span>
+      <div className="space-y-3 rounded-lg border border-border/60 bg-secondary/30 px-3 py-3 text-xs text-muted-foreground">
+        {sample ? (
+          <>
+            <div className="flex flex-col gap-1 text-foreground">
+              <span className="text-sm font-semibold">Frame #{sample.frameId}</span>
+              <span>
+                CPU {sample.cpuFrameMs.toFixed(2)} ms · GPU{' '}
+                {sample.gpuFrameMs === null ? 'N/A' : `${sample.gpuFrameMs.toFixed(2)} ms`}
+              </span>
+            </div>
+            <ul className="flex flex-col gap-1 text-foreground/80">
+              {sample.passes.map((pass) => (
+                <li key={pass.name} className="flex justify-between">
+                  <span>{pass.name}</span>
+                  <span>
+                    {pass.gpuMs === null ? 'N/A' : `${pass.gpuMs.toFixed(2)} ms`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-col gap-1 text-foreground/80">
+              <span>Dispatches {sample.computeDispatches}</span>
+              <span>Draws {sample.drawCalls}</span>
+              <span>VRAM {sample.estimatedVrAmMb} MB</span>
+            </div>
+          </>
+        ) : (
+          <div className="rounded-lg border border-dashed border-border/40 bg-secondary/20 px-3 py-3 text-muted-foreground">
+            Waiting for samples…
           </div>
-          <ul className="tf-metric-list">
-            {sample.passes.map((pass) => (
-              <li key={pass.name} className="flex justify-between">
-                <span>{pass.name}</span>
-                <span>
-                  {pass.gpuMs === null ? 'N/A' : `${pass.gpuMs.toFixed(2)} ms`}
-                </span>
-              </li>
-            ))}
-          </ul>
-          <div className="tf-metric-list">
-            <span>Dispatches {sample.computeDispatches}</span>
-            <span>Draws {sample.drawCalls}</span>
-            <span>VRAM {sample.estimatedVrAmMb} MB</span>
-          </div>
-        </div>
-      ) : (
-        <div className="tf-card-muted">Waiting for samples…</div>
-      )}
+        )}
+        <Button
+          type="button"
+          onClick={onSnapshot}
+          variant="secondary"
+          className="w-full text-xs font-semibold"
+          disabled={!sample}
+        >
+          Snapshot Frame
+        </Button>
+      </div>
     </UiSection>
   );
 }

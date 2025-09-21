@@ -26,8 +26,9 @@ export interface QualitySlice {
 }
 
 export interface DebugSlice {
-  overlay: OverlayOption;
-  setOverlay: (value: OverlayOption) => void;
+  overlays: OverlayOption[];
+  setOverlays: (values: OverlayOption[]) => void;
+  toggleOverlay: (value: OverlayOption) => void;
 }
 
 export interface SourcesSlice {
@@ -52,7 +53,7 @@ export interface UiInitialState {
   run?: Partial<Pick<RunSlice, 'paused'>>;
   time?: Partial<Pick<TimeSlice, 'timeScale'>>;
   quality?: Partial<Pick<QualitySlice, 'settings'>>;
-  debug?: Partial<Pick<DebugSlice, 'overlay'>>;
+  debug?: Partial<Pick<DebugSlice, 'overlays'>>;
   sources?: Partial<Pick<SourcesSlice, 'water' | 'lava'>>;
 }
 
@@ -108,12 +109,19 @@ export function createUiStore(
         })),
     },
     debug: {
-      overlay: initialState.debug?.overlay ?? 'none',
-      setOverlay: (value: OverlayOption) =>
+      overlays: sanitizeOverlayList(initialState.debug?.overlays ?? ['none']),
+      setOverlays: (values: OverlayOption[]) =>
         set((state) => ({
           debug: {
             ...state.debug,
-            overlay: value,
+            overlays: sanitizeOverlayList(values),
+          },
+        })),
+      toggleOverlay: (value: OverlayOption) =>
+        set((state) => ({
+          debug: {
+            ...state.debug,
+            overlays: toggleOverlayValue(state.debug.overlays, value),
           },
         })),
     },
@@ -151,6 +159,30 @@ export function useUiStore<T>(
   equalityFn?: (a: T, b: T) => boolean
 ): T {
   return useStoreWithEqualityFn(store, selector, equalityFn);
+}
+
+function sanitizeOverlayList(values: OverlayOption[]): OverlayOption[] {
+  const filtered = values.filter((value, index, arr) => arr.indexOf(value) === index);
+  if (filtered.length === 0) {
+    return ['none'];
+  }
+  if (filtered.length > 1 && filtered.includes('none')) {
+    return filtered.filter((value) => value !== 'none');
+  }
+  return filtered;
+}
+
+function toggleOverlayValue(list: OverlayOption[], value: OverlayOption): OverlayOption[] {
+  if (value === 'none') {
+    return ['none'];
+  }
+  const hasValue = list.includes(value);
+  const withoutNone = list.filter((item) => item !== 'none');
+  if (hasValue) {
+    const next = withoutNone.filter((item) => item !== value);
+    return sanitizeOverlayList(next);
+  }
+  return sanitizeOverlayList([...withoutNone, value]);
 }
 
 function cloneSources(sources: Source[]) {

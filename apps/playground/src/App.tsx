@@ -1,13 +1,16 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { TerraformingUI } from '@playground/components/TerraformingUI';
 import type { Engine } from '@terraforming/engine';
+import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
+import type { PerfSample } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
-import { Button } from '@playground/components/ui/button';
+import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
 let resizeBound = false;
 
+ensureDarkMode();
 autoResizeCanvas();
 
 export function App() {
@@ -15,6 +18,38 @@ export function App() {
   const [engine, setEngine] = useState<Engine | null>(null);
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
+  const [activeTool, setActiveTool] = useState<InteractionTool>('select');
+
+  const toolbarActions = useMemo(
+    () => [
+      {
+        id: 'select' as InteractionTool,
+        label: 'Select tool',
+        icon: <Pointer className="h-4 w-4" />,
+      },
+      {
+        id: 'brush-raise' as InteractionTool,
+        label: 'Raise terrain',
+        icon: <Wand2 className="h-4 w-4" />,
+      },
+      {
+        id: 'brush-smooth' as InteractionTool,
+        label: 'Smooth terrain',
+        icon: <Waves className="h-4 w-4" />,
+      },
+      {
+        id: 'add-water-source' as InteractionTool,
+        label: 'Add water source',
+        icon: <Droplets className="h-4 w-4" />,
+      },
+      {
+        id: 'add-lava-source' as InteractionTool,
+        label: 'Add lava source',
+        icon: <Flame className="h-4 w-4" />,
+      },
+    ],
+    []
+  );
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -52,28 +87,31 @@ export function App() {
     };
   }, []);
 
+  const handleSnapshot = (sample: PerfSample | null) => {
+    console.log('snapshot requested', sample);
+  };
+
+  const handleToolChange = (tool: InteractionTool) => {
+    setActiveTool(tool);
+    // TODO: wire tool selection into engine brush/tool system
+  };
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[radial-gradient(circle_at_top,#1b2735,#090a0f)]">
       <canvas ref={canvasRef} className="block h-full w-full" />
 
       <TerraformingUI
         engine={engine}
-        className="pointer-events-auto shadow-2xl shadow-black/40 ring-1 ring-white/10"
+        className="shadow-2xl shadow-black/70 ring-1 ring-white/10"
+        onSnapshot={handleSnapshot}
       />
 
-      <div className="pointer-events-none absolute bottom-6 right-6 flex gap-3">
-        <Button
-          variant="secondary"
-          className="pointer-events-auto backdrop-blur border-white/10 bg-white/5 text-foreground hover:bg-white/10"
-        >
-          Add Water Source
-        </Button>
-        <Button
-          className="pointer-events-auto backdrop-blur bg-primary/80 text-primary-foreground hover:bg-primary"
-        >
-          Snapshot Frame
-        </Button>
-      </div>
+      <InteractionToolbar
+        actions={toolbarActions}
+        activeTool={activeTool}
+        onToolChange={handleToolChange}
+        className="absolute top-1/2 right-6 -translate-y-1/2"
+      />
 
       {state === 'pending' && (
         <StatusToast message="Initializing engine…" />
@@ -122,4 +160,9 @@ function autoResizeCanvas() {
 
   window.addEventListener('resize', apply, { passive: true });
   apply();
+}
+
+function ensureDarkMode() {
+  if (typeof document === "undefined") return;
+  document.documentElement.classList.add('dark');
 }

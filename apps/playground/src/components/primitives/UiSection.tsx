@@ -9,11 +9,11 @@ interface UiSectionProps {
 
 export function UiSection({ title, children, className }: UiSectionProps) {
   return (
-    <section className={cn('tf-section', className)}>
-      <h2 className="tf-section-title">
+    <section className={cn('space-y-2', className)}>
+      <h2 className="text-sm font-semibold tracking-tight text-foreground/90">
         {title}
       </h2>
-      <div className="tf-section-body">{children}</div>
+      <div className="space-y-2">{children}</div>
     </section>
   );
 }

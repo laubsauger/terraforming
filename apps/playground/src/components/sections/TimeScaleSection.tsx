@@ -1,4 +1,5 @@
 import { UiSection } from '@playground/components/primitives/UiSection';
+import { Slider } from '@playground/components/ui/slider';
 
 interface TimeScaleSectionProps {
   timeScale: number;
@@ -9,14 +10,12 @@ export function TimeScaleSection({ timeScale, setTimeScale }: TimeScaleSectionPr
   return (
     <UiSection title="Time Scale">
       <div className="space-y-1.5">
-        <input
-          type="range"
-          min="0.1"
-          max="8"
-          step="0.1"
-          value={timeScale}
-          onChange={(event) => setTimeScale(Number(event.target.value))}
-          className="tf-range"
+        <Slider
+          min={0.1}
+          max={8}
+          step={0.1}
+          value={[timeScale]}
+          onValueChange={(value) => setTimeScale(value[0] ?? timeScale)}
         />
         <div className="text-xs font-medium text-muted-foreground">
           {timeScale.toFixed(1)}x
