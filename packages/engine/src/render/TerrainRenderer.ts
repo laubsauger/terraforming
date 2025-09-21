@@ -1,6 +1,7 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { createTerrainMaterial } from './materials/TerrainMaterial';
+import { BaseRenderer } from './BaseRenderer';
+import { createTerrainMaterialTSL } from './materials/TerrainMaterialTSL';
 import { createWaterMaterial } from './materials/WaterMaterial';
 import { createLavaMaterial } from './materials/LavaMaterial';
 
@@ -10,10 +11,7 @@ export interface TerrainRendererOptions {
   terrainSize?: number;
 }
 
-export class TerrainRenderer {
-  private renderer: THREE.WebGLRenderer;
-  private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
+export class TerrainRenderer extends BaseRenderer {
   private controls: OrbitControls;
 
   private terrainMesh?: THREE.Mesh;
@@ -34,30 +32,17 @@ export class TerrainRenderer {
   constructor(options: TerrainRendererOptions) {
     const { canvas, gridSize = 256, terrainSize = 100 } = options;
 
+    // Initialize base renderer
+    super({ canvas, antialias: true, alpha: false });
+
     this.gridSize = gridSize;
     this.terrainSize = terrainSize;
 
-    // Initialize WebGL renderer (WebGPU support will be added later)
-    this.renderer = new THREE.WebGLRenderer({
-      canvas,
-      antialias: true,
-      alpha: false,
-    });
-    this.renderer.setPixelRatio(window.devicePixelRatio);
-    this.renderer.setSize(canvas.width, canvas.height);
-
-    // Create scene
-    this.scene = new THREE.Scene();
+    // Setup scene
     this.scene.background = new THREE.Color(0x87CEEB); // Sky blue
     this.scene.fog = new THREE.Fog(0x87CEEB, 100, 500);
 
     // Setup camera
-    this.camera = new THREE.PerspectiveCamera(
-      60,
-      canvas.width / canvas.height,
-      0.1,
-      1000
-    );
     this.camera.position.set(50, 30, 50);
     this.camera.lookAt(0, 0, 0);
 
@@ -80,10 +65,16 @@ export class TerrainRenderer {
     this.lavaDepthTexture = this.createDataTexture();
     this.temperatureTexture = this.createDataTexture();
 
-    // Create initial terrain
+    // Terrain will be created after renderer is ready
+  }
+
+  protected override onRendererReady(): void {
+    console.log('TerrainRenderer: WebGPU renderer ready');
+
+    // Create terrain after renderer is ready
     this.createTerrain();
 
-    // Generate test height data
+    // Generate default island terrain
     this.generateTestTerrain();
   }
 
@@ -95,18 +86,8 @@ export class TerrainRenderer {
     // Directional light (sun)
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
     directionalLight.position.set(50, 100, 50);
-    directionalLight.castShadow = true;
-    directionalLight.shadow.camera.left = -50;
-    directionalLight.shadow.camera.right = 50;
-    directionalLight.shadow.camera.top = 50;
-    directionalLight.shadow.camera.bottom = -50;
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.castShadow = false; // Disable shadows for better performance
     this.scene.add(directionalLight);
-
-    // Helper to visualize light
-    // const helper = new THREE.DirectionalLightHelper(directionalLight, 5);
-    // this.scene.add(helper);
   }
 
   private createDataTexture(components: number = 1): THREE.DataTexture {
@@ -130,34 +111,39 @@ export class TerrainRenderer {
   }
 
   private createTerrain(): void {
-    // Create terrain geometry - a subdivided plane
+    // Create terrain geometry - reduce subdivision for better performance
+    const subdivisions = Math.min(127, this.gridSize / 2 - 1); // Cap at 128x128 for performance
     const geometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
-      this.gridSize - 1,
-      this.gridSize - 1
+      subdivisions,
+      subdivisions
     );
     geometry.rotateX(-Math.PI / 2); // Make horizontal
 
-    // Create terrain material using TSL
-    const material = createTerrainMaterial({
+    // Create terrain material using TSL with GPU-based displacement
+    const material = createTerrainMaterialTSL({
       heightMap: this.heightTexture,
+      heightScale: 15,
+      terrainSize: this.terrainSize,
       flowMap: this.flowTexture,
       accumulationMap: this.accumulationTexture,
     });
 
-    // Create mesh
+    // Create mesh - height displacement happens in vertex shader via TSL
     this.terrainMesh = new THREE.Mesh(geometry, material);
     this.terrainMesh.receiveShadow = true;
-    this.terrainMesh.castShadow = true;
+    this.terrainMesh.castShadow = false; // Don't cast shadows for performance
     this.scene.add(this.terrainMesh);
+
+    // No need to update vertices - GPU handles displacement via heightTexture
 
     // Create water surface (initially invisible)
     const waterGeometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
-      this.gridSize / 4 - 1,
-      this.gridSize / 4 - 1
+      32, // Fixed low resolution for water
+      32
     );
     waterGeometry.rotateX(-Math.PI / 2);
 
@@ -175,8 +161,8 @@ export class TerrainRenderer {
     const lavaGeometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
-      this.gridSize / 4 - 1,
-      this.gridSize / 4 - 1
+      32, // Fixed low resolution for lava
+      32
     );
     lavaGeometry.rotateX(-Math.PI / 2);
 
@@ -192,8 +178,8 @@ export class TerrainRenderer {
     this.scene.add(this.lavaMesh);
   }
 
-  private generateTestTerrain(): void {
-    // Generate some test height data with hills and valleys
+private generateTestTerrain(): void {
+    // Generate an island terrain with beaches, mountains, and water
     const size = this.gridSize;
     const data = this.heightTexture.image.data as Float32Array;
 
@@ -201,27 +187,46 @@ export class TerrainRenderer {
       for (let x = 0; x < size; x++) {
         const idx = (y * size + x) * 4;
 
-        // Create some hills using sine waves
+        // Normalized coordinates (-0.5 to 0.5)
         const nx = x / size - 0.5;
         const ny = y / size - 0.5;
 
-        let height = 0;
-
-        // Large hills
-        height += Math.sin(nx * Math.PI * 2) * Math.cos(ny * Math.PI * 2) * 0.3;
-
-        // Medium features
-        height += Math.sin(nx * Math.PI * 4) * Math.cos(ny * Math.PI * 4) * 0.15;
-
-        // Small noise
-        height += (Math.random() - 0.5) * 0.05;
-
-        // Valley in the center
+        // Distance from center
         const dist = Math.sqrt(nx * nx + ny * ny);
-        height -= Math.exp(-dist * dist * 10) * 0.5;
 
-        // Normalize to 0-1 range
-        height = (height + 1) * 0.5;
+        // Start with base island shape (circular falloff)
+        let height = Math.max(0, 1 - dist * 2.5) * 0.5; // Reduce overall height
+
+        // Add gentler mountain features
+        if (height > 0.05) {
+          // Gentler mountain ridge
+          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 20) * 0.3;
+
+          // Secondary ridge
+          const ridge2 = Math.exp(-Math.pow(nx + ny, 2) * 20) * 0.2;
+
+          // Central peak (gentler)
+          const centralPeak = Math.exp(-(nx * nx + ny * ny) * 10) * 0.4;
+
+          height += ridge1 + ridge2 + centralPeak;
+
+          // Very subtle variation
+          height += Math.sin(nx * Math.PI * 4) * Math.cos(ny * Math.PI * 4) * 0.02;
+        }
+
+        // Smooth beach transitions
+        if (dist > 0.35 && dist < 0.45) {
+          const beachFactor = (dist - 0.35) / 0.1;
+          height *= (1 - beachFactor * 0.8);
+        }
+
+        // Ensure water level around the island (flatten edges)
+        if (dist > 0.45) {
+          height = 0.05; // Slight underwater depth
+        }
+
+        // Clamp to valid range
+        height = Math.max(0, Math.min(1, height));
 
         data[idx] = height;
         data[idx + 1] = height;
@@ -231,12 +236,14 @@ export class TerrainRenderer {
     }
 
     this.heightTexture.needsUpdate = true;
+    // GPU will automatically use updated texture for displacement
   }
 
   public updateHeightmap(data: Float32Array): void {
     const textureData = this.heightTexture.image.data as Float32Array;
     textureData.set(data);
     this.heightTexture.needsUpdate = true;
+    // GPU will automatically use updated texture for displacement
   }
 
   public updateFlowmap(data: Float32Array): void {
@@ -285,20 +292,13 @@ export class TerrainRenderer {
     }
   }
 
-  public resize(width: number, height: number): void {
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
-  }
-
-  public render(): void {
+  public override render(): void {
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    super.render();
   }
 
-  public dispose(): void {
+  public override dispose(): void {
     this.controls.dispose();
-    this.renderer.dispose();
 
     // Dispose textures
     this.heightTexture.dispose();
@@ -321,5 +321,7 @@ export class TerrainRenderer {
       this.lavaMesh.geometry.dispose();
       (this.lavaMesh.material as THREE.Material).dispose();
     }
+
+    super.dispose();
   }
 }

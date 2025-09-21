@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import type { Texture } from 'three';
 
 export interface WaterMaterialOptions {

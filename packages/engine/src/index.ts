@@ -77,7 +77,8 @@ class StubEngine implements Engine {
   public readonly opts: EngineOpts;
 
   private renderer?: TerrainRenderer;
-  private paused = false;
+  private simulationPaused = true;  // Simulation starts paused
+  private renderingActive = true;   // Renderer runs by default
   private timeScale = 1;
   private quality: QualityOpts = { simResolution: 512, simSubsteps: 1 };
   private overlay: DebugOverlay | 'none' = 'none';
@@ -89,6 +90,7 @@ class StubEngine implements Engine {
   private rafHandle: number | null = null;
   private frameId = 0;
   private readonly sampleListeners = new Set<(sample: PerfSample) => void>();
+  private disposed = false;
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOpts) {
     this.canvas = canvas;
@@ -96,29 +98,32 @@ class StubEngine implements Engine {
   }
 
   async initialize(): Promise<void> {
-    this.canvas.width = this.canvas.clientWidth || 1280;
-    this.canvas.height = this.canvas.clientHeight || 720;
+    // Don't initialize if already disposed
+    if (this.disposed) {
+      return;
+    }
 
-    // Initialize the renderer
+    // Initialize the renderer (BaseRenderer will handle sizing)
     try {
       this.renderer = new TerrainRenderer({
         canvas: this.canvas,
         gridSize: 256,
         terrainSize: 100,
       });
+      // Renderer initializes itself asynchronously
     } catch (error) {
       console.error('Failed to initialize renderer:', error);
     }
 
-    // Don't start the loop - wait for explicit setRunState call
-    // this.startLoop();
+    // Start the render loop immediately (simulation stays paused)
+    if (!this.disposed) {
+      this.startLoop();
+    }
   }
 
   setRunState(running: boolean): void {
-    this.paused = !running;
-    if (running) {
-      this.startLoop();
-    }
+    this.simulationPaused = !running;
+    // Note: Renderer keeps running regardless of simulation state
   }
 
   setTimeScale(mult: number): void {
@@ -178,11 +183,21 @@ class StubEngine implements Engine {
   }
 
   dispose(): void {
+    this.disposed = true;
+    this.renderingActive = false;
+
     if (this.rafHandle !== null) {
       cancelAnimationFrame(this.rafHandle);
       this.rafHandle = null;
     }
+
+    if (this.renderer) {
+      this.renderer.dispose();
+      this.renderer = undefined;
+    }
+
     this.sampleListeners.clear();
+    this.brushQueue.length = 0;
   }
 
   private startLoop() {
@@ -193,19 +208,25 @@ class StubEngine implements Engine {
     let lastTime = performance.now();
 
     const tick = () => {
-      if (this.paused) {
+      if (!this.renderingActive || this.disposed) {
         this.rafHandle = null;
         return;
       }
 
       const now = performance.now();
-      const deltaMs = (now - lastTime) * this.timeScale;
+      const deltaMs = (now - lastTime);
       lastTime = now;
 
       this.frameId += 1;
-      this.drainBrushQueue();
 
-      // Render the scene
+      // Run simulation updates only if not paused
+      if (!this.simulationPaused) {
+        const simDeltaMs = deltaMs * this.timeScale;
+        this.drainBrushQueue();
+        // Future: Update simulation here
+      }
+
+      // Always render the scene (even when simulation is paused)
       if (this.renderer) {
         this.renderer.render();
       }

@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import type { Texture } from 'three';
 
 export interface TerrainMaterialOptions {
@@ -12,15 +12,14 @@ export interface TerrainMaterialOptions {
 
 export function createTerrainMaterial(options: TerrainMaterialOptions): THREE.MeshStandardMaterial {
   const material = new THREE.MeshStandardMaterial({
-    map: options.heightMap,
-    roughness: 0.8,
+    roughness: 0.9,
     metalness: 0.0,
     color: new THREE.Color(0x3a7c47), // Default green terrain color
+    flatShading: true, // Better performance and looks good for terrain
   });
 
-  // Add displacement map for terrain height
-  material.displacementMap = options.heightMap;
-  material.displacementScale = 20;
+  // Don't use displacement map - we'll modify vertices directly instead
+  // material.displacementMap causes the spikes and poor performance
 
   // Normal map if provided
   if (options.normalMap) {
@@ -29,14 +28,10 @@ export function createTerrainMaterial(options: TerrainMaterialOptions): THREE.Me
 
   // Store debug mode and textures in userData for shader access
   material.userData.debugMode = options.debugMode || 0;
+  material.userData.heightMap = options.heightMap;
   material.userData.flowMap = options.flowMap;
   material.userData.accumulationMap = options.accumulationMap;
   material.userData.sedimentMap = options.sedimentMap;
-
-  // Update function for dynamic changes
-  material.onBeforeRender = (_renderer: any, _scene: any, _camera: any) => {
-    // Future: Update shader uniforms here if needed
-  };
 
   return material;
 }

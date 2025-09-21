@@ -91,6 +91,40 @@
 * **Bindless-like** approach via bind groups reused per pass; **no readbacks** during frame (only on-demand for screenshots/export).
 * Use **indirect dispatch/draw** counts prepared on GPU (phase 2).
 
+Short answer: **use a height/displacement map and sample it in the vertex stage**, not direct CPU-side vertex edits.
+
+Here’s why (for your WebGPU-first sim):
+
+* **Keeps everything on the GPU.** Your erosion/flow kernels already live in compute; they can write the **heightfield texture/buffer** directly. The vertex shader just reads that to displace a regular grid. Zero CPU↔GPU roundtrips.
+* **Cheap, scalable LOD.** Heightmaps + clipmaps/tiles are trivial; swapping or mip-stepping a texture is way cheaper than rebuilding/indexing big vertex buffers every frame.
+* **Easy normals & effects.** Derive normals from height gradients in-shader; same field also drives wetness, foam, and river masks. One source of truth.
+* **Stable frame times.** Regular grid + persistent bind groups + no geometry churn → fewer stalls than mutating large VBOs.
+
+When would you manipulate vertex buffers instead?
+
+* You need **non-heightfield topology** (caves/overhangs, marching cubes, destructible meshes).
+* You’re targeting a **fixed, small mesh** with rare updates (then a storage buffer + compute rewrite can be fine).
+
+### Recommended setup
+
+* **Geometry:** single plane grid (or tiled clipmaps).
+* **Data:** `heightTex` (R32F or RG16F) written by compute; optional `heightDelta` for brushes then applied.
+* **Vertex stage:** sample `heightTex` at the grid UV → set `position.y`. Compute normal from central differences on `heightTex` (or from a precomputed normal map if you want).
+* **Rendering:** triplanar blend using the same height-derived normal; water/lava sample height & flow fields.
+
+Pseudo (vertex stage idea):
+
+```wgsl
+// Attributes: aPos.xy is grid in [0,1], z unused.
+// Uniforms: world scale; Textures: heightTex
+let h = textureSampleLevel(heightTex, sampLin, aPos.xy, 0.0).r;
+let worldPos = vec3(aPos.x * WORLD_X, h * HEIGHT_SCALE, aPos.y * WORLD_Z);
+```
+
+If later you outgrow pure heightfields (caves), introduce a **second path** (marching cubes or SDF mesh) just for those features, and keep the bulk terrain as a displaced grid.
+
+So for this prototype—**height/displacement map all the way.**
+
 ---
 
 ## 5) Controls & UX

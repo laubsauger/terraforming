@@ -15,25 +15,25 @@ export function PerfHudSection({ sample, onSnapshot }: PerfHudSectionProps) {
           <>
             <div className="flex flex-col gap-1 text-foreground">
               <span className="text-sm font-semibold">Frame #{sample.frameId}</span>
-              <span>
-                CPU {sample.cpuFrameMs.toFixed(2)} ms · GPU{' '}
-                {sample.gpuFrameMs === null ? 'N/A' : `${sample.gpuFrameMs.toFixed(2)} ms`}
+              <span className="font-mono text-xs">
+                CPU {sample.cpuFrameMs.toFixed(2).padStart(6)} ms · GPU{' '}
+                {sample.gpuFrameMs === null ? '   N/A' : `${sample.gpuFrameMs.toFixed(2).padStart(6)} ms`}
               </span>
             </div>
             <ul className="flex flex-col gap-1 text-foreground/80">
               {sample.passes.map((pass) => (
-                <li key={pass.name} className="flex justify-between">
-                  <span>{pass.name}</span>
+                <li key={pass.name} className="flex justify-between font-mono text-xs">
+                  <span className="font-sans">{pass.name}</span>
                   <span>
-                    {pass.gpuMs === null ? 'N/A' : `${pass.gpuMs.toFixed(2)} ms`}
+                    {pass.gpuMs === null ? '   N/A' : `${pass.gpuMs.toFixed(2).padStart(6)} ms`}
                   </span>
                 </li>
               ))}
             </ul>
-            <div className="flex flex-col gap-1 text-foreground/80">
-              <span>Dispatches {sample.computeDispatches}</span>
-              <span>Draws {sample.drawCalls}</span>
-              <span>VRAM {sample.estimatedVrAmMb} MB</span>
+            <div className="flex flex-col gap-1 text-foreground/80 font-mono text-xs">
+              <span>Dispatches {String(sample.computeDispatches).padStart(4)}</span>
+              <span>Draws      {String(sample.drawCalls).padStart(4)}</span>
+              <span>VRAM       {String(sample.estimatedVrAmMb).padStart(4)} MB</span>
             </div>
           </>
         ) : (
