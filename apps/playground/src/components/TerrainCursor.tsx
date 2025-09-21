@@ -88,34 +88,71 @@ export function TerrainCursor({
       return;
     }
 
-    // Convert canvas-relative mouse position to normalized device coordinates
+    // Convert global mouse position to normalized device coordinates
     const rect = canvasElement.getBoundingClientRect();
-    const x = (mousePosition.x / rect.width) * 2 - 1;
-    const y = -(mousePosition.y / rect.height) * 2 + 1;
+    const x = ((mousePosition.x - rect.left) / rect.width) * 2 - 1;
+    const y = -((mousePosition.y - rect.top) / rect.height) * 2 + 1;
 
     // Update raycaster
     const raycaster = raycasterRef.current;
     raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
 
-    // Raycast against terrain base plane to get world coordinates
-    const intersects = raycaster.intersectObject(terrainMesh);
+    // Perform ray-terrain intersection using ray marching
+    const rayOrigin = raycaster.ray.origin;
+    const rayDirection = raycaster.ray.direction;
 
-    if (intersects.length > 0) {
-      const intersection = intersects[0];
-      const worldPos = intersection.point;
+    // Ray marching parameters
+    const maxDistance = 300;
+    const stepSize = 1.0;
+    let intersection: THREE.Vector3 | null = null;
 
-      // Get accurate height from terrain height texture
-      const terrainHeight = engine.getTerrainHeightAt(worldPos.x, worldPos.z);
+    // March along the ray and find intersection with terrain
+    for (let distance = 0; distance < maxDistance; distance += stepSize) {
+      const currentPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(distance));
+
+      // Check if we're within terrain bounds
+      if (currentPoint.x < -50 || currentPoint.x > 50 || currentPoint.z < -50 || currentPoint.z > 50) {
+        continue;
+      }
+
+      const terrainHeight = engine.getTerrainHeightAt(currentPoint.x, currentPoint.z);
 
       if (terrainHeight !== null) {
-        // Position cursor at accurate terrain height
-        cursorMeshRef.current.position.set(worldPos.x, terrainHeight + 0.1, worldPos.z);
-        cursorMeshRef.current.visible = true;
+        // Check if ray point is below terrain surface
+        if (currentPoint.y <= terrainHeight + 0.5) {
+          // Found intersection - refine with smaller steps
+          for (let refineDistance = distance - stepSize; refineDistance <= distance; refineDistance += 0.1) {
+            const refinePoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(refineDistance));
+            const refineTerrainHeight = engine.getTerrainHeightAt(refinePoint.x, refinePoint.z);
+
+            if (refineTerrainHeight !== null && refinePoint.y <= refineTerrainHeight + 0.1) {
+              intersection = new THREE.Vector3(refinePoint.x, refineTerrainHeight, refinePoint.z);
+              break;
+            }
+          }
+          break;
+        }
+      }
+    }
+
+    if (intersection) {
+      cursorMeshRef.current.position.set(intersection.x, intersection.y + 0.1, intersection.z);
+      cursorMeshRef.current.visible = true;
+    } else {
+      // Fallback to base plane intersection
+      const intersects = raycaster.intersectObject(terrainMesh);
+      if (intersects.length > 0) {
+        const basePos = intersects[0].point;
+        const terrainHeight = engine.getTerrainHeightAt(basePos.x, basePos.z);
+        if (terrainHeight !== null) {
+          cursorMeshRef.current.position.set(basePos.x, terrainHeight + 0.1, basePos.z);
+          cursorMeshRef.current.visible = true;
+        } else {
+          cursorMeshRef.current.visible = false;
+        }
       } else {
         cursorMeshRef.current.visible = false;
       }
-    } else {
-      cursorMeshRef.current.visible = false;
     }
   }, [isVisible, mousePosition, engine, canvasElement]);
 

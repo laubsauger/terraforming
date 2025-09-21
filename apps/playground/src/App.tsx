@@ -147,14 +147,8 @@ export function App() {
   // Mouse tracking for tool cursor
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const rect = canvas.getBoundingClientRect();
-        setMousePosition({
-          x: event.clientX - rect.left,
-          y: event.clientY - rect.top
-        });
-      }
+      // Store global mouse position for accurate raycasting
+      setMousePosition({ x: event.clientX, y: event.clientY });
     };
 
     const handleMouseEnter = () => setShowCursor(true);
