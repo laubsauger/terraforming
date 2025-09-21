@@ -188,6 +188,7 @@ export class TerrainRenderer extends BaseRenderer {
     this.sunLight.shadow.camera.bottom = -60;
     this.sunLight.shadow.bias = -0.0005;
     this.scene.add(this.sunLight);
+    this.scene.add(this.sunLight.target); // Add target to scene for proper world-space lighting
 
     // Moon light - deeper blue tint, dimmer
     this.moonLight = new THREE.DirectionalLight(0x6080ff, 0.25);
@@ -204,6 +205,7 @@ export class TerrainRenderer extends BaseRenderer {
     this.moonLight.shadow.camera.bottom = -60;
     this.moonLight.shadow.bias = -0.001;
     this.scene.add(this.moonLight);
+    this.scene.add(this.moonLight.target); // Add target to scene for proper world-space lighting
 
     // Create visible sun sphere
     const sunGeometry = new THREE.SphereGeometry(5, 16, 16);
@@ -258,11 +260,6 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.sunLight.visible) {
       this.sunLight.target.position.set(0, 0, 0);
       this.sunLight.target.updateMatrixWorld();
-
-      // Update shadow camera to follow sun position
-      this.sunLight.shadow.camera.position.copy(this.sunLight.position);
-      this.sunLight.shadow.camera.lookAt(0, 0, 0);
-      this.sunLight.shadow.camera.updateProjectionMatrix();
     }
 
     // Moon is opposite to sun
@@ -280,11 +277,6 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.moonLight.visible) {
       this.moonLight.target.position.set(0, 0, 0);
       this.moonLight.target.updateMatrixWorld();
-
-      // Update shadow camera to follow moon position
-      this.moonLight.shadow.camera.position.copy(this.moonLight.position);
-      this.moonLight.shadow.camera.lookAt(0, 0, 0);
-      this.moonLight.shadow.camera.updateProjectionMatrix();
     }
 
     // Adjust light intensities based on sun elevation
@@ -454,11 +446,11 @@ export class TerrainRenderer extends BaseRenderer {
     const oceanMaterial = createWaterMaterialTSL({
       opacity: 0.9,
       heightTexture: this.heightTexture, // Pass height texture for depth calculation
-      waterLevel: 2.1 / 15 // Normalized water level (2.1 units / 15 height scale)
+      waterLevel: 2.25 / 15 // Normalized water level (2.25 units / 15 height scale)
     });
 
     this.oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
-    this.oceanMesh.position.y = 2.1; // Water level (0.14 normalized)
+    this.oceanMesh.position.y = 2.25; // Water level (0.15 normalized)
     this.oceanMesh.position.x = 0; // Ensure centered
     this.oceanMesh.position.z = 0; // Ensure centered
     this.oceanMesh.renderOrder = 1; // Render after terrain for proper blending
@@ -647,20 +639,25 @@ export class TerrainRenderer extends BaseRenderer {
         const islandMask = Math.pow(islandShape, 0.6) * (0.6 + islandNoise * 0.4);
 
         if (islandMask > 0.01) {
-          // Base elevation with ultra-smooth beaches
-          if (islandMask < 0.08) {
-            // Deep underwater approach
-            height = 0.05 + islandMask * 0.8;
-          } else if (islandMask < 0.15) {
-            // Shallow water to beach transition
-            const shallowProgress = (islandMask - 0.08) / 0.07;
+          // Base elevation with extended smooth underwater-to-beach transition
+          if (islandMask < 0.05) {
+            // Deep underwater approach with very gradual slope
+            height = 0.03 + islandMask * 1.6;
+          } else if (islandMask < 0.12) {
+            // Mid-depth underwater with smooth rise
+            const midProgress = (islandMask - 0.05) / 0.07;
+            const smoothProgress = smoothstep(0, 1, midProgress);
+            height = 0.11 + smoothProgress * 0.03;
+          } else if (islandMask < 0.2) {
+            // Shallow water approaching beach
+            const shallowProgress = (islandMask - 0.12) / 0.08;
             const smoothProgress = smoothstep(0, 1, shallowProgress);
-            height = 0.11 + smoothProgress * 0.035;
-          } else if (islandMask < 0.25) {
-            // Beach zone with very gentle slope using cosine interpolation
-            const beachProgress = (islandMask - 0.15) / 0.1;
+            height = 0.14 + smoothProgress * 0.012;
+          } else if (islandMask < 0.35) {
+            // Extended beach zone with ultra-gentle slope using cosine
+            const beachProgress = (islandMask - 0.2) / 0.15;
             const cosineProgress = (1 - Math.cos(beachProgress * Math.PI)) * 0.5;
-            height = 0.145 + cosineProgress * 0.025;
+            height = 0.152 + cosineProgress * 0.018;
           } else {
             // Above beach - varied terrain
             height = 0.17 + islandMask * 0.08;

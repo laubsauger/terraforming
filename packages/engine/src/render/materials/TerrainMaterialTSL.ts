@@ -59,11 +59,11 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const normalizedHeight = clamp(heightSample, float(0), float(1));
 
   // Define height thresholds for different terrain types
-  // Water is at 0.14 (2.1/15), so beach should be a very narrow band above that
-  const wetLevel = float(0.135);   // Just below water - wet sand/mud
-  const beachLevel = float(0.145); // Very narrow beach band
-  const sandLevel = float(0.155);  // Sand extends a bit above beach
-  const grassLevel = float(0.18);  // Grass starts higher to avoid cliffs
+  // Water is at 0.15 (2.25/15), so beach should be a smooth transition
+  const wetLevel = float(0.145);   // Just below water - wet sand/mud
+  const beachLevel = float(0.152); // Beach at water line
+  const sandLevel = float(0.165);  // Sand extends above beach
+  const grassLevel = float(0.185);  // Grass starts higher for smooth transition
   const rockLevel = float(0.45);   // Rocky terrain
 
   // Smooth transitions between terrain types
@@ -81,7 +81,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   let terrainColor = mix(color3, snowColor, rockToSnow);
 
   // Add underwater coloring for terrain below water level
-  const waterLevel = float(0.14); // Water level at 2.1/15
+  const waterLevel = float(0.15); // Water level at 2.25/15
   const isUnderwater = step(normalizedHeight, waterLevel);
   const underwaterDepth = clamp(waterLevel.sub(normalizedHeight), float(0), float(1));
 
