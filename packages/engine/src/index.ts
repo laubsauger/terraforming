@@ -23,7 +23,7 @@ export type {
 export interface Engine {
   canvas: HTMLCanvasElement;
   opts: EngineOpts;
-  setRunState(paused: boolean): void;
+  setRunState(running: boolean): void;
   setTimeScale(mult: number): void;
   setQuality(opts: QualityOpts): void;
   brush: {
@@ -96,12 +96,13 @@ class StubEngine implements Engine {
   initialize(): void {
     this.canvas.width = this.canvas.clientWidth || 1280;
     this.canvas.height = this.canvas.clientHeight || 720;
-    this.startLoop();
+    // Don't start the loop - wait for explicit setRunState call
+    // this.startLoop();
   }
 
-  setRunState(paused: boolean): void {
-    this.paused = paused;
-    if (!paused) {
+  setRunState(running: boolean): void {
+    this.paused = !running;
+    if (running) {
       this.startLoop();
     }
   }

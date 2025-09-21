@@ -17,10 +17,11 @@
     "test": "echo 'no tests yet for @terraforming/engine'"
   },
   "dependencies": {
-    "three": "^0.162.0",
-    "@terraforming/types": "workspace:*"
+    "@terraforming/types": "workspace:*",
+    "three": "^0.162.0"
   },
   "devDependencies": {
+    "@types/three": "^0.180.0",
     "@webgpu/types": "^0.1.43"
   }
 }

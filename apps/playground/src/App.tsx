@@ -6,6 +6,7 @@ import type { PerfSample } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
+import { BrushSettings } from '@playground/components/BrushSettings';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
@@ -20,6 +21,8 @@ export function App() {
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<InteractionTool>('select');
+  const [brushSize, setBrushSize] = useState(10);
+  const [brushStrength, setBrushStrength] = useState(0.5);
 
   const toolbarActions = useMemo(
     () => [
@@ -131,6 +134,29 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleToolChange, shortcutMap]);
 
+  useEffect(() => {
+    const handleWheel = (event: WheelEvent) => {
+      // Only handle when over the canvas
+      const target = event.target as HTMLElement | null;
+      if (!target || !target.closest('canvas')) return;
+
+      // Prevent page scroll
+      event.preventDefault();
+
+      // Calculate size change
+      const delta = event.deltaY > 0 ? -1 : 1;
+      const step = event.shiftKey ? 1 : 5; // Fine control with shift
+
+      setBrushSize(prev => {
+        const newSize = prev + (delta * step);
+        return Math.max(1, Math.min(50, newSize));
+      });
+    };
+
+    window.addEventListener('wheel', handleWheel, { passive: false });
+    return () => window.removeEventListener('wheel', handleWheel);
+  }, []);
+
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[radial-gradient(circle_at_top,#1b2735,#090a0f)]">
       <canvas ref={canvasRef} className="block h-full w-full" />
@@ -147,6 +173,16 @@ export function App() {
         onToolChange={handleToolChange}
         className="absolute top-1/2 right-4 -translate-y-1/2"
       />
+
+      {activeTool !== 'select' && (
+        <BrushSettings
+          brushSize={brushSize}
+          brushStrength={brushStrength}
+          onSizeChange={setBrushSize}
+          onStrengthChange={setBrushStrength}
+          className="absolute top-1/2 right-20 -translate-y-1/2"
+        />
+      )}
 
       <StatsPanel />
 
