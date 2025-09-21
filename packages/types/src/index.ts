@@ -27,8 +27,10 @@ export interface Source {
 }
 
 export type DebugOverlay =
+  | 'height'
   | 'flow'
   | 'accumulation'
+  | 'erosion'
   | 'pools'
   | 'sediment'
   | 'lava'

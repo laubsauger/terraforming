@@ -40,11 +40,13 @@ const PANEL_CLASS = [
 
 const OVERLAY_OPTIONS: OverlayOption[] = [
   'none',
-  'accumulation',
+  'height',
   'flow',
-  'lava',
+  'accumulation',
+  'erosion',
   'pools',
   'sediment',
+  'lava',
   'temperature',
 ];
 

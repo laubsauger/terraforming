@@ -7,6 +7,7 @@ import type {
   Source,
   Unsub,
 } from '@terraforming/types';
+import { TerrainRenderer } from './render/TerrainRenderer';
 
 export type {
   BrushOp,
@@ -75,6 +76,7 @@ class StubEngine implements Engine {
   public readonly canvas: HTMLCanvasElement;
   public readonly opts: EngineOpts;
 
+  private renderer?: TerrainRenderer;
   private paused = false;
   private timeScale = 1;
   private quality: QualityOpts = { simResolution: 512, simSubsteps: 1 };
@@ -93,9 +95,21 @@ class StubEngine implements Engine {
     this.opts = opts;
   }
 
-  initialize(): void {
+  async initialize(): Promise<void> {
     this.canvas.width = this.canvas.clientWidth || 1280;
     this.canvas.height = this.canvas.clientHeight || 720;
+
+    // Initialize the renderer
+    try {
+      this.renderer = new TerrainRenderer({
+        canvas: this.canvas,
+        gridSize: 256,
+        terrainSize: 100,
+      });
+    } catch (error) {
+      console.error('Failed to initialize renderer:', error);
+    }
+
     // Don't start the loop - wait for explicit setRunState call
     // this.startLoop();
   }
@@ -135,6 +149,21 @@ class StubEngine implements Engine {
     return {
       setOverlay: (kind: DebugOverlay | 'none') => {
         this.overlay = kind;
+        // Update renderer debug mode
+        if (this.renderer) {
+          const debugModeMap: Record<DebugOverlay | 'none', number> = {
+            'none': 0,
+            'height': 8,
+            'flow': 1,
+            'accumulation': 2,
+            'erosion': 3,
+            'pools': 5,
+            'sediment': 7,
+            'lava': 4,
+            'temperature': 6,
+          };
+          this.renderer.setDebugMode(debugModeMap[kind] || 0);
+        }
       },
     };
   }
@@ -175,6 +204,12 @@ class StubEngine implements Engine {
 
       this.frameId += 1;
       this.drainBrushQueue();
+
+      // Render the scene
+      if (this.renderer) {
+        this.renderer.render();
+      }
+
       this.emitPerfSample(deltaMs);
 
       this.rafHandle = requestAnimationFrame(tick);
