@@ -110,6 +110,27 @@ export abstract class BaseRenderer {
   }
 
   /**
+   * Get renderer info for performance monitoring
+   */
+  public getRendererInfo() {
+    return this.renderer.info;
+  }
+
+  /**
+   * Get GPU timing if available
+   */
+  public getGPUTiming(): number | null {
+    // Check if the renderer has timing information available
+    if (this.renderer.info && 'render' in this.renderer.info) {
+      const renderInfo = this.renderer.info.render as any;
+      if (renderInfo && typeof renderInfo.frame === 'number') {
+        return renderInfo.frame;
+      }
+    }
+    return null;
+  }
+
+  /**
    * Setup resize handling
    */
   private setupResizeHandling(): void {

@@ -43,8 +43,8 @@ export class TerrainRenderer extends BaseRenderer {
     this.scene.background = new THREE.Color(0x87CEEB); // Sky blue
     this.scene.fog = new THREE.Fog(0x87CEEB, 100, 500);
 
-    // Setup camera
-    this.camera.position.set(50, 30, 50);
+    // Setup camera - position opposite to main light for better illumination
+    this.camera.position.set(-45, 35, -45);
     this.camera.lookAt(0, 0, 0);
 
     // Setup orbit controls
@@ -54,6 +54,9 @@ export class TerrainRenderer extends BaseRenderer {
     this.controls.minDistance = 10;
     this.controls.maxDistance = 200;
     this.controls.maxPolarAngle = Math.PI / 2.1; // Don't go below ground
+
+    // Setup shift key handling to disable camera controls during brush adjustment
+    this.setupShiftKeyHandling();
 
     // Setup lighting
     this.setupLighting();
@@ -84,21 +87,105 @@ export class TerrainRenderer extends BaseRenderer {
     console.log('TerrainRenderer: Ocean mesh added:', !!this.oceanMesh);
   }
 
+  /**
+   * Get the terrain mesh for raycasting
+   */
+  public getTerrainMesh(): THREE.Mesh | undefined {
+    return this.terrainMesh;
+  }
+
+  /**
+   * Get the height texture for terrain-following cursor
+   */
+  public getHeightTexture(): THREE.DataTexture {
+    return this.heightTexture;
+  }
+
+  /**
+   * Setup shift key handling to disable camera controls during brush adjustment
+   */
+  private setupShiftKeyHandling(): void {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') {
+        this.controls.enabled = false;
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.key === 'Shift') {
+        this.controls.enabled = true;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+
+    // Store references for cleanup
+    (this as any)._keyHandlers = { handleKeyDown, handleKeyUp };
+  }
+
+  /**
+   * Get height at world coordinates by sampling height texture
+   */
+  public getHeightAtWorldPos(worldX: number, worldZ: number): number {
+    // Convert world coordinates to texture coordinates
+    const halfSize = this.terrainSize / 2;
+    const u = (worldX + halfSize) / this.terrainSize;
+    const v = (worldZ + halfSize) / this.terrainSize;
+
+    // Clamp to texture bounds
+    const clampedU = Math.max(0, Math.min(1, u));
+    const clampedV = Math.max(0, Math.min(1, v));
+
+    // Sample from height texture
+    const textureSize = this.gridSize;
+    const x = Math.floor(clampedU * (textureSize - 1));
+    const y = Math.floor(clampedV * (textureSize - 1));
+
+    const data = this.heightTexture.image.data as Float32Array;
+    const index = (y * textureSize + x) * 4; // RGBA format
+    const heightValue = data[index]; // Height is stored in R channel
+
+    // Apply height scale (matching the material)
+    return heightValue * 15; // Same scale as material
+  }
+
   private setupLighting(): void {
-    // Ambient light - slightly warmer
-    const ambientLight = new THREE.AmbientLight(0xfff5e6, 0.5);
+    // Enable shadow mapping on renderer
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Better quality soft shadows
+
+    // Ambient light - slightly increased for better overall illumination
+    const ambientLight = new THREE.AmbientLight(0xfff5e6, 0.4);
     this.scene.add(ambientLight);
 
-    // Directional light (sun) - stronger for better shading
+    // Main directional light (sun) - with shadows enabled
     const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
     directionalLight.position.set(30, 50, 30);
-    directionalLight.castShadow = false; // Disable shadows for better performance
+    directionalLight.castShadow = true;
+
+    // Configure shadow camera for better quality
+    directionalLight.shadow.mapSize.width = 2048;
+    directionalLight.shadow.mapSize.height = 2048;
+    directionalLight.shadow.camera.near = 10;
+    directionalLight.shadow.camera.far = 200;
+    directionalLight.shadow.camera.left = -50;
+    directionalLight.shadow.camera.right = 50;
+    directionalLight.shadow.camera.top = 50;
+    directionalLight.shadow.camera.bottom = -50;
+    directionalLight.shadow.bias = -0.0005;
+
     this.scene.add(directionalLight);
 
-    // Add a second fill light from opposite direction
-    const fillLight = new THREE.DirectionalLight(0x8090ff, 0.3);
-    fillLight.position.set(-30, 20, -30);
+    // Strong fill light from camera side (no shadows) - illuminates terrain features
+    const fillLight = new THREE.DirectionalLight(0xa0b0ff, 0.5);
+    fillLight.position.set(-35, 40, -35); // Same side as camera
     this.scene.add(fillLight);
+
+    // Additional side light for better form definition
+    const sideLight = new THREE.DirectionalLight(0xffe0a0, 0.3);
+    sideLight.position.set(0, 30, -50); // From the side
+    this.scene.add(sideLight);
   }
 
   private createDataTexture(): THREE.DataTexture {
@@ -144,8 +231,8 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Create mesh - height displacement happens in vertex shader via TSL
     this.terrainMesh = new THREE.Mesh(geometry, material);
+    this.terrainMesh.castShadow = true;
     this.terrainMesh.receiveShadow = true;
-    this.terrainMesh.castShadow = false; // Don't cast shadows for performance
     this.scene.add(this.terrainMesh);
 
     // No need to update vertices - GPU handles displacement via heightTexture
@@ -179,12 +266,14 @@ export class TerrainRenderer extends BaseRenderer {
 
     const waterMaterial = createWaterMaterialTSL({
       color: new THREE.Color(0x0099cc),
-      opacity: 0.7
+      opacity: 0.4,
+      depthTexture: this.waterDepthTexture
     });
 
     this.waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
-    this.waterMesh.position.y = 0.6; // Slightly above ocean
+    this.waterMesh.position.y = 0.3; // Lower water level to show shallow areas
     this.waterMesh.visible = false; // Start hidden until we have water depth data
+    this.waterMesh.receiveShadow = true;
     this.scene.add(this.waterMesh);
 
     // Create lava surface (initially invisible)
@@ -203,8 +292,10 @@ export class TerrainRenderer extends BaseRenderer {
     });
 
     this.lavaMesh = new THREE.Mesh(lavaGeometry, lavaMaterial);
-    this.lavaMesh.position.y = 0.05; // Slightly above terrain, below water
+    this.lavaMesh.position.y = 0.02; // Slightly above terrain, below water
     this.lavaMesh.visible = false; // Start hidden
+    this.lavaMesh.castShadow = true;
+    this.lavaMesh.receiveShadow = true;
     this.scene.add(this.lavaMesh);
   }
 
@@ -225,9 +316,9 @@ private generateTestTerrain(): void {
         const dist = Math.sqrt(nx * nx + ny * ny);
 
         // Start with base island shape (circular falloff)
-        let height = Math.max(0, 1 - dist * 2.2) * 0.3; // Gentler base shape
+        let height = Math.max(0, 1 - dist * 2.5) * 0.35; // Main island
 
-        // Add smooth mountain features
+        // Add smooth mountain features to main island
         if (height > 0.02) {
           // Smooth mountain ridge using smoother functions
           const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 8) * 0.15;
@@ -242,16 +333,45 @@ private generateTestTerrain(): void {
           height += Math.sin(nx * Math.PI * 2) * Math.cos(ny * Math.PI * 2) * 0.01;
         }
 
-        // Smooth beach transitions with smoother interpolation
-        if (dist > 0.3 && dist < 0.45) {
-          const t = Math.max(0, Math.min(1, (dist - 0.3) / 0.15));
-          const beachFactor = t * t * (3 - 2 * t); // smoothstep
-          height = height * (1 - beachFactor) + 0.02 * beachFactor;
+        // Add smaller islands and sandbanks
+        // Small island to the northeast
+        const island1Dist = Math.sqrt((nx - 0.25) * (nx - 0.25) + (ny - 0.2) * (ny - 0.2));
+        const island1Height = Math.max(0, 1 - island1Dist * 8) * 0.08;
+        height = Math.max(height, island1Height);
+
+        // Small island to the southwest
+        const island2Dist = Math.sqrt((nx + 0.3) * (nx + 0.3) + (ny + 0.15) * (ny + 0.15));
+        const island2Height = Math.max(0, 1 - island2Dist * 12) * 0.06;
+        height = Math.max(height, island2Height);
+
+        // Sandbank to the east
+        const sandbank1Dist = Math.sqrt((nx - 0.35) * (nx - 0.35) + (ny - 0.05) * (ny - 0.05));
+        const sandbank1Height = Math.max(0, 1 - sandbank1Dist * 6) * 0.04;
+        height = Math.max(height, sandbank1Height);
+
+        // Sandbank to the west (elongated)
+        const sandbank2DistX = Math.abs(nx + 0.28) * 3;
+        const sandbank2DistY = Math.abs(ny + 0.08) * 8;
+        const sandbank2Dist = Math.sqrt(sandbank2DistX * sandbank2DistX + sandbank2DistY * sandbank2DistY);
+        const sandbank2Height = Math.max(0, 1 - sandbank2Dist * 1.5) * 0.035;
+        height = Math.max(height, sandbank2Height);
+
+        // Create much more gradual beach transitions
+        if (height > 0.02 && dist > 0.25) {
+          const beachStart = 0.25;
+          const beachEnd = 0.5;
+          if (dist > beachStart && dist < beachEnd) {
+            const t = Math.max(0, Math.min(1, (dist - beachStart) / (beachEnd - beachStart)));
+            const beachFactor = t * t * (3 - 2 * t); // smoothstep
+            height = height * (1 - beachFactor) + 0.01 * beachFactor;
+          }
         }
 
-        // Ensure water level around the island
-        if (dist > 0.45) {
-          height = 0.02; // Very slight underwater depth
+        // Ocean floor with some variation
+        if (dist > 0.5) {
+          // Varying ocean floor depth
+          const oceanDepth = 0.005 + Math.sin(nx * 8) * Math.cos(ny * 6) * 0.002;
+          height = Math.max(height, oceanDepth);
         }
 
         // Clamp to valid range
@@ -333,6 +453,13 @@ private generateTestTerrain(): void {
 
   public override dispose(): void {
     this.controls.dispose();
+
+    // Clean up shift key handlers
+    const keyHandlers = (this as any)._keyHandlers;
+    if (keyHandlers) {
+      window.removeEventListener('keydown', keyHandlers.handleKeyDown);
+      window.removeEventListener('keyup', keyHandlers.handleKeyUp);
+    }
 
     // Dispose textures
     this.heightTexture.dispose();

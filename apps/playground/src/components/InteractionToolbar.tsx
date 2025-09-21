@@ -22,6 +22,7 @@ export interface ToolbarAction {
   label: string;
   icon: ReactNode;
   shortcut: string;
+  color?: string;
 }
 
 export interface InteractionToolbarProps {
@@ -55,6 +56,7 @@ export function InteractionToolbar({ actions, activeTool, onToolChange, classNam
         {formattedActions.map((tool) => {
           const isActive = tool.id === activeTool;
           const shortcutAttr = tool.shortcut.toLowerCase();
+          const toolColor = tool.color;
           const button = (
             <ToolbarPrimitive.Button
               key={tool.id}
@@ -65,12 +67,22 @@ export function InteractionToolbar({ actions, activeTool, onToolChange, classNam
                 expanded ? 'w-full justify-start gap-3' : 'w-10 justify-center',
                 isActive && 'bg-primary/80 text-primary-foreground shadow'
               )}
+              style={toolColor && isActive ? {
+                backgroundColor: `${toolColor}20`,
+                borderColor: toolColor,
+                color: toolColor
+              } : undefined}
               aria-label={`${tool.label} (${tool.shortcut.toUpperCase()})`}
               aria-pressed={isActive}
               aria-keyshortcuts={shortcutAttr}
               onClick={() => onToolChange(tool.id)}
             >
-              <span className="flex h-8 w-8 items-center justify-center">{tool.icon}</span>
+              <span
+                className="flex h-8 w-8 items-center justify-center"
+                style={toolColor ? { color: toolColor } : undefined}
+              >
+                {tool.icon}
+              </span>
               {expanded && (
                 <span className="flex flex-1 items-center justify-between text-sm font-medium text-foreground">
                   <span className="capitalize">{tool.label}</span>

@@ -12,7 +12,7 @@ interface BrushSettingsProps {
 }
 
 const BRUSH_SIZE_MIN = 1;
-const BRUSH_SIZE_MAX = 50;
+const BRUSH_SIZE_MAX = 15; // Reduced from 50 to fit world size
 const BRUSH_STRENGTH_MIN = 0.1;
 const BRUSH_STRENGTH_MAX = 1.0;
 
@@ -30,8 +30,8 @@ export function BrushSettings({
 
   return (
     <div className={`space-y-4 rounded-lg bg-background/95 backdrop-blur border p-3 ${className}`}>
-      <div className="space-y-2">
-        <div className="flex items-center justify-between">
+      <div>
+        <div className="flex h-6 mb-2 text-muted-foreground items-center justify-between">
           <Label htmlFor="brush-size" className="text-xs">
             Size: {Math.round(brushSize)}
           </Label>
@@ -67,8 +67,8 @@ export function BrushSettings({
         />
       </div>
 
-      <div className="space-y-2">
-        <Label htmlFor="brush-strength" className="text-xs">
+      <div>
+        <Label htmlFor="brush-strength" className="h-6 items-center flex mb-2 text-xs text-muted-foreground">
           Strength: {Math.round(brushStrength * 100)}%
         </Label>
         <Slider

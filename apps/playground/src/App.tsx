@@ -7,6 +7,8 @@ import { initEngine } from '@terraforming/engine';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
 import { BrushSettings } from '@playground/components/BrushSettings';
+import { ToolCursor, TOOL_COLORS } from '@playground/components/ToolCursor';
+import { TerrainCursor } from '@playground/components/TerrainCursor';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
@@ -21,8 +23,10 @@ export function App() {
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<InteractionTool>('select');
-  const [brushSize, setBrushSize] = useState(10);
+  const [brushSize, setBrushSize] = useState(5); // Reduced from 10 to 5 for better initial size
   const [brushStrength, setBrushStrength] = useState(0.5);
+  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  const [showCursor, setShowCursor] = useState(false);
 
   const toolbarActions = useMemo(
     () => [
@@ -31,30 +35,35 @@ export function App() {
         label: 'Select tool',
         icon: <Pointer className="h-4 w-4" />,
         shortcut: 'q',
+        color: TOOL_COLORS.select,
       },
       {
         id: 'brush-raise' as InteractionTool,
         label: 'Raise terrain',
         icon: <Wand2 className="h-4 w-4" />,
         shortcut: 'w',
+        color: TOOL_COLORS['brush-raise'],
       },
       {
         id: 'brush-smooth' as InteractionTool,
         label: 'Smooth terrain',
         icon: <Waves className="h-4 w-4" />,
         shortcut: 'e',
+        color: TOOL_COLORS['brush-smooth'],
       },
       {
         id: 'add-water-source' as InteractionTool,
         label: 'Add water source',
         icon: <Droplets className="h-4 w-4" />,
         shortcut: 'r',
+        color: TOOL_COLORS['add-water-source'],
       },
       {
         id: 'add-lava-source' as InteractionTool,
         label: 'Add lava source',
         icon: <Flame className="h-4 w-4" />,
         shortcut: 't',
+        color: TOOL_COLORS['add-lava-source'],
       },
     ],
     []
@@ -134,22 +143,50 @@ export function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleToolChange, shortcutMap]);
 
+  // Mouse tracking for tool cursor
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      setMousePosition({ x: event.clientX, y: event.clientY });
+    };
+
+    const handleMouseEnter = () => setShowCursor(true);
+    const handleMouseLeave = () => setShowCursor(false);
+
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.addEventListener('mousemove', handleMouseMove);
+      canvas.addEventListener('mouseenter', handleMouseEnter);
+      canvas.addEventListener('mouseleave', handleMouseLeave);
+
+      return () => {
+        canvas.removeEventListener('mousemove', handleMouseMove);
+        canvas.removeEventListener('mouseenter', handleMouseEnter);
+        canvas.removeEventListener('mouseleave', handleMouseLeave);
+      };
+    }
+
+    return () => {}; // No cleanup needed if canvas is not available
+  }, []);
+
   useEffect(() => {
     const handleWheel = (event: WheelEvent) => {
+      // Only handle brush size adjustment when Shift is held
+      if (!event.shiftKey) return;
+
       // Only handle when over the canvas
       const target = event.target as HTMLElement | null;
       if (!target || !target.closest('canvas')) return;
 
-      // Prevent page scroll
+      // Prevent page scroll when adjusting brush size
       event.preventDefault();
 
-      // Calculate size change
+      // Calculate size change (fine control with shift)
       const delta = event.deltaY > 0 ? -1 : 1;
-      const step = event.shiftKey ? 1 : 5; // Fine control with shift
+      const step = 1; // Fine step size for shift+scroll
 
       setBrushSize(prev => {
         const newSize = prev + (delta * step);
-        return Math.max(1, Math.min(50, newSize));
+        return Math.max(1, Math.min(15, newSize)); // Reduced max from 50 to 15
       });
     };
 
@@ -185,6 +222,25 @@ export function App() {
       )}
 
       <StatsPanel />
+
+      {/* Show appropriate cursor based on tool type */}
+      {activeTool === 'select' ? (
+        <ToolCursor
+          activeTool={activeTool}
+          brushSize={brushSize}
+          isVisible={showCursor}
+          position={mousePosition}
+        />
+      ) : (
+        <TerrainCursor
+          activeTool={activeTool}
+          brushSize={brushSize}
+          isVisible={showCursor}
+          engine={engine}
+          mousePosition={mousePosition}
+          canvasElement={canvasRef.current}
+        />
+      )}
 
       {state === 'pending' && (
         <StatusToast message="Initializing engine…" />

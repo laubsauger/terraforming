@@ -7,6 +7,7 @@ import type {
   Source,
   Unsub,
 } from '@terraforming/types';
+import * as THREE from 'three/webgpu';
 import { TerrainRenderer } from './render/TerrainRenderer';
 
 export type {
@@ -39,6 +40,10 @@ export interface Engine {
   perf: {
     onSample(cb: (sample: PerfSample) => void): Unsub;
   };
+  getScene(): THREE.Scene | null;
+  getCamera(): THREE.Camera | null;
+  getTerrainMesh(): THREE.Mesh | null;
+  getTerrainHeightAt(worldX: number, worldZ: number): number | null;
   dispose(): void;
 }
 
@@ -182,6 +187,34 @@ class StubEngine implements Engine {
     };
   }
 
+  /**
+   * Get Three.js scene for advanced interaction
+   */
+  getScene(): THREE.Scene | null {
+    return this.renderer?.getScene() || null;
+  }
+
+  /**
+   * Get Three.js camera for raycasting
+   */
+  getCamera(): THREE.Camera | null {
+    return this.renderer?.getCamera() || null;
+  }
+
+  /**
+   * Get terrain mesh for raycasting
+   */
+  getTerrainMesh(): THREE.Mesh | null {
+    return this.renderer?.getTerrainMesh() || null;
+  }
+
+  /**
+   * Get height at world position by sampling terrain height texture
+   */
+  getTerrainHeightAt(worldX: number, worldZ: number): number | null {
+    return this.renderer?.getHeightAtWorldPos(worldX, worldZ) || null;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.renderingActive = false;
@@ -254,18 +287,21 @@ class StubEngine implements Engine {
     let computeDispatches = 0;
     let estimatedVrAmMb = 0;
 
-    if (this.renderer?.renderer) {
-      const info = this.renderer.renderer.info;
+    if (this.renderer) {
+      const info = this.renderer.getRendererInfo();
       // WebGPU renderer stats (if available)
       drawCalls = info.render?.calls || 0;
       // Estimate VRAM usage (rough approximation)
       estimatedVrAmMb = Math.round((info.memory?.geometries || 0) * 0.001);
     }
 
+    // Try to get GPU timing
+    const gpuFrameMs = this.renderer ? this.renderer.getGPUTiming() : null;
+
     const sample: PerfSample = {
       frameId: this.frameId,
       cpuFrameMs,
-      gpuFrameMs: null, // WebGPU timing requires additional setup
+      gpuFrameMs,
       passes: [
         { name: 'height/brush', gpuMs: null },
         { name: 'fluids', gpuMs: null },

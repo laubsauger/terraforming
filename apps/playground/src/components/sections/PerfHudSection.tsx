@@ -14,7 +14,7 @@ export function PerfHudSection({ sample, onSnapshot }: PerfHudSectionProps) {
         {sample ? (
           <>
             <div className="flex flex-col gap-1 text-foreground">
-              <span className="text-sm font-semibold">Frame #{sample.frameId}</span>
+              <span className="text-sm font-semibold">Frame #{sample.frameId.toString().padStart(6)}</span>
               <span className="font-mono text-xs">
                 CPU {sample.cpuFrameMs.toFixed(2).padStart(6)} ms · GPU{' '}
                 {sample.gpuFrameMs === null ? '   N/A' : `${sample.gpuFrameMs.toFixed(2).padStart(6)} ms`}
