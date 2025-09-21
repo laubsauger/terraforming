@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TerraformingUI } from '@playground/components/TerraformingUI';
 import type { Engine } from '@terraforming/engine';
 import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
@@ -26,30 +26,43 @@ export function App() {
         id: 'select' as InteractionTool,
         label: 'Select tool',
         icon: <Pointer className="h-4 w-4" />,
+        shortcut: 'q',
       },
       {
         id: 'brush-raise' as InteractionTool,
         label: 'Raise terrain',
         icon: <Wand2 className="h-4 w-4" />,
+        shortcut: 'w',
       },
       {
         id: 'brush-smooth' as InteractionTool,
         label: 'Smooth terrain',
         icon: <Waves className="h-4 w-4" />,
+        shortcut: 'e',
       },
       {
         id: 'add-water-source' as InteractionTool,
         label: 'Add water source',
         icon: <Droplets className="h-4 w-4" />,
+        shortcut: 'r',
       },
       {
         id: 'add-lava-source' as InteractionTool,
         label: 'Add lava source',
         icon: <Flame className="h-4 w-4" />,
+        shortcut: 't',
       },
     ],
     []
   );
+
+  const shortcutMap = useMemo(() => {
+    const map = new Map<string, InteractionTool>();
+    toolbarActions.forEach(({ shortcut, id }) => {
+      map.set(shortcut.toLowerCase(), id);
+    });
+    return map;
+  }, [toolbarActions]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -91,10 +104,31 @@ export function App() {
     console.log('snapshot requested', sample);
   };
 
-  const handleToolChange = (tool: InteractionTool) => {
+  const handleToolChange = useCallback((tool: InteractionTool) => {
     setActiveTool(tool);
     // TODO: wire tool selection into engine brush/tool system
-  };
+  }, []);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      const key = event.key.toLowerCase();
+      const tool = shortcutMap.get(key);
+      if (!tool) return;
+
+      const target = event.target as HTMLElement | null;
+      if (target && target.closest('input, textarea, select, [contenteditable="true"]')) {
+        return;
+      }
+
+      event.preventDefault();
+      handleToolChange(tool);
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleToolChange, shortcutMap]);
 
   return (
     <div className="relative flex h-screen w-screen overflow-hidden bg-[radial-gradient(circle_at_top,#1b2735,#090a0f)]">
@@ -110,7 +144,7 @@ export function App() {
         actions={toolbarActions}
         activeTool={activeTool}
         onToolChange={handleToolChange}
-        className="absolute top-1/2 right-6 -translate-y-1/2"
+        className="absolute top-1/2 right-4 -translate-y-1/2"
       />
 
       {state === 'pending' && (

@@ -6,3 +6,5 @@ export {
   PopoverContent,
   PopoverTrigger,
 } from './popover';
+
+export { TooltipProvider, Tooltip, TooltipTrigger, TooltipContent } from './tooltip';
