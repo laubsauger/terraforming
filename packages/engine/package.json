@@ -1,0 +1,25 @@
+{
+  "name": "@terraforming/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'no lint configured for @terraforming/engine'",
+    "test": "echo 'no tests yet for @terraforming/engine'"
+  },
+  "dependencies": {
+    "three": "^0.162.0",
+    "@terraforming/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.43"
+  }
+}

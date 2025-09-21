@@ -1,0 +1,24 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "jsx": "react-jsx",
+    "types": [
+      "node",
+      "@webgpu/types"
+    ]
+  },
+  "include": [
+    "src"
+  ],
+  "references": [
+    {
+      "path": "../../packages/engine/tsconfig.json"
+    },
+    {
+      "path": "../../packages/types/tsconfig.json"
+    }
+  ]
+}

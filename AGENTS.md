@@ -24,7 +24,7 @@
 
 * **Purpose:** Bootstrap and enforce the monorepo structure.
 * **Inputs:** package matrix (pnpm, Vite, TS), target browsers.
-* **Outputs:** `pnpm` workspace, `apps/playground`, `packages/engine`, `packages/ui` with lint/format/test scripts.
+* **Outputs:** `pnpm` workspace, `apps/playground`, `packages/engine`, `apps/playground/src/ui` with lint/format/test scripts.
 * **Accepts when:** Clean install, `pnpm -r build` succeeds, dev server hot reloads, WGSL loader works.
 
 ### A2. **Sim Agent** (Terrain/Fluids/Erosion/Lava)
@@ -158,7 +158,7 @@ engine.debug.setOverlay(kind: DebugOverlay | 'none'): void;
 engine.perf.onSample((sample: GpuTimings & Counters) => void): Unsub;
 ```
 
-### `packages/ui`
+### `apps/playground/src/ui`
 
 * Pure React: consumes `engine` methods, renders HUD & panels.
 

@@ -1,0 +1,13 @@
+{
+  "name": "@terraforming/assets",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "files": ["src"],
+  "scripts": {
+    "build": "echo 'nothing to build for @terraforming/assets'",
+    "typecheck": "echo 'nothing to typecheck for @terraforming/assets'",
+    "lint": "echo 'nothing to lint for @terraforming/assets'",
+    "test": "echo 'no tests yet for @terraforming/assets'"
+  }
+}

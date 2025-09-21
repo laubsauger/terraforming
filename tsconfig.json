@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "DOM",
+      "DOM.Iterable",
+      "ES2022"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "moduleDetection": "force",
+    "strict": true,
+    "allowJs": false,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "useUnknownInCatchVariables": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": [
+      "node"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@terraforming/types": [
+        "packages/types/src"
+      ],
+      "@terraforming/engine": [
+        "packages/engine/src"
+      ],
+      "@playground/*": [
+        "apps/playground/src/*"
+      ]
+    }
+  },
+  "include": [
+    "packages",
+    "apps",
+    "scripts",
+    "docs"
+  ],
+  "exclude": [
+    "dist",
+    "build",
+    "tmp",
+    "node_modules"
+  ]
+}

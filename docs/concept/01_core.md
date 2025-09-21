@@ -129,13 +129,14 @@ terraforming-proto/
 │  │  └─ perf/
 │  │     ├─ gpuTimers.ts         # GPUQuerySet helpers
 │  │     └─ counters.ts          # frame stats, buffer sizes
-│  ├─ ui/                        # React app (controls, HUD)
-│  │  ├─ components/
-│  │  ├─ hooks/
-│  │  └─ pages/
+│  ├─ types/                     # shared TS contracts & DTOs
 │  └─ assets/                    # textures, LUTs
 ├─ apps/
-│  └─ playground/                # Vite app shell that consumes engine + ui
+│  └─ playground/                # Vite app shell (React)
+│     ├─ src/
+│     │  ├─ ui/                   # HUD, controls, Zustand store
+│     │  ├─ components/ui/       # shadcn primitives (app-local)
+│     │  └─ lib/
 │     ├─ main.tsx
 │     └─ App.tsx
 ├─ pnpm-workspace.yaml
@@ -148,7 +149,10 @@ terraforming-proto/
 
 * **Vite** for fast dev & WGSL loader (custom plugin to import `.wgsl`).
 * **Engine package = framework-agnostic** (pure TS + WebGPU + Three).
-* **UI package = React only**; keeps engine clean and reusable.
+* **HUD lives inside apps/playground/src/ui**; still React-only, but shipped with the playground for direct iteration.
+* **Shared types in @terraforming/types** to decouple engine/app and stabilise DTOs.
+* **UI state via Zustand slices**; dedicated store per engine instance to avoid prop drilling and control re-render surfaces.
+* **Tailwind v4 + shadcn UI kit** provide consistent styling primitives for the playground shell.
 
 ---
 
