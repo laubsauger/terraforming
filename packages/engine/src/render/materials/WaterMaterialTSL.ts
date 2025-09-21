@@ -1,6 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { vec3, vec2, float, mix, uv, sin, uniform } from 'three/tsl';
-
+import { vec3, float, mix, uv, vec2, time, normalMap } from 'three/tsl';
 export interface WaterMaterialTSLOptions {
   color?: THREE.Color;
   opacity?: number;
@@ -27,20 +26,16 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     side: THREE.DoubleSide,
   });
 
-  // Add some subtle animation using a time uniform
-  const timeUniform = uniform(0);
-  const animatedUV = uv().add(vec2(timeUniform.mul(0.02), timeUniform.mul(0.01)));
+  // Animated UV using proper time node for flowing water effect
+  const animatedUV = uv().add(vec2(time.mul(0.02), time.mul(0.01)));
 
   // Simple wave-like normal perturbation for water surface
   const waterColor = vec3(0.0, 0.3, 0.5);
   const shallowColor = vec3(0.0, 0.5, 0.7);
 
-  material.colorNode = mix(waterColor, shallowColor, float(0.5));
-
-  // Update time uniform in animation loop
-  material.onBeforeRender = () => {
-    timeUniform.value = performance.now() / 1000;
-  };
+  // Use animated UV for color variation to simulate flowing water
+  const flowVariation = animatedUV.x.add(animatedUV.y).sin().mul(0.3).add(0.7);
+  material.colorNode = mix(waterColor, shallowColor, flowVariation);
 
   return material;
 }

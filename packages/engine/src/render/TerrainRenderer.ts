@@ -77,6 +77,11 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Generate default island terrain
     this.generateTestTerrain();
+
+    // Debug logging
+    console.log('TerrainRenderer: Scene children count:', this.scene.children.length);
+    console.log('TerrainRenderer: Terrain mesh added:', !!this.terrainMesh);
+    console.log('TerrainRenderer: Ocean mesh added:', !!this.oceanMesh);
   }
 
   private setupLighting(): void {
@@ -319,6 +324,11 @@ private generateTestTerrain(): void {
   public override render(): void {
     this.controls.update();
     super.render();
+
+    // Debug every 60 frames
+    if (Math.floor(Date.now() / 1000) % 2 === 0 && Math.random() < 0.01) {
+      console.log('TerrainRenderer: Rendering with', this.scene.children.length, 'scene children');
+    }
   }
 
   public override dispose(): void {

@@ -249,10 +249,23 @@ class StubEngine implements Engine {
       return;
     }
 
+    // Collect actual stats from WebGPU renderer
+    let drawCalls = 0;
+    let computeDispatches = 0;
+    let estimatedVrAmMb = 0;
+
+    if (this.renderer?.renderer) {
+      const info = this.renderer.renderer.info;
+      // WebGPU renderer stats (if available)
+      drawCalls = info.render?.calls || 0;
+      // Estimate VRAM usage (rough approximation)
+      estimatedVrAmMb = Math.round((info.memory?.geometries || 0) * 0.001);
+    }
+
     const sample: PerfSample = {
       frameId: this.frameId,
       cpuFrameMs,
-      gpuFrameMs: null,
+      gpuFrameMs: null, // WebGPU timing requires additional setup
       passes: [
         { name: 'height/brush', gpuMs: null },
         { name: 'fluids', gpuMs: null },
@@ -261,9 +274,9 @@ class StubEngine implements Engine {
         { name: 'lava', gpuMs: null },
         { name: 'render', gpuMs: null },
       ],
-      computeDispatches: 0,
-      drawCalls: 0,
-      estimatedVrAmMb: 0,
+      computeDispatches,
+      drawCalls,
+      estimatedVrAmMb,
     };
 
     this.sampleListeners.forEach((cb) => cb(sample));

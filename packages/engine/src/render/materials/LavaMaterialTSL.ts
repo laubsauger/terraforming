@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { vec3, vec2, float, mix, uv, sin, cos, texture, uniform } from 'three/tsl';
+import { vec3, float, mix, uv, texture, time, vec2 } from 'three/tsl';
 import type { Texture } from 'three';
 
 export interface LavaMaterialTSLOptions {
@@ -34,18 +34,9 @@ export function createLavaMaterialTSL(options: LavaMaterialTSLOptions = {}): THR
     side: THREE.DoubleSide,
   });
 
-  // Animate lava flow using a time uniform
-  const timeUniform = uniform(0);
-
-  // Create flowing UV distortion
-  const flowSpeed = float(0.1);
-  const distortion1 = sin(uv().x.mul(10).add(timeUniform.mul(flowSpeed)));
-  const distortion2 = cos(uv().y.mul(8).add(timeUniform.mul(flowSpeed.mul(0.7))));
-
-  const distortedUV = uv().add(vec2(
-    distortion1.mul(0.01),
-    distortion2.mul(0.01)
-  ));
+  // Animated UV with proper time node for flowing lava effect
+  const flowOffset = vec2(time.mul(0.05), time.mul(0.03));
+  const distortedUV = uv().add(flowOffset);
 
   // Temperature-based color if we have a temperature map
   const lavaColorNode = temperatureMap
@@ -57,10 +48,9 @@ export function createLavaMaterialTSL(options: LavaMaterialTSLOptions = {}): THR
       })()
     : hotLavaColor;
 
-  // Pulsing emissive effect
-  const pulse = sin(timeUniform.mul(2)).mul(0.2).add(0.8);
-
-  material.emissiveNode = lavaColorNode.mul(pulse);
+  // Pulsing emissive intensity using time
+  const pulseIntensity = time.mul(3.0).sin().mul(0.3).add(1.0);
+  material.emissiveNode = lavaColorNode.mul(pulseIntensity);
   material.colorNode = lavaColorNode;
 
   // Store maps for potential use
@@ -68,11 +58,6 @@ export function createLavaMaterialTSL(options: LavaMaterialTSLOptions = {}): THR
     lavaDepthMap,
     temperatureMap,
     flowMap,
-  };
-
-  // Update time uniform in animation loop
-  material.onBeforeRender = () => {
-    timeUniform.value = performance.now() / 1000;
   };
 
   return material;
