@@ -211,20 +211,24 @@ export class TerrainRenderer extends BaseRenderer {
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target); // Add target to scene for proper world-space lighting
 
-    // Create visible sun sphere
-    const sunGeometry = new THREE.SphereGeometry(5, 16, 16);
+    // Create visible sun sphere - emissive for glow effect
+    const sunGeometry = new THREE.SphereGeometry(8, 32, 32);
     const sunMaterial = new THREE.MeshBasicMaterial({
-      color: 0xffff99
+      color: 0xffd700,
+      fog: false // Don't be affected by fog
     });
     this.sunSphere = new THREE.Mesh(sunGeometry, sunMaterial);
+    this.sunSphere.renderOrder = 999; // Render on top
     this.scene.add(this.sunSphere);
 
-    // Create visible moon sphere
-    const moonGeometry = new THREE.SphereGeometry(4, 16, 16);
+    // Create visible moon sphere - slightly emissive
+    const moonGeometry = new THREE.SphereGeometry(6, 32, 32);
     const moonMaterial = new THREE.MeshBasicMaterial({
-      color: 0xddddff
+      color: 0xffffff,
+      fog: false // Don't be affected by fog
     });
     this.moonSphere = new THREE.Mesh(moonGeometry, moonMaterial);
+    this.moonSphere.renderOrder = 999; // Render on top
     this.scene.add(this.moonSphere);
 
     // Initialize lighting positions
@@ -239,12 +243,12 @@ export class TerrainRenderer extends BaseRenderer {
     const angle = this.timeOfDay * Math.PI * 2;
 
     // Sun arc configuration - more realistic path
-    const sunTilt = Math.PI / 6; // 30 degrees tilt for realistic seasonal arc
+    const sunTilt = Math.PI / 4; // 45 degrees tilt for more pronounced seasonal arc
     const arcRotation = 0; // No rotation for now, will be controllable
 
     // Calculate sun position with better arc
     const orbitRadius = 150; // Much further away to avoid camera occlusion
-    const verticalScale = 0.5; // Lower maximum height for better shadow angles
+    const verticalScale = 0.7; // Higher zenith for more overhead sun at noon
     const baseX = Math.sin(angle) * orbitRadius;
     const baseY = Math.cos(angle) * Math.cos(sunTilt) * orbitRadius * verticalScale;
     const baseZ = Math.cos(angle) * Math.sin(sunTilt) * orbitRadius;
@@ -257,8 +261,10 @@ export class TerrainRenderer extends BaseRenderer {
     // Set sun position and make sphere follow
     this.sunLight.position.set(sunX, Math.max(0, sunY), sunZ);
     this.sunLight.visible = sunY > -5;
-    this.sunSphere.position.copy(this.sunLight.position);
-    this.sunSphere.visible = this.sunLight.visible;
+
+    // Position sun sphere exactly at light source
+    this.sunSphere.position.set(sunX, sunY, sunZ); // Use actual position, even if below horizon
+    this.sunSphere.visible = sunY > -10; // Show slightly below horizon for sunset effect
 
     // Make sun look at center for consistent lighting
     if (this.sunLight.visible) {
@@ -271,6 +277,18 @@ export class TerrainRenderer extends BaseRenderer {
       this.sunLight.shadow.needsUpdate = true;
     }
 
+    // Update sun sphere appearance based on elevation
+    if (this.sunSphere.visible) {
+      const sunMat = this.sunSphere.material as THREE.MeshBasicMaterial;
+      if (sunY < 10 && sunY > -10) {
+        // Sunset/sunrise colors
+        const factor = (sunY + 10) / 20;
+        sunMat.color.setRGB(1.0, 0.6 + factor * 0.4, factor * 0.6);
+      } else {
+        sunMat.color.setHex(0xffd700);
+      }
+    }
+
     // Moon is opposite to sun
     const moonX = -sunX;
     const moonY = -sunY;
@@ -279,8 +297,10 @@ export class TerrainRenderer extends BaseRenderer {
     // Set moon position and make sphere follow
     this.moonLight.position.set(moonX, Math.max(0, moonY), moonZ);
     this.moonLight.visible = moonY > -5;
-    this.moonSphere.position.copy(this.moonLight.position);
-    this.moonSphere.visible = this.moonLight.visible;
+
+    // Position moon sphere exactly at light source
+    this.moonSphere.position.set(moonX, moonY, moonZ); // Use actual position, even if below horizon
+    this.moonSphere.visible = moonY > -10; // Show slightly below horizon for moonrise effect
 
     // Make moon look at center for consistent lighting
     if (this.moonLight.visible) {
@@ -291,6 +311,13 @@ export class TerrainRenderer extends BaseRenderer {
       // Shadow camera needs explicit update to work properly
       this.moonLight.shadow.camera.updateMatrixWorld(true);
       this.moonLight.shadow.needsUpdate = true;
+    }
+
+    // Update moon sphere appearance based on elevation
+    if (this.moonSphere.visible) {
+      const moonMat = this.moonSphere.material as THREE.MeshBasicMaterial;
+      const brightness = Math.max(0.7, (moonY + 10) / 20);
+      moonMat.color.setRGB(brightness, brightness, brightness * 1.05);
     }
 
     // Adjust light intensities based on sun elevation
@@ -443,6 +470,7 @@ export class TerrainRenderer extends BaseRenderer {
     this.terrainMesh = new THREE.Mesh(geometry, material);
     this.terrainMesh.castShadow = true;
     this.terrainMesh.receiveShadow = true;
+    this.terrainMesh.matrixAutoUpdate = true; // Ensure matrix updates
     this.scene.add(this.terrainMesh);
 
     // No need to update vertices - GPU handles displacement via heightTexture
@@ -915,9 +943,10 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   public override render(): void {
+    // Update controls first (camera movement)
     this.controls.update();
 
-    // Update day/night cycle if active
+    // Update day/night cycle if active (independent of camera)
     if (this.dayNightCycleActive) {
       this.timeOfDay += this.cycleSpeed;
       if (this.timeOfDay > 1) {
@@ -926,6 +955,7 @@ export class TerrainRenderer extends BaseRenderer {
       this.updateDayNightCycle();
     }
 
+    // Render the scene
     super.render();
   }
 

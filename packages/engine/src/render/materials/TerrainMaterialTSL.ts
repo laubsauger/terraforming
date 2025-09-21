@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize, cross } from 'three/tsl';
+import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize } from 'three/tsl';
 import type { Texture } from 'three';
 
 export interface TerrainMaterialTSLOptions {
@@ -128,22 +128,34 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   if (normalMap) {
     material.normalNode = texture(normalMap, uv()).xyz;
   } else {
-    // Compute normals from height gradient
+    // Compute normals from height gradient in object space
     // Sample neighboring heights to calculate gradient
     const texelSize = float(1.0 / 512); // Assuming 512x512 heightmap
+    const worldScale = float(terrainSize); // World size of terrain
 
     // Sample heights at neighboring points
-    const hL = texture(heightMap, uv().sub(vec2(texelSize, 0))).r;
-    const hR = texture(heightMap, uv().add(vec2(texelSize, 0))).r;
-    const hD = texture(heightMap, uv().sub(vec2(0, texelSize))).r;
-    const hU = texture(heightMap, uv().add(vec2(0, texelSize))).r;
+    const hL = texture(heightMap, uv().sub(vec2(texelSize, 0))).r.mul(float(heightScale));
+    const hR = texture(heightMap, uv().add(vec2(texelSize, 0))).r.mul(float(heightScale));
+    const hD = texture(heightMap, uv().sub(vec2(0, texelSize))).r.mul(float(heightScale));
+    const hU = texture(heightMap, uv().add(vec2(0, texelSize))).r.mul(float(heightScale));
 
-    // Calculate tangent and bitangent from height differences
-    const tangent = vec3(texelSize.mul(2), hR.sub(hL).mul(float(heightScale)), 0);
-    const bitangent = vec3(0, hU.sub(hD).mul(float(heightScale)), texelSize.mul(2));
+    // Calculate derivatives in world space
+    // The terrain plane is in XZ, with Y up
+    const dx = worldScale.mul(texelSize).mul(2);
+    const dz = worldScale.mul(texelSize).mul(2);
 
-    // Calculate normal as cross product of tangent and bitangent
-    const computedNormal = normalize(cross(tangent, bitangent));
+    // Height differences
+    const dhdx = hR.sub(hL);
+    const dhdz = hU.sub(hD);
+
+    // Normal vector components (terrain is XZ plane with Y up)
+    // Normal = (-dh/dx, 1, -dh/dz) normalized
+    const nx = dhdx.mul(float(-1)).div(dx);
+    const ny = float(1);
+    const nz = dhdz.mul(float(-1)).div(dz);
+
+    // Construct and normalize the normal vector
+    const computedNormal = normalize(vec3(nx, ny, nz));
 
     material.normalNode = computedNormal;
   }
