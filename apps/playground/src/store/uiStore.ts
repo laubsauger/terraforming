@@ -69,7 +69,7 @@ export function createUiStore(
 
   return createStore<UiStore>((set, get) => ({
     run: {
-      paused: initialState.run?.paused ?? false,
+      paused: initialState.run?.paused ?? true,
       setPaused: (value: boolean) =>
         set((state) => ({
           run: {

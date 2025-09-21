@@ -65,6 +65,19 @@
 
 ## 4) Rendering & Visuals
 
+### 4.1 Visual Target & Aesthetic
+
+**Target Visual Reference:** Tropical island environments with vibrant, stylized realism reminiscent of games like Tropico or From Dust. Key characteristics include:
+
+* **Terrain:** Varied elevation from sandy beaches to volcanic peaks with rich color gradients
+* **Water:** Clear turquoise shallows transitioning to deep blue, with visible caustics and foam
+* **Vegetation:** Lush tropical foliage (palm trees, dense undergrowth) placed procedurally based on elevation, moisture, and slope
+* **Materials:** High contrast between white sand beaches, dark volcanic rock, and verdant soil
+* **Atmosphere:** Bright, saturated colors with strong directional lighting creating dramatic shadows
+* **Scale:** Island-scale terraforming where individual beaches, bays, and mountain ridges are clearly distinguishable
+
+### 4.2 Technical Implementation
+
 * **Renderer:** `THREE.WebGPURenderer` with **TSL** node materials where possible; custom WGSL compute for simulation, sampling the results in materials for rendering. (Docs/forums indicate use of WebGPU builds & TSL nodes.) ([GitHub][2])
 * **Terrain draw:** single **mesh grid** (heightfield in vertex stage via texture fetch) with **triplanar** material blending (soil/rock/lava), **screen-space water** overlay or a second pass.
 * **Water:** either render from shallow-water height as a **separate surface** with normals from gradients; cheap refraction/fresnel.

@@ -5,6 +5,7 @@ import { InteractionToolbar, type InteractionTool } from '@playground/components
 import type { PerfSample } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
+import { StatsPanel } from '@playground/components/StatsPanel';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
@@ -146,6 +147,8 @@ export function App() {
         onToolChange={handleToolChange}
         className="absolute top-1/2 right-4 -translate-y-1/2"
       />
+
+      <StatsPanel />
 
       {state === 'pending' && (
         <StatusToast message="Initializing engine…" />
