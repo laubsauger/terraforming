@@ -20,47 +20,91 @@
 
 > Think of each “agent” as a focused persona you can run locally (CLI), in CI, or mentally. Each has inputs, outputs, acceptance criteria, and a tight scope.
 
-### A1. **Scaffold Agent** (Repo/Build)
+### A1. **Scaffold Agent** (Repo/Build) ✅ COMPLETE
 
 * **Purpose:** Bootstrap and enforce the monorepo structure.
 * **Inputs:** package matrix (pnpm, Vite, TS), target browsers.
-* **Outputs:** `pnpm` workspace, `apps/playground`, `packages/engine`, `apps/playground/src/ui` with lint/format/test scripts.
-* **Accepts when:** Clean install, `pnpm -r build` succeeds, dev server hot reloads, WGSL loader works.
+* **Outputs:** `pnpm` workspace, `apps/playground`, `packages/engine`, `packages/types` with build scripts.
+* **Status:** ✅ Complete - monorepo structure established, WGSL loader working, concurrent dev workflow active.
+* **Key Files:** `package.json`, `pnpm-workspace.yaml`, `apps/playground/vite-plugin-wgsl.ts`
 
-### A2. **Sim Agent** (Terrain/Fluids/Erosion/Lava)
+### A2. **Sim Agent** (Terrain/Fluids/Erosion/Lava) 🚧 IN PROGRESS
 
 * **Purpose:** Maintain GPU compute passes and state layouts.
 * **Inputs:** heightfield H, velocity F, accumulation A, depth D (opt), lava L, temperature T.
 * **Outputs:** Updated textures/buffers each tick; ping‑pong management; stability guarantees (CFL, clamps).
-* **Accepts when:** No NaNs/infs; per‑pass GPU timing within budget; visual regressions gated by tests.
+* **Status:** 🚧 Core brush system complete, thermal repose implemented, other systems partial.
+* **Implemented:**
+  - ✅ BrushSystem with mass conservation (workgroup-quota)
+  - ✅ Fields management for GPU textures
+  - ✅ ThermalRepose for angle-of-repose physics
+  - ⚠️  Flow/erosion systems (shaders exist, integration partial)
+* **Key Files:**
+  - `packages/engine/src/sim/BrushSystem.ts`
+  - `packages/engine/src/gpu/shaders/BrushPass_workgroup_quota.wgsl`
+  - `packages/engine/src/gpu/shaders/ThermalRepose.wgsl`
 
-### A3. **Render Agent** (Three.js + WebGPU + Materials)
+### A3. **Render Agent** (Three.js + WebGPU + Materials) ✅ CORE COMPLETE
 
 * **Purpose:** Visual fidelity with minimal bandwidth.
 * **Inputs:** Sim textures (H/F/A/P/D/T/L/C), camera, lights.
-* **Outputs:** Terrain mesh (vertex displacement), water/lava materials with advected UVs, post (lightweight).
-* **Accepts when:** 16.6 ms budget at target; visual QA scenes pass.
+* **Outputs:** Terrain mesh (vertex displacement), water/lava materials with advected UVs, 3-stage brush feedback.
+* **Status:** ✅ Core rendering pipeline established with TSL materials.
+* **Implemented:**
+  - ✅ TerrainRenderer with WebGPU integration
+  - ✅ TerrainMaterialTSL with displacement mapping
+  - ✅ WaterMaterialTSL with beach break effects
+  - ✅ LavaMaterialTSL system
+  - ✅ 3-stage visual feedback (hover/alt-ready/active)
+  - ✅ Material-specific brush indicators
+* **Key Files:**
+  - `packages/engine/src/render/TerrainRenderer.ts`
+  - `packages/engine/src/render/materials/*TSL.ts`
 
-### A4. **UX Agent** (Controls/HUD/Debug)
+### A4. **UX Agent** (Controls/HUD/Debug) ✅ CORE COMPLETE
 
 * **Purpose:** Human‑friendly control & clear performance visibility.
 * **Inputs:** Engine hooks, metrics, app state.
-* **Outputs:** Brush/UI panels, time controls, debug overlays, tutorial hints.
-* **Accepts when:** New user can discover all features in < 2 minutes.
+* **Outputs:** Brush/UI panels, time controls, debug overlays, collapsible interface.
+* **Status:** ✅ Core UI established with comprehensive brush controls.
+* **Implemented:**
+  - ✅ TerraformingUI with collapsible sections
+  - ✅ BrushSection with mode/material/radius/strength controls
+  - ✅ Hand mass/capacity visualization
+  - ✅ Zustand state management
+  - ✅ RunSection (pause/play), TimeScaleSection
+  - ✅ QualitySection, DebugOverlaySection
+  - ✅ Performance HUD toggle
+* **Key Files:**
+  - `apps/playground/src/components/TerraformingUI.tsx`
+  - `apps/playground/src/components/sections/BrushSection.tsx`
+  - `apps/playground/src/store/uiStore.ts`
 
-### A5. **Perf Agent** (Profiling/Quality Scaling)
+### A5. **Perf Agent** (Profiling/Quality Scaling) ⚠️ PARTIAL
 
 * **Purpose:** Enforce budgets, gather telemetry, propose scaling.
 * **Inputs:** GPU timestamps, draw/dispatch counts, VRAM estimates.
 * **Outputs:** Perf HUD, JSON profiles, auto‑quality scaler.
-* **Accepts when:** Stable 60 FPS at default; scaler hits targets gracefully.
+* **Status:** ⚠️ Performance monitoring hooks exist, full profiling system partial.
+* **Implemented:**
+  - ✅ Performance sample types in `@terraforming/types`
+  - ✅ usePerfSamples hook
+  - ✅ PerfHudSection component with snapshot capability
+  - ⚠️  GPU timestamp integration (framework ready)
+* **Key Files:**
+  - `apps/playground/src/hooks/usePerfSamples.ts`
+  - `apps/playground/src/components/sections/PerfHudSection.tsx`
 
-### A6. **DevOps Agent** (CI/CD/Artifacts)
+### A6. **DevOps Agent** (CI/CD/Artifacts) ⚠️ LOCAL ONLY
 
 * **Purpose:** Keep the main branch green; ship previews.
 * **Inputs:** repo, test suite, build scripts.
 * **Outputs:** PR checks (typecheck/lint/test/build), preview deploys, tagged releases.
-* **Accepts when:** Merge only when green; preview link per PR.
+* **Status:** ⚠️ Local development workflow established, CI/CD not configured.
+* **Implemented:**
+  - ✅ Local typecheck/build pipeline
+  - ✅ Watch mode for development
+  - ⚠️  No CI/CD, lint, or test frameworks configured yet
 
 ---
 
@@ -77,22 +121,34 @@
 ## 3) Repository Layout (pnpm monorepo)
 
 ```text
-terraforming-proto/
+terraforming/ (sand-box)
 ├─ apps/
 │  └─ playground/            # Vite app shell (React)
+│      ├─ src/
+│      │  ├─ components/     # UI components & sections
+│      │  ├─ store/          # Zustand state management
+│      │  └─ hooks/          # React hooks
+│      ├─ vite-plugin-wgsl.ts # WGSL loader plugin
+│      └─ tailwind.config.ts # Tailwind v4 config
 ├─ packages/
+│  ├─ types/                 # Shared TypeScript definitions
+│  │  └─ src/index.ts       # Engine interface types
 │  ├─ engine/                # WebGPU + Three glue, sim, renderer
-│  │  ├─ gpu/
-│  │  │  ├─ shaders/         # WGSL files
-│  │  │  ├─ pipelines/       # pipeline builders
-│  │  │  └─ framegraph/      # pass scheduler (lightweight)
-│  │  ├─ sim/                # terrain, fluids, erosion, lava
-│  │  ├─ render/             # terrain mesh, materials, renderer
-│  │  └─ perf/               # GPU timers, counters
-│  └─ assets/                # textures, LUTs
+│  │  ├─ src/
+│  │  │  ├─ gpu/
+│  │  │  │  ├─ shaders/      # WGSL compute shaders
+│  │  │  │  └─ pipelines/    # GPU pipeline management
+│  │  │  ├─ sim/             # Simulation systems (brush, fields, hand)
+│  │  │  ├─ render/          # Three.js renderer & TSL materials
+│  │  │  └─ index.ts         # Main engine API
+│  │  └─ dist/               # Build output
+│  └─ assets/ (optional)     # Shared textures, LUTs
+├─ docs/
+│  ├─ concept/               # Architecture documentation
+│  └─ brush_system_*.md      # Implementation specifications
 ├─ pnpm-workspace.yaml
-├─ tsconfig.json
-├─ vite.config.ts
+├─ AGENTS.md                 # This file
+├─ CLAUDE.md                 # Development guidance
 └─ package.json
 ```
 
@@ -245,8 +301,10 @@ You make controls obvious and delightful. No walls of text. Tooltips + sensible 
 
 ## 11) Runbook
 
-* `pnpm i` → `pnpm -r build` → `pnpm -C apps/playground dev`
+* `pnpm i` → `pnpm dev` (runs concurrent build:watch + dev server)
+* Alternative: `pnpm -r build` → `pnpm --filter @terraforming/playground dev`
 * Open in Chrome/Edge (WebGPU enabled by default). If adapter lacks timestamps, HUD marks them as N/A.
+* Use Alt+Click to interact with terrain brush system
 
 ---
 
@@ -258,8 +316,37 @@ You make controls obvious and delightful. No walls of text. Tooltips + sensible 
 
 ---
 
-## 13) Open Questions (track here)
+## 13) Implementation Status (as of current)
+
+### ✅ Completed Systems
+- **Brush System**: Mass-conserving pickup/deposit with workgroup-quota enforcement
+- **Material System**: Soil/rock/lava with density-based calculations
+- **Visual Feedback**: 3-stage interaction (hover/alt-ready/active) with material indicators
+- **Thermal Repose**: Angle-of-repose physics for natural terrain slopes
+- **TSL Materials**: Terrain displacement, water beach breaks, lava rendering
+- **UI Framework**: Comprehensive control panels with Zustand state management
+
+### 🚧 Partially Implemented
+- **Flow/Erosion**: WGSL shaders exist, integration with renderer partial
+- **Performance Monitoring**: Framework ready, GPU timestamp integration pending
+- **Quality Scaling**: Basic quality controls, auto-scaler not implemented
+
+### ❌ Not Yet Implemented
+- **Water Depth Simulation**: Currently using accumulation field only
+- **Lava Flow Physics**: Lava material exists, flow dynamics pending
+- **CI/CD Pipeline**: Local development only
+- **Automated Testing**: No test framework configured
+
+### 🎯 Current Architecture Strengths
+- **GPU-First**: All simulation on WebGPU compute shaders
+- **Mass Conservation**: Mathematically sound brush system
+- **Performance-Oriented**: Direct texture binding, minimal CPU↔GPU traffic
+- **Modular Design**: Clean separation between sim, render, and UI layers
+
+## 14) Open Questions (track here)
 
 * Do we keep explicit water depth `D` in v1 or fake with A/P only?
 * Which clipmap level and terrain tile size for M1 target hardware?
 * Do we add SSR later, or stick to refraction only?
+* Should we implement indirect draw/dispatch for phase 2?
+* How to best integrate the existing flow/erosion shaders with the current renderer?

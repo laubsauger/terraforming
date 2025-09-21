@@ -8,6 +8,7 @@ interface BrushSettingsProps {
   brushStrength: number;
   onSizeChange: (size: number) => void;
   onStrengthChange: (strength: number) => void;
+  modifierKey?: string; // 'Alt' or 'Option'
   className?: string;
 }
 
@@ -21,6 +22,7 @@ export function BrushSettings({
   brushStrength,
   onSizeChange,
   onStrengthChange,
+  modifierKey = 'Alt',
   className = '',
 }: BrushSettingsProps) {
   const handleSizeIncrement = (delta: number) => {
@@ -85,6 +87,7 @@ export function BrushSettings({
       <div className="text-xs text-muted-foreground">
         <div>Scroll: Adjust size</div>
         <div>Shift+Scroll: Fine tune</div>
+        <div>{modifierKey}+Click: Apply brush</div>
       </div>
     </div>
   );

@@ -49,6 +49,7 @@ export interface Engine {
   getCamera(): THREE.Camera | null;
   getTerrainMesh(): THREE.Mesh | null;
   getTerrainHeightAt(worldX: number, worldZ: number): number | null;
+  updateHeightmap(data: Float32Array): void;
   dispose(): void;
 }
 
@@ -253,6 +254,12 @@ class StubEngine implements Engine {
     return this.renderer?.getHeightAtWorldPos(worldX, worldZ) || null;
   }
 
+  updateHeightmap(data: Float32Array): void {
+    if (this.renderer) {
+      this.renderer.updateHeightmap(data);
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.renderingActive = false;
@@ -337,7 +344,8 @@ class StubEngine implements Engine {
       // Calculate VRAM usage from various sources
       const geometryMemory = info.memory?.geometries || 0;
       const textureMemory = info.memory?.textures || 0;
-      const bufferMemory = info.memory?.buffers || 0;
+      // Note: WebGPU info.memory doesn't have buffers property in this version
+      const bufferMemory = 0;
 
       // Convert bytes to MB and round
       estimatedVrAmMb = Math.round((geometryMemory + textureMemory + bufferMemory) / (1024 * 1024));

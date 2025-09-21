@@ -1,0 +1,736 @@
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { Button } from '@playground/components/ui/button';
+import { Slider } from '@playground/components/ui/slider';
+import { Label } from '@playground/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@playground/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@playground/components/ui/tabs';
+import { Input } from '@playground/components/ui/input';
+import { Download, Upload, RotateCcw, Send } from 'lucide-react';
+import type { Engine } from '@terraforming/engine';
+
+interface NoiseParams {
+  // Island shape
+  islandRadius: number;
+  islandFalloff: number;
+  islandNoise: number;
+
+  // Base terrain
+  baseScale: number;
+  baseOctaves: number;
+  baseAmplitude: number;
+
+  // Mountains
+  mountainThreshold: number;
+  mountainScale: number;
+  mountainOctaves: number;
+  mountainAmplitude: number;
+  ridgeStrength: number;
+
+  // Details
+  detailScale: number;
+  detailOctaves: number;
+  detailAmplitude: number;
+
+  // Water level
+  waterLevel: number;
+
+  // Smoothing
+  smoothingPasses: number;
+  smoothingStrength: number;
+}
+
+interface NoiseTextureGeneratorProps {
+  engine: Engine | null;
+  isOpen: boolean;
+  onClose: () => void;
+}
+
+export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureGeneratorProps) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [params, setParams] = useState<NoiseParams>({
+    islandRadius: 0.7,
+    islandFalloff: 0.8,
+    islandNoise: 0.3,
+    baseScale: 2.0,
+    baseOctaves: 4,
+    baseAmplitude: 0.5,
+    mountainThreshold: 0.4,
+    mountainScale: 4.0,
+    mountainOctaves: 3,
+    mountainAmplitude: 0.8,
+    ridgeStrength: 0.6,
+    detailScale: 8.0,
+    detailOctaves: 2,
+    detailAmplitude: 0.15,
+    waterLevel: 0.153,
+    smoothingPasses: 2,
+    smoothingStrength: 0.3,
+  });
+
+  const [presetName, setPresetName] = useState('');
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [heightData, setHeightData] = useState<Float32Array | null>(null);
+  const [savedPresets, setSavedPresets] = useState<{ [key: string]: NoiseParams }>({});
+
+  // Noise functions
+  const hash2 = useCallback((x: number, y: number): number => {
+    let h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return h - Math.floor(h);
+  }, []);
+
+  const smoothstep = useCallback((edge0: number, edge1: number, x: number): number => {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  }, []);
+
+  const smootherstep = useCallback((edge0: number, edge1: number, x: number): number => {
+    const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+    return t * t * t * (t * (t * 6 - 15) + 10);
+  }, []);
+
+  const noise2D = useCallback((x: number, y: number, scale: number, octaves: number = 1): number => {
+    let value = 0;
+    let amplitude = 1;
+    let frequency = scale;
+    let maxValue = 0;
+
+    for (let i = 0; i < octaves; i++) {
+      const sx = x * frequency;
+      const sy = y * frequency;
+
+      const x0 = Math.floor(sx);
+      const y0 = Math.floor(sy);
+      const x1 = x0 + 1;
+      const y1 = y0 + 1;
+
+      const wx = sx - x0;
+      const wy = sy - y0;
+
+      const n00 = hash2(x0, y0);
+      const n10 = hash2(x1, y0);
+      const n01 = hash2(x0, y1);
+      const n11 = hash2(x1, y1);
+
+      const sx1 = smoothstep(0, 1, wx);
+      const sy1 = smoothstep(0, 1, wy);
+
+      const nx0 = n00 * (1 - sx1) + n10 * sx1;
+      const nx1 = n01 * (1 - sx1) + n11 * sx1;
+      const nxy = nx0 * (1 - sy1) + nx1 * sy1;
+
+      value += nxy * amplitude;
+      maxValue += amplitude;
+      amplitude *= 0.5;
+      frequency *= 2.1;
+    }
+
+    return value / maxValue;
+  }, [hash2, smoothstep]);
+
+  const ridgeNoise = useCallback((x: number, y: number, scale: number, octaves: number = 1): number => {
+    let value = 0;
+    let amplitude = 1;
+    let frequency = scale;
+    let maxValue = 0;
+
+    for (let i = 0; i < octaves; i++) {
+      const n = noise2D(x, y, frequency, 1);
+      const ridge = 1 - Math.abs(n * 2 - 1);
+      value += ridge * ridge * amplitude;
+
+      maxValue += amplitude;
+      amplitude *= 0.5;
+      frequency *= 2.3;
+    }
+
+    return value / maxValue;
+  }, [noise2D]);
+
+  const generateHeightmap = useCallback(async () => {
+    setIsGenerating(true);
+
+    // Use a reasonable size for generation
+    const size = 512;
+    const data = new Float32Array(size * size);
+
+    // Generate in chunks to avoid blocking the UI
+    const chunkSize = 32;
+
+    for (let chunkY = 0; chunkY < size; chunkY += chunkSize) {
+      for (let chunkX = 0; chunkX < size; chunkX += chunkSize) {
+        await new Promise(resolve => setTimeout(resolve, 0)); // Yield to UI
+
+        const endY = Math.min(chunkY + chunkSize, size);
+        const endX = Math.min(chunkX + chunkSize, size);
+
+        for (let y = chunkY; y < endY; y++) {
+          for (let x = chunkX; x < endX; x++) {
+            const idx = y * size + x;
+
+            // Normalized coordinates (-1 to 1)
+            const nx = (x / size) * 2 - 1;
+            const ny = (y / size) * 2 - 1;
+
+            // Distance from center
+            const dist = Math.sqrt(nx * nx + ny * ny);
+
+            // Island shape
+            const shapeNoise = noise2D(nx * params.islandNoise, ny * params.islandNoise, params.baseScale, 2);
+            const islandShape = Math.max(0, 1 - dist * (params.islandRadius + shapeNoise * 0.2));
+            const islandMask = Math.pow(islandShape, params.islandFalloff);
+
+            let height = 0;
+
+            if (islandMask > 0.01) {
+              // Base terrain
+              const baseNoise = noise2D(nx, ny, params.baseScale, params.baseOctaves);
+              height = params.waterLevel + islandMask * params.baseAmplitude * (0.5 + baseNoise * 0.5);
+
+              // Mountains
+              if (islandMask > params.mountainThreshold) {
+                const mountainZone = (islandMask - params.mountainThreshold) / (1 - params.mountainThreshold);
+                const ridges = ridgeNoise(nx, ny, params.mountainScale, params.mountainOctaves);
+                const mountains = ridges * params.ridgeStrength * mountainZone * params.mountainAmplitude;
+                height += mountains;
+              }
+
+              // Detail noise
+              const details = noise2D(nx, ny, params.detailScale, params.detailOctaves);
+              height += details * params.detailAmplitude * islandMask;
+            }
+
+            data[idx] = Math.max(0, Math.min(1, height));
+          }
+        }
+      }
+    }
+
+    // Apply smoothing
+    if (params.smoothingPasses > 0) {
+      for (let pass = 0; pass < params.smoothingPasses; pass++) {
+        const smoothedData = new Float32Array(size * size);
+
+        for (let y = 1; y < size - 1; y++) {
+          for (let x = 1; x < size - 1; x++) {
+            const idx = y * size + x;
+            const center = data[idx];
+
+            const neighbors = [
+              data[(y-1) * size + x],     // top
+              data[(y+1) * size + x],     // bottom
+              data[y * size + (x-1)],     // left
+              data[y * size + (x+1)],     // right
+              data[(y-1) * size + (x-1)], // top-left
+              data[(y-1) * size + (x+1)], // top-right
+              data[(y+1) * size + (x-1)], // bottom-left
+              data[(y+1) * size + (x+1)]  // bottom-right
+            ];
+
+            let smoothedHeight = center * (1 - params.smoothingStrength);
+            for (const neighbor of neighbors) {
+              smoothedHeight += neighbor * (params.smoothingStrength / 8);
+            }
+
+            smoothedData[idx] = smoothedHeight;
+          }
+        }
+
+        // Copy smoothed data back
+        for (let y = 1; y < size - 1; y++) {
+          for (let x = 1; x < size - 1; x++) {
+            const idx = y * size + x;
+            data[idx] = smoothedData[idx];
+          }
+        }
+      }
+    }
+
+    setHeightData(data);
+    setIsGenerating(false);
+
+    // Update canvas preview
+    updateCanvas(data, size);
+  }, [params, noise2D, ridgeNoise]);
+
+  const updateCanvas = useCallback((data: Float32Array, size: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.createImageData(size, size);
+
+    for (let i = 0; i < size * size; i++) {
+      const height = data[i];
+      const gray = Math.floor(height * 255);
+      const pixelIndex = i * 4;
+
+      imageData.data[pixelIndex] = gray;     // R
+      imageData.data[pixelIndex + 1] = gray; // G
+      imageData.data[pixelIndex + 2] = gray; // B
+      imageData.data[pixelIndex + 3] = 255;  // A
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+  }, []);
+
+  const exportHeightmap = useCallback(() => {
+    if (!heightData) return;
+
+    const canvas = document.createElement('canvas');
+    const size = Math.sqrt(heightData.length);
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.createImageData(size, size);
+
+    for (let i = 0; i < heightData.length; i++) {
+      const height = heightData[i];
+      const gray = Math.floor(height * 255);
+      const pixelIndex = i * 4;
+
+      imageData.data[pixelIndex] = gray;
+      imageData.data[pixelIndex + 1] = gray;
+      imageData.data[pixelIndex + 2] = gray;
+      imageData.data[pixelIndex + 3] = 255;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `heightmap_${Date.now()}.png`;
+      a.click();
+      URL.revokeObjectURL(url);
+    });
+  }, [heightData]);
+
+  const importHeightmap = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+
+      ctx.drawImage(img, 0, 0);
+      const imageData = ctx.getImageData(0, 0, img.width, img.height);
+
+      const data = new Float32Array(img.width * img.height);
+      for (let i = 0; i < data.length; i++) {
+        const pixelIndex = i * 4;
+        const gray = imageData.data[pixelIndex]; // Use red channel
+        data[i] = gray / 255;
+      }
+
+      setHeightData(data);
+      updateCanvas(data, img.width);
+    };
+
+    img.src = URL.createObjectURL(file);
+  }, [updateCanvas]);
+
+  const applyToTerrain = useCallback(() => {
+    if (!heightData || !engine) return;
+
+    // Apply the heightmap to the terrain renderer
+    engine.updateHeightmap(heightData);
+  }, [heightData, engine]);
+
+  const resetToDefaults = useCallback(() => {
+    setParams({
+      islandRadius: 0.7,
+      islandFalloff: 0.8,
+      islandNoise: 0.3,
+      baseScale: 2.0,
+      baseOctaves: 4,
+      baseAmplitude: 0.5,
+      mountainThreshold: 0.4,
+      mountainScale: 4.0,
+      mountainOctaves: 3,
+      mountainAmplitude: 0.8,
+      ridgeStrength: 0.6,
+      detailScale: 8.0,
+      detailOctaves: 2,
+      detailAmplitude: 0.15,
+      waterLevel: 0.153,
+      smoothingPasses: 2,
+      smoothingStrength: 0.3,
+    });
+  }, []);
+
+  const savePreset = useCallback(() => {
+    if (!presetName.trim()) return;
+
+    const newPresets = { ...savedPresets, [presetName]: { ...params } };
+    setSavedPresets(newPresets);
+    localStorage.setItem('terraforming-noise-presets', JSON.stringify(newPresets));
+    setPresetName('');
+  }, [presetName, params, savedPresets]);
+
+  const loadPreset = useCallback((name: string) => {
+    const preset = savedPresets[name];
+    if (preset) {
+      setParams(preset);
+    }
+  }, [savedPresets]);
+
+  const deletePreset = useCallback((name: string) => {
+    const newPresets = { ...savedPresets };
+    delete newPresets[name];
+    setSavedPresets(newPresets);
+    localStorage.setItem('terraforming-noise-presets', JSON.stringify(newPresets));
+  }, [savedPresets]);
+
+  // Load presets from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('terraforming-noise-presets');
+      if (saved) {
+        setSavedPresets(JSON.parse(saved));
+      }
+    } catch (error) {
+      console.warn('Failed to load saved presets:', error);
+    }
+  }, []);
+
+  // Auto-generate on parameter changes (debounced)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      generateHeightmap();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [params, generateHeightmap]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
+      <Card className="w-[90vw] h-[90vh] max-w-6xl bg-black/90 text-white border-white/20">
+        <CardHeader className="flex flex-row items-center justify-between">
+          <CardTitle>Noise Texture Generator</CardTitle>
+          <Button variant="ghost" onClick={onClose}>×</Button>
+        </CardHeader>
+
+        <CardContent className="h-full overflow-hidden">
+          <div className="grid grid-cols-2 gap-6 h-full">
+            {/* Left side - Controls */}
+            <div className="space-y-4 overflow-y-auto">
+              <Tabs defaultValue="shape" className="w-full">
+                <TabsList className="grid w-full grid-cols-5">
+                  <TabsTrigger value="shape">Shape</TabsTrigger>
+                  <TabsTrigger value="terrain">Terrain</TabsTrigger>
+                  <TabsTrigger value="mountains">Mountains</TabsTrigger>
+                  <TabsTrigger value="details">Details</TabsTrigger>
+                  <TabsTrigger value="presets">Presets</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="shape" className="space-y-4">
+                  <div>
+                    <Label>Island Radius: {params.islandRadius.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.islandRadius]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, islandRadius: value }))}
+                      min={0.3}
+                      max={1.2}
+                      step={0.05}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Island Falloff: {params.islandFalloff.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.islandFalloff]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, islandFalloff: value }))}
+                      min={0.2}
+                      max={2.0}
+                      step={0.1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Island Noise: {params.islandNoise.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.islandNoise]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, islandNoise: value }))}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Water Level: {params.waterLevel.toFixed(3)}</Label>
+                    <Slider
+                      value={[params.waterLevel]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, waterLevel: value }))}
+                      min={0.1}
+                      max={0.3}
+                      step={0.001}
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="terrain" className="space-y-4">
+                  <div>
+                    <Label>Base Scale: {params.baseScale.toFixed(1)}</Label>
+                    <Slider
+                      value={[params.baseScale]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, baseScale: value }))}
+                      min={0.5}
+                      max={8}
+                      step={0.1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Base Octaves: {params.baseOctaves}</Label>
+                    <Slider
+                      value={[params.baseOctaves]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, baseOctaves: Math.round(value) }))}
+                      min={1}
+                      max={8}
+                      step={1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Base Amplitude: {params.baseAmplitude.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.baseAmplitude]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, baseAmplitude: value }))}
+                      min={0.1}
+                      max={1}
+                      step={0.05}
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="mountains" className="space-y-4">
+                  <div>
+                    <Label>Mountain Threshold: {params.mountainThreshold.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.mountainThreshold]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, mountainThreshold: value }))}
+                      min={0.2}
+                      max={0.8}
+                      step={0.05}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Mountain Scale: {params.mountainScale.toFixed(1)}</Label>
+                    <Slider
+                      value={[params.mountainScale]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, mountainScale: value }))}
+                      min={1}
+                      max={12}
+                      step={0.5}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Mountain Octaves: {params.mountainOctaves}</Label>
+                    <Slider
+                      value={[params.mountainOctaves]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, mountainOctaves: Math.round(value) }))}
+                      min={1}
+                      max={6}
+                      step={1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Mountain Amplitude: {params.mountainAmplitude.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.mountainAmplitude]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, mountainAmplitude: value }))}
+                      min={0.2}
+                      max={2}
+                      step={0.1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Ridge Strength: {params.ridgeStrength.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.ridgeStrength]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, ridgeStrength: value }))}
+                      min={0}
+                      max={1}
+                      step={0.05}
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="details" className="space-y-4">
+                  <div>
+                    <Label>Detail Scale: {params.detailScale.toFixed(1)}</Label>
+                    <Slider
+                      value={[params.detailScale]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, detailScale: value }))}
+                      min={2}
+                      max={20}
+                      step={0.5}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Detail Octaves: {params.detailOctaves}</Label>
+                    <Slider
+                      value={[params.detailOctaves]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, detailOctaves: Math.round(value) }))}
+                      min={1}
+                      max={4}
+                      step={1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Detail Amplitude: {params.detailAmplitude.toFixed(3)}</Label>
+                    <Slider
+                      value={[params.detailAmplitude]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, detailAmplitude: value }))}
+                      min={0}
+                      max={0.5}
+                      step={0.01}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Smoothing Passes: {params.smoothingPasses}</Label>
+                    <Slider
+                      value={[params.smoothingPasses]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, smoothingPasses: Math.round(value) }))}
+                      min={0}
+                      max={5}
+                      step={1}
+                    />
+                  </div>
+
+                  <div>
+                    <Label>Smoothing Strength: {params.smoothingStrength.toFixed(2)}</Label>
+                    <Slider
+                      value={[params.smoothingStrength]}
+                      onValueChange={([value]) => setParams(p => ({ ...p, smoothingStrength: value }))}
+                      min={0}
+                      max={0.8}
+                      step={0.05}
+                    />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="presets" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Save Current Settings</Label>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="Preset name..."
+                        value={presetName}
+                        onChange={(e) => setPresetName(e.target.value)}
+                        className="flex-1"
+                      />
+                      <Button onClick={savePreset} disabled={!presetName.trim()} size="sm">
+                        Save
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label>Saved Presets ({Object.keys(savedPresets).length})</Label>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {Object.keys(savedPresets).length === 0 ? (
+                        <p className="text-sm text-gray-400 italic">No saved presets</p>
+                      ) : (
+                        Object.keys(savedPresets).map((name) => (
+                          <div key={name} className="flex items-center gap-2 p-2 bg-gray-800 rounded">
+                            <span className="flex-1 text-sm">{name}</span>
+                            <Button onClick={() => loadPreset(name)} variant="outline" size="sm">
+                              Load
+                            </Button>
+                            <Button
+                              onClick={() => deletePreset(name)}
+                              variant="outline"
+                              size="sm"
+                              className="text-red-400 hover:text-red-300"
+                            >
+                              ×
+                            </Button>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 border-t border-white/20">
+                    <p className="text-xs text-gray-400">
+                      Presets are saved to browser localStorage and will persist between sessions.
+                    </p>
+                  </div>
+                </TabsContent>
+              </Tabs>
+
+              {/* Action buttons */}
+              <div className="flex flex-wrap gap-2 pt-4 border-t border-white/20">
+                <Button onClick={resetToDefaults} variant="outline" size="sm">
+                  <RotateCcw className="w-4 h-4 mr-2" />
+                  Reset
+                </Button>
+
+                <Button onClick={() => fileInputRef.current?.click()} variant="outline" size="sm">
+                  <Upload className="w-4 h-4 mr-2" />
+                  Import
+                </Button>
+
+                <Button onClick={exportHeightmap} disabled={!heightData} variant="outline" size="sm">
+                  <Download className="w-4 h-4 mr-2" />
+                  Export
+                </Button>
+
+                <Button onClick={applyToTerrain} disabled={!heightData || !engine} size="sm">
+                  <Send className="w-4 h-4 mr-2" />
+                  Apply to Terrain
+                </Button>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={importHeightmap}
+                className="hidden"
+              />
+            </div>
+
+            {/* Right side - Preview */}
+            <div className="flex flex-col">
+              <Label className="mb-2">Preview {isGenerating && '(Generating...)'}</Label>
+              <div className="flex-1 flex items-center justify-center bg-gray-900 rounded border border-white/20">
+                <canvas
+                  ref={canvasRef}
+                  className="max-w-full max-h-full object-contain"
+                  style={{ imageRendering: 'pixelated' }}
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

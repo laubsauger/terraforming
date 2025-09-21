@@ -1,6 +1,5 @@
 import { Button } from '@playground/components/ui/button';
 import { Label } from '@playground/components/ui/label';
-import { Slider } from '@playground/components/ui/slider';
 import { ToggleGroup, ToggleGroupItem } from '@playground/components/ui/toggle-group';
 import type { MaterialKind, BrushMode } from '@playground/store/uiStore';
 import { cn } from '@playground/lib/utils';
@@ -8,16 +7,11 @@ import { cn } from '@playground/lib/utils';
 interface BrushSectionProps {
   mode: BrushMode;
   material: MaterialKind;
-  radius: number;
-  strength: number;
   isActive: boolean;
   handMass: number;
   handCapacity: number;
   setMode: (mode: BrushMode) => void;
   setMaterial: (material: MaterialKind) => void;
-  setRadius: (radius: number) => void;
-  setStrength: (strength: number) => void;
-  setActive: (active: boolean) => void;
 }
 
 const MATERIALS: { value: MaterialKind; label: string; color: string }[] = [
@@ -29,25 +23,26 @@ const MATERIALS: { value: MaterialKind; label: string; color: string }[] = [
 export function BrushSection({
   mode,
   material,
-  radius,
-  strength,
   isActive,
   handMass,
   handCapacity,
   setMode,
   setMaterial,
-  setRadius,
-  setStrength,
-  setActive,
 }: BrushSectionProps) {
   const massPercent = (handMass / handCapacity) * 100;
+
+  // Detect OS for correct modifier key
+  const isMac = typeof navigator !== 'undefined' &&
+    (navigator.userAgent.toLowerCase().includes('mac') ||
+     navigator.platform?.toLowerCase().includes('mac'));
+  const modifierKey = isMac ? 'Option' : 'Alt';
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-medium text-white">Brush Tool</h3>
         <span className="text-xs text-gray-400">
-          Hold <kbd className="px-1 py-0.5 text-xs bg-white/10 rounded">Alt</kbd> + Click
+          Hold <kbd className="px-1 py-0.5 text-xs bg-white/10 rounded">{modifierKey}</kbd> + Click
         </span>
       </div>
 
@@ -119,37 +114,6 @@ export function BrushSection({
         </div>
       </div>
 
-      {/* Radius Control */}
-      <div className="space-y-2">
-        <div className="flex justify-between">
-          <Label className="text-xs text-gray-400">Radius</Label>
-          <span className="text-xs text-white">{radius}m</span>
-        </div>
-        <Slider
-          value={[radius]}
-          onValueChange={([value]) => setRadius(value)}
-          min={1}
-          max={100}
-          step={1}
-          className="w-full"
-        />
-      </div>
-
-      {/* Strength Control */}
-      <div className="space-y-2">
-        <div className="flex justify-between">
-          <Label className="text-xs text-gray-400">Strength</Label>
-          <span className="text-xs text-white">{strength} kg/s</span>
-        </div>
-        <Slider
-          value={[strength]}
-          onValueChange={([value]) => setStrength(value)}
-          min={100}
-          max={10000}
-          step={100}
-          className="w-full"
-        />
-      </div>
 
       {/* Active Indicator */}
       {isActive && (

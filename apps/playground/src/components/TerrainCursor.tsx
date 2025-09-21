@@ -11,6 +11,7 @@ interface TerrainCursorProps {
   engine: Engine | null;
   mousePosition: { x: number; y: number };
   canvasElement: HTMLCanvasElement | null;
+  isAltPressed: boolean;
 }
 
 export function TerrainCursor({
@@ -19,7 +20,8 @@ export function TerrainCursor({
   isVisible,
   engine,
   mousePosition,
-  canvasElement
+  canvasElement,
+  isAltPressed
 }: TerrainCursorProps) {
   const cursorGroupRef = useRef<THREE.Group | null>(null);
   const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
@@ -66,14 +68,26 @@ export function TerrainCursor({
       points.push(new THREE.Vector3(x, 0, z));
     }
 
-    // Create line geometry for cursor outline
+    // Add a center dot for precision (add this first so it's child[0])
+    const dotGeometry = new THREE.SphereGeometry(0.3, 8, 8); // Slightly bigger dot
+    const dotMaterial = new THREE.MeshBasicMaterial({
+      color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
+      transparent: true,
+      opacity: activeTool === 'select' ? 0.8 : 0.6, // Muted by default
+      depthTest: false,
+    });
+    const centerDot = new THREE.Mesh(dotGeometry, dotMaterial);
+    centerDot.renderOrder = 1001;
+    group.add(centerDot);
+
+    // Create line geometry for cursor outline (add this second so it's child[1])
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
     const material = new THREE.LineBasicMaterial({
       color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
       transparent: true,
-      opacity: activeTool === 'select' ? 0.7 : 0.9,
-      linewidth: 2,
+      opacity: activeTool === 'select' ? 0.8 : 0.6, // Muted by default
+      linewidth: activeTool === 'select' ? 3 : 4, // Thicker lines for visibility
       depthTest: false,
       depthWrite: false,
     });
@@ -81,18 +95,6 @@ export function TerrainCursor({
     const cursorLine = new THREE.Line(geometry, material);
     cursorLine.renderOrder = 1000;
     group.add(cursorLine);
-
-    // Add a center dot for precision
-    const dotGeometry = new THREE.SphereGeometry(0.2, 8, 8);
-    const dotMaterial = new THREE.MeshBasicMaterial({
-      color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
-      transparent: true,
-      opacity: 0.9,
-      depthTest: false,
-    });
-    const centerDot = new THREE.Mesh(dotGeometry, dotMaterial);
-    centerDot.renderOrder = 1001;
-    group.add(centerDot);
 
     cursorGroupRef.current = group;
     group.visible = false;
@@ -197,16 +199,16 @@ export function TerrainCursor({
       cursorGroupRef.current.position.copy(centerPosition);
 
       // Update the circle to conform to terrain
-      const fillMesh = cursorGroupRef.current.children[0] as THREE.Mesh;
-      const line = cursorGroupRef.current.children[1] as THREE.Line;
+      const centerDot = cursorGroupRef.current.children[0] as THREE.Mesh; // Center dot is child[0]
+      const line = cursorGroupRef.current.children[1] as THREE.Line; // Line is child[1]
 
       // Calculate zoom-based scaling
       const cameraDistance = camera.position.distanceTo(centerPosition);
       const zoomScale = Math.max(0.5, Math.min(2.5, 30 / cameraDistance));
 
-      // Update fill mesh position
-      if (fillMesh) {
-        fillMesh.position.y = 0.05; // Slight offset above terrain
+      // Update center dot position
+      if (centerDot) {
+        centerDot.position.y = 0.05; // Slight offset above terrain
       }
 
       if (line && line.geometry) {
@@ -265,33 +267,33 @@ export function TerrainCursor({
     }
   }, [isVisible, mousePosition, engine, canvasElement, brushSize]);
 
-  // Update cursor appearance when tool or size changes
+  // Update cursor appearance when tool, size, or Alt key changes
   useEffect(() => {
     if (!cursorGroupRef.current) return;
 
-    // Update colors for all children
+    // Determine opacity based on Alt key state
+    const opacity = isAltPressed ? 1.0 : (activeTool === 'select' ? 0.8 : 0.6); // Saturated when Alt pressed
+    const lineWidth = activeTool === 'select' ? 3 : 4; // Thicker for visibility
+
+    // Update colors and opacity for all children
     cursorGroupRef.current.traverse((child) => {
       if (child instanceof THREE.Line) {
         const material = child.material as THREE.LineBasicMaterial;
         material.color.setHex(parseInt(TOOL_COLORS[activeTool].replace('#', '0x')));
-        material.opacity = activeTool === 'select' ? 0.7 : 0.9;
+        material.opacity = opacity;
+        material.linewidth = lineWidth;
       } else if (child instanceof THREE.Mesh) {
         const material = child.material as THREE.MeshBasicMaterial;
         material.color.setHex(parseInt(TOOL_COLORS[activeTool].replace('#', '0x')));
+        material.opacity = opacity;
       }
     });
 
     // Update cursor size
-    const fillMesh = cursorGroupRef.current.children[0] as THREE.Mesh;
-    const line = cursorGroupRef.current.children[1] as THREE.Line;
+    const centerDot = cursorGroupRef.current.children[0] as THREE.Mesh; // Center dot is child[0]
+    const line = cursorGroupRef.current.children[1] as THREE.Line; // Line is child[1]
 
-    // Update fill mesh
-    if (fillMesh && fillMesh.geometry) {
-      fillMesh.geometry.dispose();
-      const newFillGeometry = new THREE.CircleGeometry(brushSize, 32);
-      newFillGeometry.rotateX(-Math.PI / 2);
-      fillMesh.geometry = newFillGeometry;
-    }
+    // Note: Center dot size doesn't change with brush size - it stays as a fixed reference point
 
     // Update outline
     if (line && line.geometry) {
@@ -307,7 +309,7 @@ export function TerrainCursor({
 
       line.geometry.setFromPoints(points);
     }
-  }, [activeTool, brushSize]);
+  }, [activeTool, brushSize, isAltPressed]);
 
   // This component doesn't render anything in React - it manages 3D objects directly
   return null;

@@ -29,9 +29,21 @@ export class TerrainRenderer extends BaseRenderer {
 
   // Brush system
   private brushSystem?: BrushSystem;
-  private brushActive = false;
+  private brushHovering = false;    // Mouse over terrain (stage 1)
+  private brushReady = false;       // Alt held - ready to act (stage 2)
+  private brushActive = false;      // Alt + Click held - actively brushing (stage 3)
   private brushMode: 'pickup' | 'deposit' = 'pickup';
   private brushMaterial: 'soil' | 'rock' | 'lava' = 'soil';
+  private brushRadius = 10;
+  private brushStrength = 1000;
+
+  // Visual feedback
+  private brushCursorSphere?: THREE.Mesh;
+  private brushCursorRing?: THREE.Mesh;
+  private brushCursorMaterial?: THREE.MeshPhysicalMaterial;
+  private brushModeIndicator?: THREE.Group; // Arrows or particles to show mode
+  private brushHandMass = 0;
+  private brushHandCapacity = 10000;
 
   // Day/night cycle
   private sunLight!: THREE.DirectionalLight;
@@ -70,8 +82,8 @@ export class TerrainRenderer extends BaseRenderer {
     this.scene.background = new THREE.Color(fogColor);
     this.scene.fog = new THREE.Fog(fogColor, 50, 180); // Closer fog for smoother falloff
 
-    // Setup camera - position opposite to main light for better illumination
-    this.camera.position.set(-45, 35, -45);
+    // Setup camera - position on the other side of island for better view
+    this.camera.position.set(45, 35, 45);
     this.camera.lookAt(0, 0, 0);
 
     // Setup orbit controls
@@ -99,8 +111,29 @@ export class TerrainRenderer extends BaseRenderer {
     // Terrain will be created after renderer is ready
   }
 
-  protected override onRendererReady(): void {
+  protected override async onRendererReady(): Promise<void> {
     console.log('TerrainRenderer: WebGPU renderer ready');
+
+    // Get WebGPU device from the renderer
+    const device = (this.renderer as any).backend?.device;
+    if (!device) {
+      console.error('TerrainRenderer: WebGPU device not available');
+      return;
+    }
+
+    // Log device limits for debugging
+    console.log('Device maxStorageTexturesPerShaderStage:', device.limits?.maxStorageTexturesPerShaderStage);
+
+    // Initialize brush system with WebGPU device
+    this.brushSystem = new BrushSystem(device, {
+      gridSize: [this.gridSize, this.gridSize],
+      cellSize: this.terrainSize / this.gridSize,
+      angleOfRepose: 33, // degrees
+      handCapacityKg: this.brushHandCapacity,
+    });
+
+    // Initialize brush system fields with current terrain data
+    this.initializeBrushSystemWithTerrain();
 
     // Create terrain after renderer is ready
     this.createTerrain();
@@ -108,10 +141,14 @@ export class TerrainRenderer extends BaseRenderer {
     // Generate improved test terrain
     this.generateTestTerrain();
 
+    // Create brush cursor
+    this.createBrushCursor();
+
     // Debug logging
     console.log('TerrainRenderer: Scene children count:', this.scene.children.length);
     console.log('TerrainRenderer: Terrain mesh added:', !!this.terrainMesh);
     console.log('TerrainRenderer: Ocean mesh added:', !!this.oceanMesh);
+    console.log('TerrainRenderer: Brush system initialized:', !!this.brushSystem);
   }
 
   /**
@@ -132,15 +169,20 @@ export class TerrainRenderer extends BaseRenderer {
    * Setup shift key handling to disable camera controls during brush adjustment
    */
   private setupShiftKeyHandling(): void {
+    let animationFrameId: number | null = null;
+    let lastWorldPos: THREE.Vector3 | undefined;
+
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Shift') {
         this.controls.enabled = false;
       }
-      // Alt key for brush activation
+      // Alt key - enter ready stage (stage 2)
       if (event.key === 'Alt') {
         event.preventDefault();
-        this.brushActive = true;
+        this.brushReady = true;
         this.controls.enabled = false;
+        // Show cursor in ready state
+        this.updateBrushCursor(lastWorldPos);
       }
     };
 
@@ -148,51 +190,456 @@ export class TerrainRenderer extends BaseRenderer {
       if (event.key === 'Shift') {
         this.controls.enabled = true;
       }
-      // Alt key release
+      // Alt key release - exit all brush states
       if (event.key === 'Alt') {
+        this.brushReady = false;
         this.brushActive = false;
         this.controls.enabled = true;
+        // Hide cursor
+        this.updateBrushCursor();
+        // Cancel any ongoing brush operation
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
       }
     };
 
-    // Mouse events for brush interaction
-    const handleMouseDown = (event: MouseEvent) => {
-      if (this.brushActive && this.brushSystem) {
-        // Raycast to get world position
-        const rect = this.canvas.getBoundingClientRect();
-        const mouse = new THREE.Vector2(
-          ((event.clientX - rect.left) / rect.width) * 2 - 1,
-          -((event.clientY - rect.top) / rect.height) * 2 + 1
-        );
+    // Mouse move for hover feedback
+    const handleMouseMove = (event: MouseEvent) => {
+      const rect = this.canvas.getBoundingClientRect();
+      const mouse = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1
+      );
 
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, this.camera);
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mouse, this.camera);
 
-        if (this.terrainMesh) {
-          const intersects = raycaster.intersectObject(this.terrainMesh);
-          if (intersects.length > 0) {
-            const point = intersects[0].point;
-            // Add brush operation
-            this.brushSystem.addBrushOp(
-              this.brushMode,
-              this.brushMaterial,
-              point.x,
-              point.z,
-              10, // radius
-              1000, // strength kg/s
-              0.016 // dt (~60fps)
-            );
+      if (this.terrainMesh) {
+        const intersects = raycaster.intersectObject(this.terrainMesh);
+        if (intersects.length > 0) {
+          lastWorldPos = intersects[0].point;
+
+          // Stage 1: Simple hover when no keys pressed
+          if (!this.brushReady && !this.brushActive) {
+            this.brushHovering = true;
+          }
+
+          // Update cursor for any active stage
+          if (this.brushHovering || this.brushReady || this.brushActive) {
+            this.updateBrushCursor(lastWorldPos);
+          }
+        } else {
+          // Mouse not over terrain - hide hover state
+          this.brushHovering = false;
+          if (!this.brushReady && !this.brushActive) {
+            this.updateBrushCursor();
           }
         }
       }
     };
 
+    // Hold-to-continue brush operation
+    const performBrushOperation = () => {
+      if (this.brushActive && this.brushSystem && lastWorldPos) {
+        // Add brush operation
+        this.brushSystem.addBrushOp(
+          this.brushMode,
+          this.brushMaterial,
+          lastWorldPos.x,
+          lastWorldPos.z,
+          this.brushRadius,
+          this.brushStrength,
+          0.016 // dt (~60fps)
+        );
+
+        // Update visual feedback
+        this.updateBrushCursor(lastWorldPos);
+
+        // Continue operation on next frame
+        animationFrameId = requestAnimationFrame(performBrushOperation);
+      }
+    };
+
+    // Mouse down - enter active stage (stage 3)
+    const handleMouseDown = (event: MouseEvent) => {
+      if (this.brushReady && event.button === 0) { // Left click only when ready
+        event.preventDefault();
+        this.brushActive = true;
+
+        // Start continuous brush operation
+        performBrushOperation();
+      }
+    };
+
+    // Mouse up - return to ready stage (stage 2)
+    const handleMouseUp = (event: MouseEvent) => {
+      if (event.button === 0) { // Left click only
+        this.brushActive = false;
+
+        // Stop continuous operation
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+
+        // Return to ready state if Alt still held
+        if (this.brushReady && lastWorldPos) {
+          this.updateBrushCursor(lastWorldPos);
+        }
+      }
+    };
+
+    // Mouse leave - stop any active operation but maintain ready state
+    const handleMouseLeave = () => {
+      if (this.brushActive) {
+        this.brushActive = false;
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+      }
+      this.brushHovering = false;
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mousedown', handleMouseDown);
+    window.addEventListener('mouseup', handleMouseUp);
+    this.canvas.addEventListener('mouseleave', handleMouseLeave);
 
     // Store references for cleanup
-    (this as any)._keyHandlers = { handleKeyDown, handleKeyUp, handleMouseDown };
+    (this as any)._keyHandlers = {
+      handleKeyDown,
+      handleKeyUp,
+      handleMouseMove,
+      handleMouseDown,
+      handleMouseUp,
+      handleMouseLeave
+    };
+  }
+
+  /**
+   * Create visual brush cursor
+   */
+  private createBrushCursor(): void {
+    // Create sphere for brush volume indicator
+    const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
+
+    // Material will be updated based on brush material type
+    this.brushCursorMaterial = new THREE.MeshPhysicalMaterial({
+      transparent: true,
+      opacity: 0.3,
+      roughness: 0.3,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+    });
+
+    this.brushCursorSphere = new THREE.Mesh(sphereGeometry, this.brushCursorMaterial);
+    this.brushCursorSphere.visible = false;
+    this.brushCursorSphere.renderOrder = 100; // Render on top
+    this.scene.add(this.brushCursorSphere);
+
+    // Create ring for brush radius indicator
+    const ringGeometry = new THREE.RingGeometry(0.9, 1, 64);
+    const ringMaterial = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      opacity: 0.5,
+      transparent: true,
+      side: THREE.DoubleSide,
+    });
+
+    this.brushCursorRing = new THREE.Mesh(ringGeometry, ringMaterial);
+    this.brushCursorRing.rotation.x = -Math.PI / 2;
+    this.brushCursorRing.visible = false;
+    this.scene.add(this.brushCursorRing);
+
+    // Create mode indicator (arrows/particles)
+    this.createModeIndicator();
+  }
+
+  /**
+   * Update brush cursor appearance based on current state
+   */
+  private updateBrushCursor(worldPos?: THREE.Vector3): void {
+    if (!this.brushCursorSphere || !this.brushCursorRing || !this.brushCursorMaterial) return;
+
+    // Determine visibility and current stage
+    const shouldShow = (this.brushHovering || this.brushReady || this.brushActive) && worldPos !== undefined;
+
+    // Update visibility
+    this.brushCursorSphere.visible = shouldShow;
+    this.brushCursorRing.visible = shouldShow;
+
+    if (!shouldShow) return;
+
+    // Position cursors at world position with proper height
+    const safeY = Math.max(worldPos!.y, 0.15); // Ensure minimum height above ocean floor
+    this.brushCursorSphere.position.set(worldPos!.x, safeY, worldPos!.z);
+    this.brushCursorRing.position.set(worldPos!.x, safeY + 0.1, worldPos!.z); // Slightly above terrain
+
+    // Update ring size based on brush radius
+    this.brushCursorRing.scale.setScalar(this.brushRadius);
+
+    // Define material properties for each stage
+    const materialProps = {
+      soil: { baseColor: 0x8B6914, emissive: 0x4B3910, roughness: 0.8, metalness: 0 },
+      rock: { baseColor: 0x5A5A5A, emissive: 0x2A2A2A, roughness: 0.9, metalness: 0.2 },
+      lava: { baseColor: 0xFF4500, emissive: 0xFF2000, roughness: 0.1, metalness: 0.3 }
+    };
+
+    const baseMat = materialProps[this.brushMaterial];
+
+    // STAGE 1: Hovering (subtle presence)
+    if (this.brushHovering && !this.brushReady && !this.brushActive) {
+      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+      this.brushCursorMaterial.emissive.setHex(0x000000); // No emissive
+      this.brushCursorMaterial.opacity = 0.2; // Very subtle
+      this.brushCursorMaterial.emissiveIntensity = 0;
+
+      // Ring: white, very subtle
+      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      ringMat.color.setHex(0xFFFFFF);
+      ringMat.opacity = 0.3;
+
+      // Small base size
+      this.brushCursorSphere.scale.setScalar(0.8);
+    }
+
+    // STAGE 2: Alt held - Ready to act (locked and loaded)
+    else if (this.brushReady && !this.brushActive) {
+      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+      this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+      this.brushCursorMaterial.opacity = 0.6; // More visible
+      this.brushCursorMaterial.emissiveIntensity = 0.5; // Glowing
+
+      // Add slow breathing animation
+      const breathe = Math.sin(Date.now() * 0.003) * 0.1 + 1;
+      this.brushCursorSphere.scale.setScalar(1.2 * breathe);
+
+      // Ring: Mode-specific color, pulsing
+      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      if (this.brushMode === 'pickup') {
+        ringMat.color.setHex(0x00AAFF); // Blue for pickup
+      } else {
+        ringMat.color.setHex(0xFFAA00); // Orange for deposit
+      }
+      ringMat.opacity = 0.6 + Math.sin(Date.now() * 0.004) * 0.2; // Pulsing opacity
+
+      // Show mode indicators
+      this.updateModeIndicator(worldPos!, true, false);
+    }
+
+    // STAGE 3: Alt + Click - Active brushing
+    else if (this.brushActive) {
+      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+      this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+      this.brushCursorMaterial.opacity = 0.9; // Highly visible
+      this.brushCursorMaterial.emissiveIntensity = 1.5; // Bright glow
+
+      // Fast pulsing animation
+      const pulse = Math.sin(Date.now() * 0.008) * 0.2 + 1;
+
+      // Volume-based sizing for hand capacity
+      const volumeRatio = this.brushHandMass / this.brushHandCapacity;
+      const minScale = this.brushMode === 'pickup' ? 0.8 : 1.2;
+      const maxScale = this.brushMode === 'pickup' ? 2.5 : 4.0;
+      const baseScale = minScale + (maxScale - minScale) * volumeRatio;
+
+      this.brushCursorSphere.scale.setScalar(baseScale * pulse);
+
+      // Ring: Bright active colors
+      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      if (this.brushMode === 'pickup') {
+        ringMat.color.setHex(0x00FF00); // Bright green for active pickup
+      } else {
+        ringMat.color.setHex(0xFF0000); // Bright red for active deposit
+      }
+      ringMat.opacity = 0.9;
+
+      // Intensify material emissive for active state
+      this.brushCursorMaterial.emissiveIntensity *= 1.5;
+
+      // Show active mode indicators
+      this.updateModeIndicator(worldPos!, true, true);
+    }
+
+    // Update material properties
+    this.brushCursorMaterial.roughness = baseMat.roughness;
+    this.brushCursorMaterial.metalness = baseMat.metalness;
+
+    // Hide mode indicators if only hovering
+    if (this.brushHovering && !this.brushReady && !this.brushActive) {
+      this.updateModeIndicator(worldPos!, false, false);
+    }
+  }
+
+  /**
+   * Create mode indicator arrows/particles
+   */
+  private createModeIndicator(): void {
+    this.brushModeIndicator = new THREE.Group();
+
+    // Create upward arrows for pickup mode
+    const arrowGeometry = new THREE.ConeGeometry(0.5, 2, 8);
+    const upArrowMaterial = new THREE.MeshBasicMaterial({
+      color: 0x00AAFF,
+      transparent: true,
+      opacity: 0.8,
+    });
+
+    // Create 3 upward arrows in circle formation
+    for (let i = 0; i < 3; i++) {
+      const arrow = new THREE.Mesh(arrowGeometry, upArrowMaterial);
+      const angle = (i / 3) * Math.PI * 2;
+      arrow.position.x = Math.cos(angle) * 3;
+      arrow.position.z = Math.sin(angle) * 3;
+      arrow.position.y = 2;
+      arrow.name = 'pickup-arrow';
+      this.brushModeIndicator.add(arrow);
+    }
+
+    // Create downward arrows for deposit mode
+    const downArrowMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFFAA00,
+      transparent: true,
+      opacity: 0.8,
+    });
+
+    for (let i = 0; i < 3; i++) {
+      const arrow = new THREE.Mesh(arrowGeometry, downArrowMaterial);
+      const angle = (i / 3) * Math.PI * 2;
+      arrow.position.x = Math.cos(angle) * 3;
+      arrow.position.z = Math.sin(angle) * 3;
+      arrow.position.y = 1;
+      arrow.rotation.x = Math.PI; // Point downward
+      arrow.name = 'deposit-arrow';
+      arrow.visible = false; // Start hidden
+      this.brushModeIndicator.add(arrow);
+    }
+
+    // Create material particles for deposit mode
+    const particleGeometry = new THREE.SphereGeometry(0.2, 8, 8);
+
+    // Soil particles
+    const soilParticleMaterial = new THREE.MeshBasicMaterial({
+      color: 0x8B6914,
+      transparent: true,
+      opacity: 0.7,
+    });
+
+    // Rock particles
+    const rockParticleMaterial = new THREE.MeshBasicMaterial({
+      color: 0x5A5A5A,
+      transparent: true,
+      opacity: 0.7,
+    });
+
+    // Lava particles - MeshBasicMaterial doesn't support emissive, so just use bright color
+    const lavaParticleMaterial = new THREE.MeshBasicMaterial({
+      color: 0xFF4500,
+      transparent: true,
+      opacity: 0.8,
+    });
+
+    // Create particles for each material type
+    const materials = [soilParticleMaterial, rockParticleMaterial, lavaParticleMaterial];
+    const materialNames = ['soil', 'rock', 'lava'];
+
+    materials.forEach((material, matIndex) => {
+      for (let i = 0; i < 5; i++) {
+        const particle = new THREE.Mesh(particleGeometry, material);
+        const angle = (i / 5) * Math.PI * 2;
+        const radius = 2 + Math.random() * 2;
+        particle.position.x = Math.cos(angle) * radius;
+        particle.position.z = Math.sin(angle) * radius;
+        particle.position.y = 3 + Math.random() * 2;
+        particle.name = `${materialNames[matIndex]}-particle`;
+        particle.visible = false;
+        this.brushModeIndicator?.add(particle);
+      }
+    });
+
+    this.brushModeIndicator.visible = false;
+    this.scene.add(this.brushModeIndicator);
+  }
+
+  /**
+   * Update mode indicator visibility and animation
+   */
+  private updateModeIndicator(worldPos: THREE.Vector3, isReady: boolean, isActive: boolean): void {
+    if (!this.brushModeIndicator) return;
+
+    this.brushModeIndicator.visible = isReady || isActive;
+
+    if (!this.brushModeIndicator.visible) return;
+
+    // Position at cursor location with proper height
+    // Ensure the indicator is positioned at terrain surface, not below ocean
+    this.brushModeIndicator.position.set(
+      worldPos.x,
+      Math.max(worldPos.y, 0.15) + 0.05, // Ensure minimum height above ocean floor
+      worldPos.z
+    );
+
+    // Hide all indicators first
+    this.brushModeIndicator.children.forEach(child => {
+      child.visible = false;
+    });
+
+    // Show appropriate indicators based on mode
+    if (this.brushMode === 'pickup') {
+      // Show upward arrows
+      this.brushModeIndicator.children.forEach(child => {
+        if (child.name === 'pickup-arrow') {
+          child.visible = true;
+          // Animate upward movement
+          const time = Date.now() * 0.003;
+          child.position.y = 2 + Math.sin(time + child.position.x) * 0.5;
+
+          // Intensify during active state
+          const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          material.opacity = isActive ? 1.0 : 0.6;
+        }
+      });
+    } else {
+      // Show downward arrows and material particles
+      this.brushModeIndicator.children.forEach(child => {
+        if (child.name === 'deposit-arrow') {
+          child.visible = true;
+          // Animate downward movement
+          const time = Date.now() * 0.004;
+          child.position.y = 1 + Math.sin(time + child.position.x) * -0.3;
+
+          const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          material.opacity = isActive ? 1.0 : 0.6;
+        }
+
+        // Show particles matching current material
+        if (child.name === `${this.brushMaterial}-particle`) {
+          child.visible = true;
+          // Animate falling particles
+          const time = Date.now() * 0.002;
+          const baseY = 3 + Math.random() * 2;
+          child.position.y = baseY + Math.sin(time + child.position.x * 0.5) * -1;
+
+          const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+          material.opacity = isActive ? 0.9 : 0.5;
+
+          // Special glow for lava - use brighter color since MeshBasicMaterial has no emissive
+          if (this.brushMaterial === 'lava') {
+            // Brighten the color instead of using emissiveIntensity
+            const brightness = isActive ? 1.2 : 1.0;
+            material.color.setRGB(1.0 * brightness, 0.27 * brightness, 0);
+          }
+        }
+      });
+    }
+
+    // Rotate the entire indicator group slowly
+    this.brushModeIndicator.rotation.y += 0.01;
   }
 
   /**
@@ -234,19 +681,19 @@ export class TerrainRenderer extends BaseRenderer {
     this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.0);
     this.sunLight.castShadow = true;
 
-    // Configure sun shadow camera for better quality
-    this.sunLight.shadow.mapSize.width = 4096;
-    this.sunLight.shadow.mapSize.height = 4096;
-    this.sunLight.shadow.camera.near = 10;
+    // Configure sun shadow camera for consistent lighting
+    this.sunLight.shadow.mapSize.width = 2048; // Reduced for better performance
+    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.camera.near = 0.5;
     this.sunLight.shadow.camera.far = 200;
-    this.sunLight.shadow.camera.left = -60;
-    this.sunLight.shadow.camera.right = 60;
-    this.sunLight.shadow.camera.top = 60;
-    this.sunLight.shadow.camera.bottom = -60;
-    this.sunLight.shadow.bias = -0.0005;
-    this.sunLight.shadow.normalBias = 0.02; // Helps with self-shadowing
+    this.sunLight.shadow.camera.left = -70;
+    this.sunLight.shadow.camera.right = 70;
+    this.sunLight.shadow.camera.top = 70;
+    this.sunLight.shadow.camera.bottom = -70;
+    this.sunLight.shadow.bias = 0.0001; // Small positive bias
+    this.sunLight.shadow.normalBias = 0; // No normal bias for now
     this.sunLight.shadow.needsUpdate = true;
-    this.sunLight.shadow.autoUpdate = true; // Let Three.js handle updates
+    this.sunLight.shadow.autoUpdate = true; // Let Three.js handle updates normally
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target); // Add target to scene for proper world-space lighting
 
@@ -298,6 +745,7 @@ export class TerrainRenderer extends BaseRenderer {
    * Update the day/night cycle
    */
   private updateDayNightCycle(): void {
+
     // Convert time to radians for circular motion
     const angle = this.timeOfDay * Math.PI * 2;
 
@@ -329,6 +777,11 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.sunLight.visible) {
       this.sunLight.target.position.set(0, 0, 0);
       this.sunLight.target.updateMatrixWorld();
+      this.sunLight.updateMatrixWorld();
+      // Force shadow update when sun moves
+      this.sunLight.shadow.needsUpdate = true;
+      this.sunLight.shadow.camera.updateMatrixWorld();
+      this.sunLight.shadow.camera.updateProjectionMatrix();
     }
 
     // Update sun sphere appearance based on elevation
@@ -360,6 +813,11 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.moonLight.visible) {
       this.moonLight.target.position.set(0, 0, 0);
       this.moonLight.target.updateMatrixWorld();
+      this.moonLight.updateMatrixWorld();
+      // Force shadow update when moon moves
+      this.moonLight.shadow.needsUpdate = true;
+      this.moonLight.shadow.camera.updateMatrixWorld();
+      this.moonLight.shadow.camera.updateProjectionMatrix();
     }
 
     // Update moon sphere appearance based on elevation
@@ -373,11 +831,22 @@ export class TerrainRenderer extends BaseRenderer {
     const sunElevation = Math.max(0, sunY / (orbitRadius * verticalScale)); // 0 to 1
     const moonElevation = Math.max(0, moonY / (orbitRadius * verticalScale)); // 0 to 1
 
-    // Sun intensity varies with elevation (reduced to prevent overexposure)
-    this.sunLight.intensity = sunElevation * 1.0;
+    // Ensure only one light casts shadows at a time to prevent conflicts
+    const isDaytime = sunElevation > moonElevation;
 
-    // Moon intensity varies with elevation (dimmer)
-    this.moonLight.intensity = moonElevation * 0.25;
+    if (isDaytime) {
+      // Day time - sun is primary light
+      this.sunLight.intensity = sunElevation * 1.0;
+      this.sunLight.castShadow = true;
+      this.moonLight.intensity = moonElevation * 0.1; // Very dim moon during day
+      this.moonLight.castShadow = false;
+    } else {
+      // Night time - moon is primary light
+      this.sunLight.intensity = sunElevation * 0.1; // Very dim sun during night
+      this.sunLight.castShadow = false;
+      this.moonLight.intensity = moonElevation * 0.4;
+      this.moonLight.castShadow = true;
+    }
 
     // Ambient light varies throughout the day
     // Brighter during day, darker at night
@@ -459,6 +928,106 @@ export class TerrainRenderer extends BaseRenderer {
    */
   public setCycleSpeed(speed: number): void {
     this.cycleSpeed = speed;
+  }
+
+  /**
+   * Set brush parameters from UI
+   */
+  public setBrushMode(mode: 'pickup' | 'deposit'): void {
+    this.brushMode = mode;
+  }
+
+  public setBrushMaterial(material: 'soil' | 'rock' | 'lava'): void {
+    this.brushMaterial = material;
+  }
+
+  public setBrushRadius(radius: number): void {
+    this.brushRadius = radius;
+  }
+
+  public setBrushStrength(strength: number): void {
+    this.brushStrength = strength;
+  }
+
+  public updateBrushHandMass(mass: number): void {
+    this.brushHandMass = mass;
+  }
+
+  public setBrushHandCapacity(capacity: number): void {
+    this.brushHandCapacity = capacity;
+  }
+
+  /**
+   * Initialize brush system fields with current terrain height data
+   */
+  private initializeBrushSystemWithTerrain(): void {
+    if (!this.brushSystem) return;
+
+    const device = (this.renderer as any).backend?.device;
+    if (!device) return;
+
+    // Get current height texture data
+    const heightData = this.heightTexture.image.data as Float32Array;
+    const size = this.gridSize;
+
+    // Create separate rock and soil data from height texture
+    const rockData = new Float32Array(size * size);
+    const soilData = new Float32Array(size * size);
+
+    for (let i = 0; i < size * size; i++) {
+      const height = heightData[i * 4]; // R channel
+
+      // Split height into rock base and soil layer
+      // Above water = soil, below water = rock
+      const waterLevel = 0.153; // Matches terrain water level
+
+      if (height > waterLevel) {
+        // Above water: mostly soil with rock base
+        rockData[i] = Math.max(0, waterLevel - 0.01); // Rock base slightly below water
+        soilData[i] = Math.max(0, height - waterLevel + 0.01); // Soil layer above water
+      } else {
+        // Below water: rock only
+        rockData[i] = height;
+        soilData[i] = 0;
+      }
+    }
+
+    // Copy data to brush system GPU textures
+    const fields = this.brushSystem.getFields();
+
+    // Write rock data
+    device.queue.writeTexture(
+      { texture: fields.rock },
+      rockData,
+      { bytesPerRow: size * 4, rowsPerImage: size },
+      { width: size, height: size }
+    );
+
+    // Write soil data
+    device.queue.writeTexture(
+      { texture: fields.soil },
+      soilData,
+      { bytesPerRow: size * 4, rowsPerImage: size },
+      { width: size, height: size }
+    );
+  }
+
+  /**
+   * Update terrain rendering to use brush system field data directly
+   */
+  private updateTerrainFromBrushSystem(): void {
+    if (!this.brushSystem || !this.terrainMesh) return;
+
+    // Get brush system fields for direct binding
+    const fields = this.brushSystem.getFields();
+
+    // Update terrain material to use brush system textures directly
+    const material = this.terrainMesh.material as any;
+    if (material.heightMapNode) {
+      // Create combined height texture from rock + soil in TSL
+      // This will be done in the shader via texture sampling
+      material.needsUpdate = true;
+    }
   }
 
   /**
@@ -593,7 +1162,7 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private generateTestTerrain(): void {
-    // Generate a much more interesting island terrain with proper features
+    // Generate smooth island terrain with better features and no rough edges
     const size = this.gridSize;
     const data = this.heightTexture.image.data as Float32Array;
 
@@ -607,6 +1176,12 @@ export class TerrainRenderer extends BaseRenderer {
     const smoothstep = (edge0: number, edge1: number, x: number): number => {
       const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
       return t * t * (3 - 2 * t);
+    };
+
+    // Extra smooth interpolation for critical areas
+    const smootherstep = (edge0: number, edge1: number, x: number): number => {
+      const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+      return t * t * t * (t * (t * 6 - 15) + 10);
     };
 
     // Improved Perlin-like noise
@@ -724,59 +1299,82 @@ export class TerrainRenderer extends BaseRenderer {
         // Start with zero height
         let height = 0;
 
-        // Create main island shape with more organic variation
-        const shapeNoise = noise2D(nx * 0.7, ny * 0.7, 2, 3);
-        const islandShape = Math.max(0, 1 - dist * (1.0 + shapeNoise * 0.4));
-        const islandNoise = noise2D(nx, ny, 3, 4);
-        const islandMask = Math.pow(islandShape, 0.6) * (0.6 + islandNoise * 0.4);
+        // Create main island shape with very smooth variation
+        const shapeNoise = noise2D(nx * 0.5, ny * 0.5, 1.5, 2);
+        const islandShape = Math.max(0, 1 - dist * (0.9 + shapeNoise * 0.2));
+        const islandNoise = noise2D(nx, ny, 2, 2);
+        const islandMask = Math.pow(islandShape, 0.8) * (0.7 + islandNoise * 0.3);
 
         if (islandMask > 0.01) {
-          // Base elevation with extended smooth underwater-to-beach transition
-          if (islandMask < 0.05) {
-            // Deep underwater approach with very gradual slope
-            height = 0.03 + islandMask * 1.6;
-          } else if (islandMask < 0.12) {
-            // Mid-depth underwater with smooth rise
-            const midProgress = (islandMask - 0.05) / 0.07;
-            const smoothProgress = smoothstep(0, 1, midProgress);
-            height = 0.11 + smoothProgress * 0.03;
-          } else if (islandMask < 0.2) {
-            // Shallow water approaching beach
-            const shallowProgress = (islandMask - 0.12) / 0.08;
-            const smoothProgress = smoothstep(0, 1, shallowProgress);
-            height = 0.14 + smoothProgress * 0.012;
-          } else if (islandMask < 0.35) {
-            // Extended beach zone with ultra-gentle slope using cosine
-            const beachProgress = (islandMask - 0.2) / 0.15;
-            const cosineProgress = (1 - Math.cos(beachProgress * Math.PI)) * 0.5;
-            height = 0.152 + cosineProgress * 0.018;
+          // Base elevation with much more dramatic height variation
+          if (islandMask < 0.08) {
+            // Deep to medium underwater - very gradual
+            const progress = islandMask / 0.08;
+            const smoothProgress = smootherstep(0, 1, progress);
+            height = 0.05 + smoothProgress * 0.08;
+          } else if (islandMask < 0.18) {
+            // Shallow water to beach - critical smooth transition
+            const progress = (islandMask - 0.08) / 0.10;
+            const smoothProgress = smootherstep(0, 1, progress);
+            height = 0.13 + smoothProgress * 0.022;
+          } else if (islandMask < 0.3) {
+            // Beach to foothills - gentle rise
+            const progress = (islandMask - 0.18) / 0.12;
+            const smoothProgress = smootherstep(0, 1, progress);
+            height = 0.152 + smoothProgress * 0.05;
+          } else if (islandMask < 0.6) {
+            // Foothills to mid elevation - more dramatic
+            const progress = (islandMask - 0.3) / 0.3;
+            const smoothProgress = smootherstep(0, 1, progress);
+            height = 0.202 + smoothProgress * 0.15;
           } else {
-            // Above beach - varied terrain
-            height = 0.17 + islandMask * 0.08;
+            // High terrain - mountains and peaks
+            const progress = Math.min(1, (islandMask - 0.6) / 0.4);
+            const smoothProgress = smootherstep(0, 1, progress);
+            height = 0.352 + smoothProgress * 0.25;
           }
 
           // Add terrain features based on zones
           const cellNoise = cellularNoise(nx + 0.5, ny + 0.5, 5);
 
-          // Mountain ranges using ridge noise
+          // Completely reworked mountain system with no harsh cutoffs
           const mountainZone = Math.max(0, islandMask - 0.35);
-          if (mountainZone > 0 && ny > -0.3) {  // Mountains mostly in north
-            // Use ridge noise for realistic mountain chains
-            const ridges = ridgeNoise(nx * 1.5, ny * 1.5, 4, 3);
+          if (mountainZone > 0) {
+            // Create smooth mountain distribution across the island
+            const mountainNoise = noise2D(nx * 0.8, ny * 0.8, 2, 3);
+            const ridgeStrength = mountainNoise * 0.5 + 0.5; // 0 to 1
 
-            // Create distinct peaks
-            const peak1 = Math.exp(-((nx - 0.2) * (nx - 0.2) + (ny - 0.3) * (ny - 0.3)) * 15);
-            const peak2 = Math.exp(-((nx + 0.15) * (nx + 0.15) + (ny - 0.2) * (ny - 0.2)) * 20);
-            const peak3 = Math.exp(-((nx) * (nx) + (ny - 0.4) * (ny - 0.4)) * 12);
+            // Multiple mountain ridges with smooth falloff
+            const ridge1 = ridgeNoise(nx * 1.0 + 0.1, ny * 1.0 + 0.2, 3, 2);
+            const ridge2 = ridgeNoise(nx * 0.8 - 0.1, ny * 0.8 - 0.1, 4, 2);
+            const ridge3 = ridgeNoise(nx * 1.2 + 0.2, ny * 1.2 + 0.3, 2, 3);
 
-            const peaks = (peak1 + peak2 * 0.8 + peak3 * 0.6) * mountainZone;
-            const mountains = ridges * mountainZone * 0.25 + peaks * 0.35;
+            // Combine ridges with varying strengths
+            const combinedRidges = (ridge1 * 0.4 + ridge2 * 0.3 + ridge3 * 0.3) * ridgeStrength;
 
-            height += mountains;
+            // Create multiple peaks with smooth transitions
+            const peak1 = Math.exp(-((nx - 0.1) * (nx - 0.1) + (ny - 0.15) * (ny - 0.15)) * 8);
+            const peak2 = Math.exp(-((nx + 0.15) * (nx + 0.15) + (ny + 0.05) * (ny + 0.05)) * 10);
+            const peak3 = Math.exp(-((nx - 0.2) * (nx - 0.2) + (ny - 0.3) * (ny - 0.3)) * 6);
+            const peak4 = Math.exp(-((nx + 0.05) * (nx + 0.05) + (ny - 0.25) * (ny - 0.25)) * 9);
 
-            // Add rocky outcrops using cellular noise
-            if (cellNoise > 0.15 && mountainZone > 0.1) {
-              height += cellNoise * mountainZone * 0.1;
+            // Smooth peak distribution
+            const peakFactor = noise2D(nx * 2, ny * 2, 3, 2) * 0.3 + 0.7;
+            const allPeaks = (peak1 + peak2 * 0.8 + peak3 * 0.6 + peak4 * 0.7) * peakFactor;
+
+            // Combine mountains with very smooth transitions
+            const mountainHeight = (combinedRidges * 0.25 + allPeaks * 0.35) * mountainZone;
+
+            // Apply ultra-smooth transition based on distance from center
+            const centerDist = Math.sqrt(nx * nx + ny * ny);
+            const falloffFactor = smootherstep(0.8, 0.4, centerDist);
+
+            height += mountainHeight * falloffFactor;
+
+            // Add subtle rocky texture only on steep areas
+            const steepness = mountainHeight * falloffFactor;
+            if (cellNoise > 0.3 && steepness > 0.1) {
+              height += cellNoise * steepness * 0.02;
             }
           }
 
@@ -810,19 +1408,15 @@ export class TerrainRenderer extends BaseRenderer {
             height = Math.min(height, 0.135);  // Keep it as a shallow lagoon
           }
 
-          // Create dramatic cliffs on western side
-          if (nx < -0.3 && islandMask > 0.25) {
-            const cliffStrength = smoothstep(-0.3, -0.6, nx);
-            const cliffNoise = noise2D(ny * 5, nx * 5, 10, 2);
+          // Gentler elevated areas instead of harsh cliffs
+          if (nx < -0.2 && islandMask > 0.3) {
+            const elevationStrength = smootherstep(-0.2, -0.5, nx);
+            const elevationNoise = noise2D(ny * 3, nx * 3, 6, 2);
 
-            // Sharp elevation change for cliff
-            if (cliffStrength > 0.1) {
-              height = Math.max(height, 0.25 + cliffStrength * 0.2 + cliffNoise * 0.05);
-            }
-
-            // Rocky texture on cliff face
-            if (cliffStrength > 0.3) {
-              height += cellNoise * cliffStrength * 0.08;
+            // Gentle elevation increase
+            if (elevationStrength > 0.05) {
+              const additionalHeight = elevationStrength * (0.08 + elevationNoise * 0.03);
+              height += additionalHeight * smootherstep(0.05, 0.3, elevationStrength);
             }
           }
 
@@ -842,16 +1436,18 @@ export class TerrainRenderer extends BaseRenderer {
           }
         }
 
-        // Add smaller satellite islands with more character
-        // Rocky outcrop to the northeast
-        const island1X = 0.4;
-        const island1Y = 0.35;
-        const island1Dist = Math.sqrt(Math.pow(nx - island1X, 2) + Math.pow(ny - island1Y, 2));
-        if (island1Dist < 0.1) {
-          const island1Factor = Math.pow(1 - island1Dist / 0.1, 1.2);
-          const rockiness = cellularNoise((nx - island1X) * 10, (ny - island1Y) * 10, 8);
-          const island1Height = 0.146 + island1Factor * (0.12 + rockiness * 0.08);
-          height = Math.max(height, island1Height);
+        // Small island in front of camera view (southeast from new camera position)
+        const frontIslandX = -0.3;
+        const frontIslandY = -0.4;
+        const frontIslandDist = Math.sqrt(Math.pow(nx - frontIslandX, 2) + Math.pow(ny - frontIslandY, 2));
+        if (frontIslandDist < 0.12) {
+          const islandFactor = Math.pow(1 - frontIslandDist / 0.12, 1.5);
+          const islandNoise = noise2D((nx - frontIslandX) * 8, (ny - frontIslandY) * 8, 6, 2);
+          const islandHeight = 0.148 + islandFactor * (0.08 + islandNoise * 0.04);
+          // Smooth transition to avoid harsh edges
+          const smoothFactor = smootherstep(0.1, 0.12, frontIslandDist);
+          const finalHeight = islandHeight * (1 - smoothFactor);
+          height = Math.max(height, finalHeight);
         }
 
         // Sandy atoll chain to the southwest
@@ -901,6 +1497,67 @@ export class TerrainRenderer extends BaseRenderer {
         data[idx + 1] = height;
         data[idx + 2] = height;
         data[idx + 3] = 1;
+      }
+    }
+
+    // Apply smoothing pass to eliminate rough edges
+    const smoothedData = new Float32Array(size * size * 4);
+    for (let y = 1; y < size - 1; y++) {
+      for (let x = 1; x < size - 1; x++) {
+        const idx = (y * size + x) * 4;
+
+        // Sample surrounding heights
+        const center = data[idx];
+        const neighbors = [
+          data[((y-1) * size + x) * 4],     // top
+          data[((y+1) * size + x) * 4],     // bottom
+          data[(y * size + (x-1)) * 4],     // left
+          data[(y * size + (x+1)) * 4],     // right
+          data[((y-1) * size + (x-1)) * 4], // top-left
+          data[((y-1) * size + (x+1)) * 4], // top-right
+          data[((y+1) * size + (x-1)) * 4], // bottom-left
+          data[((y+1) * size + (x+1)) * 4]  // bottom-right
+        ];
+
+        // Weighted average for smoothing - heavier weight on center
+        let smoothedHeight = center * 0.5;
+        for (let i = 0; i < 8; i++) {
+          smoothedHeight += neighbors[i] * 0.0625; // 0.5/8
+        }
+
+        // Apply targeted smoothing to eliminate harsh edges
+        const nx = (x / size) * 2 - 1;
+        const ny = (y / size) * 2 - 1;
+        const dist = Math.sqrt(nx * nx + ny * ny);
+
+        // Check for large height differences with neighbors that indicate harsh edges
+        let maxDiff = 0;
+        for (const neighbor of neighbors) {
+          maxDiff = Math.max(maxDiff, Math.abs(center - neighbor));
+        }
+
+        // Only smooth areas with significant height differences (harsh edges)
+        if (maxDiff > 0.02 && center > 0.1 && center < 0.5 && dist < 1.0) {
+          // Smooth more aggressively where harsh edges are detected
+          const smoothingFactor = Math.min(maxDiff * 10, 0.8); // 0 to 0.8
+          smoothedHeight = center * (1 - smoothingFactor) + smoothedHeight * smoothingFactor;
+        }
+
+        smoothedData[idx] = smoothedHeight;
+        smoothedData[idx + 1] = smoothedHeight;
+        smoothedData[idx + 2] = smoothedHeight;
+        smoothedData[idx + 3] = 1;
+      }
+    }
+
+    // Copy smoothed data back, preserving edges
+    for (let y = 1; y < size - 1; y++) {
+      for (let x = 1; x < size - 1; x++) {
+        const idx = (y * size + x) * 4;
+        data[idx] = smoothedData[idx];
+        data[idx + 1] = smoothedData[idx + 1];
+        data[idx + 2] = smoothedData[idx + 2];
+        data[idx + 3] = smoothedData[idx + 3];
       }
     }
 
@@ -1006,6 +1663,24 @@ export class TerrainRenderer extends BaseRenderer {
       this.updateDayNightCycle();
     }
 
+    // Execute brush system if available
+    if (this.brushSystem && this.renderer) {
+      // Get WebGPU device and create command encoder
+      const device = (this.renderer as any).backend?.device;
+      if (device) {
+        const commandEncoder = device.createCommandEncoder();
+
+        // Execute brush operations
+        this.brushSystem.execute(commandEncoder);
+
+        // Submit commands
+        device.queue.submit([commandEncoder.finish()]);
+
+        // Update terrain textures from brush system fields
+        this.updateTerrainFromBrushSystem();
+      }
+    }
+
     // Render the scene
     super.render();
   }
@@ -1013,11 +1688,14 @@ export class TerrainRenderer extends BaseRenderer {
   public override dispose(): void {
     // Clean up event listeners
     if ((this as any)._keyHandlers) {
-      const { handleKeyDown, handleKeyUp, handleMouseDown } = (this as any)._keyHandlers;
+      const { handleKeyDown, handleKeyUp, handleMouseMove, handleMouseDown, handleMouseUp, handleMouseLeave } = (this as any)._keyHandlers;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
-      if (handleMouseDown) {
-        window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mousedown', handleMouseDown);
+      window.removeEventListener('mouseup', handleMouseUp);
+      if (handleMouseLeave) {
+        this.canvas.removeEventListener('mouseleave', handleMouseLeave);
       }
     }
 
@@ -1036,6 +1714,24 @@ export class TerrainRenderer extends BaseRenderer {
     this.waterDepthTexture.dispose();
     this.lavaDepthTexture.dispose();
     this.temperatureTexture.dispose();
+
+    // Dispose of brush cursor
+    if (this.brushCursorSphere) {
+      this.brushCursorSphere.geometry.dispose();
+      (this.brushCursorSphere.material as THREE.Material).dispose();
+    }
+    if (this.brushCursorRing) {
+      this.brushCursorRing.geometry.dispose();
+      (this.brushCursorRing.material as THREE.Material).dispose();
+    }
+    if (this.brushModeIndicator) {
+      this.brushModeIndicator.children.forEach(child => {
+        const mesh = child as THREE.Mesh;
+        mesh.geometry.dispose();
+        (mesh.material as THREE.Material).dispose();
+      });
+      this.brushModeIndicator.clear();
+    }
 
     // Dispose of meshes
     if (this.terrainMesh) {

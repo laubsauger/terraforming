@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize } from 'three/tsl';
+import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize, normalWorld } from 'three/tsl';
 import type { Texture } from 'three';
 
 export interface TerrainMaterialTSLOptions {
@@ -40,10 +40,12 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const rockColor = vec3(0.5, 0.45, 0.4);  // Gray rock
   const snowColor = vec3(0.95, 0.95, 1.0); // White snow
 
-  // Create TSL node material
+  // Create TSL node material with better lighting properties
   const material = new THREE.MeshStandardNodeMaterial({
-    roughness: 0.9,
+    roughness: 0.85,  // Slightly less rough for better light response
     metalness: 0.0,
+    flatShading: false,  // Ensure smooth shading
+    side: THREE.FrontSide,  // Only render front faces
   });
 
   // Get UV coordinates properly for the plane geometry
@@ -128,38 +130,37 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
 
   // Compute normals from height gradient for proper lighting
   if (normalMap) {
+    // Use provided normal map
     material.normalNode = texture(normalMap, uv()).xyz;
   } else {
-    // Compute normals from height gradient in object space
-    // Sample neighboring heights to calculate gradient
+    // Simple central difference for normals - more reliable
     const texelSize = float(1.0 / 512); // Assuming 512x512 heightmap
-    const worldScale = float(terrainSize); // World size of terrain
 
     // Sample heights at neighboring points
-    const hL = texture(heightMap, uv().sub(vec2(texelSize, 0))).r.mul(float(heightScale));
-    const hR = texture(heightMap, uv().add(vec2(texelSize, 0))).r.mul(float(heightScale));
-    const hD = texture(heightMap, uv().sub(vec2(0, texelSize))).r.mul(float(heightScale));
-    const hU = texture(heightMap, uv().add(vec2(0, texelSize))).r.mul(float(heightScale));
+    const hL = texture(heightMap, uv().sub(vec2(texelSize, float(0)))).r;
+    const hR = texture(heightMap, uv().add(vec2(texelSize, float(0)))).r;
+    const hD = texture(heightMap, uv().sub(vec2(float(0), texelSize))).r;
+    const hU = texture(heightMap, uv().add(vec2(float(0), texelSize))).r;
 
-    // Calculate derivatives in world space
-    // The terrain plane is in XZ, with Y up
-    const dx = worldScale.mul(texelSize).mul(2);
-    const dz = worldScale.mul(texelSize).mul(2);
+    // Calculate height differences
+    const dX = hR.sub(hL).mul(float(heightScale));
+    const dY = hU.sub(hD).mul(float(heightScale));
 
-    // Height differences
-    const dhdx = hR.sub(hL);
-    const dhdz = hU.sub(hD);
+    // Scale by world size to get proper gradients
+    const worldScale = texelSize.mul(float(terrainSize)).mul(2);
 
-    // Normal vector components (terrain is XZ plane with Y up)
-    // Normal = (-dh/dx, 1, -dh/dz) normalized
-    const nx = dhdx.mul(float(-1)).div(dx);
-    const ny = float(1);
-    const nz = dhdz.mul(float(-1)).div(dz);
+    // The plane geometry is initially in XY plane with Z pointing up (in object space)
+    // Height displacement happens along Z axis in object space
+    // After rotation, object Z becomes world Y
+    const nx = dX.div(worldScale).mul(-1);
+    const ny = dY.div(worldScale).mul(-1);
+    const nz = float(1);  // Normal points along Z in object space
 
-    // Construct and normalize the normal vector
-    const computedNormal = normalize(vec3(nx, ny, nz));
+    // Build the normal in object space (pre-rotation)
+    const normalRaw = vec3(nx, ny, nz);
 
-    material.normalNode = computedNormal;
+    // Normalize the result
+    material.normalNode = normalize(normalRaw);
   }
 
   // Store additional maps for potential use in fragment shader

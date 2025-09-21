@@ -16,6 +16,7 @@ import { PerfHudSection } from '@playground/components/sections/PerfHudSection';
 import { QualitySection } from '@playground/components/sections/QualitySection';
 import { TimeScaleSection } from '@playground/components/sections/TimeScaleSection';
 import { BrushSection } from '@playground/components/sections/BrushSection';
+import { NoiseTextureGenerator } from '@playground/components/NoiseTextureGenerator';
 import { cn } from '@playground/lib/utils';
 
 
@@ -34,9 +35,11 @@ export interface TerraformingUIProps {
 }
 
 const PANEL_CLASS = [
-  'absolute left-0 top-0 z-10 flex w-80 flex-col gap-4 rounded-br-2xl',
-  'border border-white/10 bg-black/70 p-4 text-foreground backdrop-blur-xl',
+  'absolute left-0 top-0 z-10 flex w-80 flex-col rounded-br-2xl',
+  'border border-white/10 bg-black/70 text-foreground backdrop-blur-xl',
   'pointer-events-auto',
+  'max-h-[calc(100vh-2rem)]', // Leave some margin from viewport edges
+  'overflow-hidden', // Hide overflow on the container
 ].join(' ');
 
 const OVERLAY_OPTIONS: OverlayOption[] = [
@@ -56,12 +59,21 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
   const storeRef = useRef<StoreApi<UiStore>>();
   const [showPerfHud, setShowPerfHud] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
+  const [showNoiseGenerator, setShowNoiseGenerator] = useState(false);
 
   if (!storeRef.current) {
     storeRef.current = store ?? createUiStore();
   }
 
   const uiStore = storeRef.current;
+
+  // Expose store globally for brush operations
+  useEffect(() => {
+    (window as any).__uiStore = uiStore;
+    return () => {
+      delete (window as any).__uiStore;
+    };
+  }, [uiStore]);
 
   const paused = useUiStore(uiStore, (state) => state.run.paused);
   const togglePaused = useUiStore(uiStore, (state) => state.run.togglePaused);
@@ -134,8 +146,10 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
     engine.sources.set('lava', lavaSources);
   }, [engine, lavaSources]);
 
-  // Only use perf samples when PerfHud is shown
-  const { latest } = showPerfHud ? usePerfSamples(engine) : { latest: null };
+  // Always call the hook to maintain consistent hook order
+  const { latest } = usePerfSamples(engine);
+  // Only use the latest sample if PerfHud is shown
+  const perfSample = showPerfHud ? latest : null;
 
   const handleSnapshot = () => {
     onSnapshot?.(latest ?? null);
@@ -143,44 +157,54 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
 
   return (
     <aside className={cn(PANEL_CLASS, className)}>
-      {/* Collapse Toggle Header */}
-      <button
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className="w-full text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg p-2 transition-colors flex items-center justify-between"
-      >
-        <span className="flex items-center gap-2">
-          <svg
-            className={cn("w-4 h-4 transition-transform", isCollapsed && "rotate-180")}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-          Simulation Controls
-        </span>
-        <span className="text-xs text-gray-400">{isCollapsed ? 'Expand' : 'Collapse'}</span>
-      </button>
+      {/* Collapse Toggle Header - Fixed at top */}
+      <div className={cn("p-4", !isCollapsed && "pb-0")}>
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="w-full text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg p-2 transition-colors flex items-center justify-between"
+        >
+          <span className="flex items-center gap-2">
+            <svg
+              className={cn("w-4 h-4 transition-transform", isCollapsed && "rotate-180")}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+            Simulation Controls
+          </span>
+          <span className="text-xs text-gray-400">{isCollapsed ? 'Expand' : 'Collapse'}</span>
+        </button>
+      </div>
 
-      {/* Collapsible Content */}
+      {/* Collapsible Content - Scrollable */}
       {!isCollapsed && (
-        <>
+        <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 pt-2 space-y-4">
           <RunSection paused={paused} togglePaused={togglePaused} />
           <TimeScaleSection timeScale={timeScale} setTimeScale={setTimeScale} />
+
+          {/* Terrain Generator Button */}
+          <div className="space-y-2">
+            <button
+              onClick={() => setShowNoiseGenerator(true)}
+              className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors bg-blue-600/20 hover:bg-blue-600/30 border border-blue-500/30"
+            >
+              <span className="flex items-center justify-between">
+                <span>🌍 Terrain Generator</span>
+                <span className="text-xs text-gray-400">Open</span>
+              </span>
+            </button>
+          </div>
 
           <BrushSection
             mode={brush.mode}
             material={brush.material}
-            radius={brush.radius}
-            strength={brush.strength}
             isActive={brush.isActive}
             handMass={brush.handMass}
             handCapacity={brush.handCapacity}
             setMode={brush.setMode}
             setMaterial={brush.setMaterial}
-            setRadius={brush.setRadius}
-            setStrength={brush.setStrength}
-            setActive={brush.setActive}
           />
 
           <QualitySection quality={quality} updateQuality={updateQuality} />
@@ -202,11 +226,18 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
 
             {/* Only mount PerfHud when shown for performance */}
             {showPerfHud && (
-              <PerfHudSection sample={latest} onSnapshot={handleSnapshot} />
+              <PerfHudSection sample={perfSample} onSnapshot={handleSnapshot} />
             )}
           </div>
-        </>
+        </div>
       )}
+
+      {/* Noise Texture Generator Modal */}
+      <NoiseTextureGenerator
+        engine={engine}
+        isOpen={showNoiseGenerator}
+        onClose={() => setShowNoiseGenerator(false)}
+      />
     </aside>
   );
 }

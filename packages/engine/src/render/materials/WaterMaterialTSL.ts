@@ -22,19 +22,19 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
 
   const material = new THREE.MeshPhysicalNodeMaterial({
     transparent: true,
-    roughness: 0.003, // Even smoother for better reflections
-    metalness: 0.6,   // Higher metalness for stronger reflections
-    transmission: 0.4, // Less transmission for more opaque water
+    roughness: 0.25, // Much rougher for scattered reflections
+    metalness: 0.05,   // Very low metalness - water is not metallic
+    transmission: 0.6, // More transmission for water transparency
     thickness: 2.5,
     ior: 1.33, // Water's index of refraction
     side: THREE.DoubleSide,
-    clearcoat: 1.0,
-    clearcoatRoughness: 0.01,  // Mirror-like clearcoat
+    clearcoat: 0.5,  // Moderate clearcoat
+    clearcoatRoughness: 0.35,  // Rough clearcoat for scattered reflections
     depthWrite: false, // Allow transparency to work properly
     depthTest: true,
-    envMapIntensity: 4.0, // Maximum reflections
-    specularIntensity: 3.0,  // Very strong specular highlights
-    sheen: 0.8,  // High sheen for water surface
+    envMapIntensity: 0.8, // Reduced reflections - more realistic
+    specularIntensity: 1.2,  // Moderate specular highlights
+    sheen: 0.3,  // Lower sheen for more natural look
   });
 
   // Animated UV for flowing water effect
@@ -212,10 +212,23 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   material.colorNode = waterColorNode;
   material.opacityNode = opacityNode;
 
-  // Add more roughness variation for visible water surface detail
-  const roughnessBase = animatedUV.x.sin().mul(animatedUV.y.cos()).mul(0.05);
-  const roughnessWaves = time.mul(0.5).sin().mul(0.02);
-  material.roughnessNode = roughnessBase.add(roughnessWaves).add(float(0.05));
+  // Add significant roughness variation to scatter reflections realistically
+  const roughnessBase = animatedUV.x.sin().mul(animatedUV.y.cos()).mul(0.15); // More variation
+  const roughnessWaves = time.mul(0.5).sin().mul(0.08); // Stronger temporal variation
+  const roughnessNoise = sin(uv().x.mul(50).add(time)).mul(cos(uv().y.mul(45).sub(time.mul(0.7)))).mul(0.1);
+
+  // Create depth-based roughness - smoother in deep water, rougher near shore
+  let roughnessNode: any = roughnessBase.add(roughnessWaves).add(roughnessNoise).add(float(0.25)); // Base roughness of 0.25
+
+  if (heightTexture && waterLevel !== undefined) {
+    const terrainHeight = texture(heightTexture, uv()).r;
+    const waterDepth = float(waterLevel).sub(terrainHeight);
+    // Shore is rougher (more scattered), deep water slightly smoother
+    const depthRoughness = mix(float(0.35), float(0.2), smoothstep(float(0), float(0.1), waterDepth));
+    roughnessNode = roughnessNode.mul(depthRoughness.div(float(0.25))); // Scale relative to base
+  }
+
+  material.roughnessNode = roughnessNode;
 
   // Add physical vertex displacement for waves at shore (must be before normal calculation)
   if (heightTexture && waterLevel !== undefined) {

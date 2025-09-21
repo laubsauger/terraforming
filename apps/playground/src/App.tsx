@@ -4,6 +4,7 @@ import type { Engine } from '@terraforming/engine';
 import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
 import type { PerfSample } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
+import * as THREE from 'three';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
 import { BrushSettings } from '@playground/components/BrushSettings';
@@ -29,6 +30,15 @@ export function App() {
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
+  const [isAltPressed, setIsAltPressed] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const dragIntervalRef = useRef<number | null>(null);
+
+  // Detect OS for correct modifier key
+  const isMac = typeof navigator !== 'undefined' &&
+    (navigator.userAgent.toLowerCase().includes('mac') ||
+     navigator.platform?.toLowerCase().includes('mac'));
+  const modifierKey = isMac ? 'Option' : 'Alt';
 
   const toolbarActions = useMemo(
     () => [
@@ -126,8 +136,18 @@ export function App() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
+      // Track Alt/Option key
+      if (event.altKey) {
+        setIsAltPressed(true);
+      }
+
       if (event.defaultPrevented) return;
-      if (event.metaKey || event.ctrlKey || event.altKey) return;
+      // Don't block shortcuts when Alt is pressed, but block others
+      if (event.metaKey || event.ctrlKey) return;
+
+      // If Alt is pressed, don't process tool shortcuts
+      if (event.altKey) return;
+
       const key = event.key.toLowerCase();
       const tool = shortcutMap.get(key);
       if (!tool) return;
@@ -141,9 +161,111 @@ export function App() {
       handleToolChange(tool);
     };
 
+    const handleKeyUp = (event: KeyboardEvent) => {
+      // Release Alt/Option key
+      if (!event.altKey) {
+        setIsAltPressed(false);
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
+    };
   }, [handleToolChange, shortcutMap]);
+
+  // Handle brush operations when Alt+Click
+  useEffect(() => {
+    if (!engine || !canvasRef.current) return;
+
+    const canvas = canvasRef.current;
+    const uiStore = (window as any).__uiStore; // Get the store from TerraformingUI
+
+    const performBrushOperation = (event: MouseEvent) => {
+      if (!isAltPressed || !uiStore) return;
+
+      // Get world position from raycasting
+      const camera = engine.getCamera();
+      const scene = engine.getScene();
+      const terrainMesh = engine.getTerrainMesh();
+
+      if (!camera || !scene || !terrainMesh) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
+
+      const intersects = raycaster.intersectObject(terrainMesh);
+      if (intersects.length > 0) {
+        const point = intersects[0].point;
+        const brushState = uiStore.getState().brush;
+
+        // Queue the brush operation
+        engine.brush.enqueue({
+          mode: brushState.mode,
+          material: brushState.material,
+          worldX: point.x,
+          worldZ: point.z,
+          radius: brushState.radius,
+          strength: brushState.strength,
+          dt: 0.016 // 60fps frame time
+        });
+
+        // Mark brush as active
+        brushState.setActive(true);
+      }
+    };
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (isAltPressed && event.button === 0) { // Left click only
+        event.preventDefault();
+        setIsDragging(true);
+        performBrushOperation(event);
+
+        // Start continuous operation while dragging
+        if (dragIntervalRef.current) clearInterval(dragIntervalRef.current);
+        dragIntervalRef.current = window.setInterval(() => {
+          const lastEvent = new MouseEvent('mousemove', {
+            clientX: mousePosition.x,
+            clientY: mousePosition.y,
+            bubbles: true
+          });
+          performBrushOperation(lastEvent);
+        }, 50); // ~20Hz for continuous brush
+      }
+    };
+
+    const handlePointerUp = () => {
+      setIsDragging(false);
+      if (dragIntervalRef.current) {
+        clearInterval(dragIntervalRef.current);
+        dragIntervalRef.current = null;
+      }
+
+      // Mark brush as inactive
+      const uiStore = (window as any).__uiStore;
+      if (uiStore) {
+        const brushState = uiStore.getState().brush;
+        brushState.setActive(false);
+      }
+    };
+
+    canvas.addEventListener('pointerdown', handlePointerDown);
+    window.addEventListener('pointerup', handlePointerUp);
+
+    return () => {
+      canvas.removeEventListener('pointerdown', handlePointerDown);
+      window.removeEventListener('pointerup', handlePointerUp);
+      if (dragIntervalRef.current) {
+        clearInterval(dragIntervalRef.current);
+      }
+    };
+  }, [engine, isAltPressed, mousePosition]);
 
   // Mouse tracking for tool cursor
   useEffect(() => {
@@ -200,11 +322,11 @@ export function App() {
 
       // Calculate size change (fine control with shift)
       const delta = event.deltaY > 0 ? -1 : 1;
-      const step = 1; // Fine step size for shift+scroll
+      const step = 0.25; // Much finer step size for shift+scroll (quarter increments)
 
       setBrushSize(prev => {
         const newSize = prev + (delta * step);
-        return Math.max(1, Math.min(15, newSize)); // Reduced max from 50 to 15
+        return Math.max(1, Math.min(15, Math.round(newSize * 4) / 4)); // Round to nearest 0.25, max 15
       });
     };
 
@@ -240,6 +362,7 @@ export function App() {
           brushStrength={brushStrength}
           onSizeChange={setBrushSize}
           onStrengthChange={setBrushStrength}
+          modifierKey={modifierKey}
           className="absolute top-1/2 right-20 -translate-y-1/2"
         />
       )}
@@ -251,24 +374,17 @@ export function App() {
         className="absolute bottom-4 right-4"
       />
 
-      {/* Show appropriate cursor based on tool type */}
-      {activeTool === 'select' ? (
-        <ToolCursor
-          activeTool={activeTool}
-          brushSize={brushSize}
-          isVisible={showCursor}
-          position={mousePosition}
-        />
-      ) : (
-        <TerrainCursor
-          activeTool={activeTool}
-          brushSize={brushSize}
-          isVisible={showCursor || isAdjustingBrush}
-          engine={engine}
-          mousePosition={mousePosition}
-          canvasElement={canvasRef.current}
-        />
-      )}
+
+      {/* Always use TerrainCursor for all tools for consistent terrain-following behavior */}
+      <TerrainCursor
+        activeTool={activeTool}
+        brushSize={brushSize}
+        isVisible={showCursor || isAdjustingBrush}
+        engine={engine}
+        mousePosition={mousePosition}
+        canvasElement={canvasRef.current}
+        isAltPressed={isAltPressed}
+      />
 
       {state === 'pending' && (
         <StatusToast message="Initializing engine…" />

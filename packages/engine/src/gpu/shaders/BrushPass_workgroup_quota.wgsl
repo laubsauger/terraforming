@@ -14,10 +14,10 @@ struct HandBuf {
 @group(0) @binding(0) var<storage, read> ops : array<BrushOp>;
 @group(0) @binding(1) var<storage, read_write> hand : HandBuf;
 
-// Storage textures as r32float
-@group(0) @binding(2) var soilTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(3) var rockTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(4) var lavaTex : texture_storage_2d<r32float, read_write>;
+// Storage textures as r32float (read-only, we only read current values)
+@group(0) @binding(2) var soilTex : texture_storage_2d<r32float, read>;
+@group(0) @binding(3) var rockTex : texture_storage_2d<r32float, read>;
+@group(0) @binding(4) var lavaTex : texture_storage_2d<r32float, read>;
 
 // Staging delta textures (meters); cleared after ApplyDeltas
 @group(0) @binding(5) var deltaSoilTex : texture_storage_2d<r32float, read_write>;
@@ -54,20 +54,28 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
         @builtin(local_invocation_index) li: u32,
         @builtin(workgroup_id) wid: vec3<u32>) {
   let coord = gid.xy;
-  if (!tex_index(coord)) { return; }
+  let in_bounds = tex_index(coord);
 
   // 1) compute desired mass for this texel across all ops
   var desiredKg : f32 = 0.0;
   let cellArea = cellSize * cellSize;
 
-  // Preload cell values
-  var soil = textureLoad(soilTex, coord).r;
-  var rock = textureLoad(rockTex, coord).r;
-  var lava = textureLoad(lavaTex, coord).r;
+  // Preload cell values (only if in bounds)
+  var soil = 0.0;
+  var rock = 0.0;
+  var lava = 0.0;
+  var wpos = vec2<f32>(0.0, 0.0);
 
-  let wpos = world_of(coord);
+  if (in_bounds) {
+    soil = textureLoad(soilTex, coord).r;
+    rock = textureLoad(rockTex, coord).r;
+    lava = textureLoad(lavaTex, coord).r;
+    wpos = world_of(coord);
+  }
 
-  for (var o:u32=0u; o<arrayLength(&ops); o++) {
+  // Only compute if in bounds
+  if (in_bounds) {
+    for (var o:u32=0u; o<arrayLength(&ops); o++) {
     let op = ops[o];
     let d = distance(wpos, op.center);
     if (d > op.radius) { continue; }
@@ -91,6 +99,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
       desiredKg += wantKg; // capped by global hand remaining via WG quota
     }
   }
+  } // end if (in_bounds)
 
   // 2) Workgroup reduction -> wg_sum_fixed
   if (li == 0u) { atomicStore(&wg_sum_fixed, 0u); }
@@ -118,13 +127,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
   }
   workgroupBarrier();
 
-  // 4) Apply scaled deltas for this texel
-  if (desired_fixed_local == 0u || wg_scale == 0.0) { return; }
+  // 4) Apply scaled deltas for this texel (only if in bounds and have work to do)
+  if (in_bounds && desired_fixed_local != 0u && wg_scale != 0.0) {
+    let grantKg = f32(desired_fixed_local) * 0.001 * wg_scale;
 
-  let grantKg = f32(desired_fixed_local) * 0.001 * wg_scale;
-
-  // Re-run small per-op loop to distribute correctly (same k)
-  for (var o:u32=0u; o<arrayLength(&ops); o++) {
+    // Re-run small per-op loop to distribute correctly (same k)
+    for (var o:u32=0u; o<arrayLength(&ops); o++) {
     let op = ops[o];
     let d = distance(wpos, op.center);
     if (d > op.radius) { continue; }
@@ -167,6 +175,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>,
       }
     }
   }
+  } // end if (in_bounds && have work)
 }
 
 // Constants (override via specialization or #include-like preprocessor)
