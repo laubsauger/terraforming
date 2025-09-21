@@ -114,11 +114,11 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const ripples = rippleFreq.sin().mul(0.04).mul(rippleFactor);
     waterColorNode = waterColorNode.add(ripples);
 
-    // DISTINCT FOAM LINE like aerial beach photo - right at the waterline
-    const foamLineZone = smoothstep(float(0.006), float(0.002), waterDepth);  // Narrow band at exact waterline
-    const foamZone1 = smoothstep(float(0.010), float(0.004), waterDepth);     // Main foam area
-    const foamZone2 = smoothstep(float(0.018), float(0.008), waterDepth);     // Secondary foam
-    const foamZone3 = smoothstep(float(0.030), float(0.015), waterDepth);     // Foam wash trailing
+    // STRONG FOAM LINE - wider and more visible
+    const foamLineZone = smoothstep(float(0.01), float(-0.002), waterDepth);  // Extend slightly above water
+    const foamZone1 = smoothstep(float(0.02), float(0), waterDepth);          // Wider main foam area
+    const foamZone2 = smoothstep(float(0.035), float(0.005), waterDepth);     // Secondary foam
+    const foamZone3 = smoothstep(float(0.05), float(0.01), waterDepth);       // Foam wash trailing
 
     // Create continuous foam line that follows shore contour
     const foamRadialCoord = distFromCenter.mul(15);  // Lower frequency for continuous foam
@@ -158,34 +158,28 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const brightFoamColor = vec3(1.0, 1.0, 1.0);  // Pure white for visibility
     const secondaryFoamColor = vec3(0.98, 0.99, 1.0);  // Almost pure white
 
-    // MAIN CONTINUOUS FOAM LINE - like the aerial photo
-    const mainFoamLine = foamLineZone.mul(foamLineIntensity);
-    const foamLineStrength = mainFoamLine.pow(0.5).mul(0.95);  // Strong, continuous line
-    waterColorNode = mix(waterColorNode, brightFoamColor, foamLineStrength.min(float(0.95)));
+    // FORCE STRONG WHITE FOAM LINE
+    const mainFoamLine = foamLineZone.add(foamZone1.mul(0.8));  // Combine zones for thicker line
+    const foamLineStrength = mainFoamLine.pow(0.3);  // Less aggressive power for wider coverage
+    waterColorNode = mix(waterColorNode, brightFoamColor, foamLineStrength.min(float(1.0)));  // Full opacity
 
-    // Secondary foam areas with texture
-    const foamPatchIntensity = foamBurst1.add(foamBurst2.mul(0.7)).add(foamBurst3.mul(0.5));
-    const secondaryFoamAreas = foamPatchIntensity.mul(foamZone1).add(continuousFoam.mul(foamZone2.mul(0.6)));
+    // ADDITIONAL FOAM LAYERS for visibility
+    // Add static foam right at waterline
+    const staticFoam = foamZone1.mul(0.9);  // Strong static foam
+    waterColorNode = mix(waterColorNode, brightFoamColor, staticFoam);
 
-    // Combine foam effects with stronger intensity
-    const primaryIntensity = primaryFoam.mul(foamTexture).mul(0.8);
-    const secondaryIntensity = secondaryFoam.mul(foamTexture).mul(0.6);
+    // Add wave-based foam using distFromCenter (which is already defined)
+    const waveFoam = sin(distFromCenter.mul(40).sub(time.mul(2))).mul(0.5).add(0.5);
+    const waveFoamZone = waveFoam.mul(foamZone2);
+    waterColorNode = mix(waterColorNode, vec3(0.95, 0.98, 1.0), waveFoamZone.mul(0.7));
 
-    // Apply secondary foam patches
-    const secondaryStrength = secondaryFoamAreas.pow(1.5).mul(0.8);
-    waterColorNode = mix(waterColorNode, secondaryFoamColor, secondaryStrength.min(float(0.7)));
+    // Ensure foam is visible with additive brightening
+    const anyFoam = foamLineZone.add(foamZone1).add(foamZone2.mul(0.5));
+    waterColorNode = waterColorNode.add(vec3(anyFoam.mul(0.3)));  // Additive white
 
-    // Trailing foam wash (less intense)
-    const trailingFoam = foamZone3.mul(continuousFoam.mul(0.5));
-    waterColorNode = mix(waterColorNode, vec3(0.95, 0.97, 1.0), trailingFoam.mul(0.4));
-
-    // Add some bright highlights where waves break
-    const waveBreakHighlights = primaryIntensity.add(secondaryIntensity).mul(foamLineZone);
-    waterColorNode = mix(waterColorNode, brightFoamColor, waveBreakHighlights.mul(0.3).min(float(0.5)));
-
-    // Subtle brightening where any foam is present
-    const totalFoamBrightness = primaryIntensity.add(secondaryIntensity).mul(0.05);
-    waterColorNode = waterColorNode.add(vec3(totalFoamBrightness));
+    // Extra brightening for all foam areas
+    const extraBrightness = anyFoam.mul(0.1);
+    waterColorNode = waterColorNode.add(vec3(extraBrightness));
 
   } else if (depthTexture) {
     // For dynamic water (rivers/lakes): use provided depth texture with more saturation
