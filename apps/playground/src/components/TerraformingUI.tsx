@@ -15,6 +15,7 @@ import { DebugOverlaySection } from '@playground/components/sections/DebugOverla
 import { PerfHudSection } from '@playground/components/sections/PerfHudSection';
 import { QualitySection } from '@playground/components/sections/QualitySection';
 import { TimeScaleSection } from '@playground/components/sections/TimeScaleSection';
+import { BrushSection } from '@playground/components/sections/BrushSection';
 import { cn } from '@playground/lib/utils';
 
 
@@ -54,6 +55,7 @@ const OVERLAY_OPTIONS: OverlayOption[] = [
 export function TerraformingUI({ engine, store, className, onSnapshot }: TerraformingUIProps) {
   const storeRef = useRef<StoreApi<UiStore>>();
   const [showPerfHud, setShowPerfHud] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   if (!storeRef.current) {
     storeRef.current = store ?? createUiStore();
@@ -89,6 +91,12 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
   const lavaSources = useUiStore(
     uiStore,
     (state) => state.sources.lava,
+    shallow
+  );
+
+  const brush = useUiStore(
+    uiStore,
+    (state) => state.brush,
     shallow
   );
 
@@ -135,30 +143,70 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
 
   return (
     <aside className={cn(PANEL_CLASS, className)}>
-      <RunSection paused={paused} togglePaused={togglePaused} />
-      <TimeScaleSection timeScale={timeScale} setTimeScale={setTimeScale} />
-      <QualitySection quality={quality} updateQuality={updateQuality} />
-      <DebugOverlaySection
-        selected={overlays}
-        setSelected={setOverlays}
-        options={OVERLAY_OPTIONS}
-      />
+      {/* Collapse Toggle Header */}
+      <button
+        onClick={() => setIsCollapsed(!isCollapsed)}
+        className="w-full text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg p-2 transition-colors flex items-center justify-between"
+      >
+        <span className="flex items-center gap-2">
+          <svg
+            className={cn("w-4 h-4 transition-transform", isCollapsed && "rotate-180")}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
+          Simulation Controls
+        </span>
+        <span className="text-xs text-gray-400">{isCollapsed ? 'Expand' : 'Collapse'}</span>
+      </button>
 
-      {/* PerfHud Toggle */}
-      <div className="space-y-2">
-        <button
-          onClick={() => setShowPerfHud(!showPerfHud)}
-          className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors flex items-center justify-between"
-        >
-          <span>Performance HUD</span>
-          <span className="text-xs text-gray-400">{showPerfHud ? 'Hide' : 'Show'}</span>
-        </button>
+      {/* Collapsible Content */}
+      {!isCollapsed && (
+        <>
+          <RunSection paused={paused} togglePaused={togglePaused} />
+          <TimeScaleSection timeScale={timeScale} setTimeScale={setTimeScale} />
 
-        {/* Only mount PerfHud when shown for performance */}
-        {showPerfHud && (
-          <PerfHudSection sample={latest} onSnapshot={handleSnapshot} />
-        )}
-      </div>
+          <BrushSection
+            mode={brush.mode}
+            material={brush.material}
+            radius={brush.radius}
+            strength={brush.strength}
+            isActive={brush.isActive}
+            handMass={brush.handMass}
+            handCapacity={brush.handCapacity}
+            setMode={brush.setMode}
+            setMaterial={brush.setMaterial}
+            setRadius={brush.setRadius}
+            setStrength={brush.setStrength}
+            setActive={brush.setActive}
+          />
+
+          <QualitySection quality={quality} updateQuality={updateQuality} />
+          <DebugOverlaySection
+            selected={overlays}
+            setSelected={setOverlays}
+            options={OVERLAY_OPTIONS}
+          />
+
+          {/* PerfHud Toggle */}
+          <div className="space-y-2">
+            <button
+              onClick={() => setShowPerfHud(!showPerfHud)}
+              className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors flex items-center justify-between"
+            >
+              <span>Performance HUD</span>
+              <span className="text-xs text-gray-400">{showPerfHud ? 'Hide' : 'Show'}</span>
+            </button>
+
+            {/* Only mount PerfHud when shown for performance */}
+            {showPerfHud && (
+              <PerfHudSection sample={latest} onSnapshot={handleSnapshot} />
+            )}
+          </div>
+        </>
+      )}
     </aside>
   );
 }

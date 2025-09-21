@@ -11,12 +11,13 @@ interface DayNightControlsProps {
 }
 
 export function DayNightControls({ engine, className = '' }: DayNightControlsProps) {
-  const [timeOfDay, setTimeOfDay] = useState(0.85); // Start at 20:00 (8PM)
+  const [timeOfDay, setTimeOfDay] = useState(0.93); // Start at 22:19 (10:19 PM)
   const [isPlaying, setIsPlaying] = useState(false);
   const [cycleSpeed, setCycleSpeed] = useState(0.0005); // Default speed
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [sunTilt, setSunTilt] = useState(30); // Degrees
   const [arcRotation, setArcRotation] = useState(0); // Degrees
+  const [isCollapsed, setIsCollapsed] = useState(false); // Collapse state
 
   // Update engine when time changes
   useEffect(() => {
@@ -69,12 +70,23 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
   return (
     <div className={`space-y-4 rounded-lg bg-black/70 backdrop-blur border border-white/10 p-4 ${className}`}>
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 text-white">
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          className="flex items-center gap-2 text-white hover:bg-white/10 rounded px-2 py-1 transition-colors flex-1"
+        >
+          <svg
+            className={`w-4 h-4 transition-transform ${isCollapsed ? '-rotate-90' : ''}`}
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          </svg>
           {getTimeIcon(timeOfDay)}
           <Label className="text-sm font-medium text-white">
-            Day/Night Cycle
+            {getTimeLabel(timeOfDay)}
           </Label>
-        </div>
+        </button>
         <Button
           variant="ghost"
           size="icon"
@@ -89,77 +101,81 @@ export function DayNightControls({ engine, className = '' }: DayNightControlsPro
         </Button>
       </div>
 
-      <div className="space-y-2">
-        <div className="flex justify-between text-xs text-gray-400">
-          <span>Time: {getTimeLabel(timeOfDay)}</span>
-          <span>{Math.round(timeOfDay * 100)}%</span>
-        </div>
-        <Slider
-          value={[timeOfDay * 100]}
-          onValueChange={([value]) => setTimeOfDay(value / 100)}
-          max={100}
-          step={0.5}
-          className="w-full"
-        />
-        <div className="flex justify-between text-xs text-gray-400">
-          <span>00:00</span>
-          <span>06:00</span>
-          <span>12:00</span>
-          <span>18:00</span>
-          <span>24:00</span>
-        </div>
-      </div>
+      {!isCollapsed && (
+        <>
+          <div className="space-y-2">
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>Time: {getTimeLabel(timeOfDay)}</span>
+              <span>{Math.round(timeOfDay * 100)}%</span>
+            </div>
+            <Slider
+              value={[timeOfDay * 100]}
+              onValueChange={([value]) => setTimeOfDay(value / 100)}
+              max={100}
+              step={0.5}
+              className="w-full"
+            />
+            <div className="flex justify-between text-xs text-gray-400">
+              <span>00:00</span>
+              <span>06:00</span>
+              <span>12:00</span>
+              <span>18:00</span>
+              <span>24:00</span>
+            </div>
+          </div>
 
-      {isPlaying && (
-        <div className="space-y-2">
-          <Label className="text-xs text-gray-400">
-            Cycle Speed: {cycleSpeed > 0.001 ? 'Fast' : cycleSpeed > 0.0005 ? 'Normal' : 'Slow'}
-          </Label>
-          <Slider
-            value={[cycleSpeed * 10000]}
-            onValueChange={([value]) => setCycleSpeed(value / 10000)}
-            min={1}
-            max={20}
-            step={1}
-            className="w-full"
-          />
-        </div>
+          {isPlaying && (
+            <div className="space-y-2">
+              <Label className="text-xs text-gray-400">
+                Cycle Speed: {cycleSpeed > 0.001 ? 'Fast' : cycleSpeed > 0.0005 ? 'Normal' : 'Slow'}
+              </Label>
+              <Slider
+                value={[cycleSpeed * 10000]}
+                onValueChange={([value]) => setCycleSpeed(value / 10000)}
+                min={1}
+                max={20}
+                step={1}
+                className="w-full"
+              />
+            </div>
+          )}
+
+          <div className="grid grid-cols-4 gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTimeOfDay(0.0)}
+              className="text-xs text-white hover:text-white hover:bg-white/20"
+            >
+              Midnight
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTimeOfDay(0.125)}
+              className="text-xs text-white hover:text-white hover:bg-white/20"
+            >
+              Dawn
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTimeOfDay(0.25)}
+              className="text-xs text-white hover:text-white hover:bg-white/20"
+            >
+              Noon
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setTimeOfDay(0.625)}
+              className="text-xs text-white hover:text-white hover:bg-white/20"
+            >
+              Dusk
+            </Button>
+          </div>
+        </>
       )}
-
-      <div className="grid grid-cols-4 gap-1">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setTimeOfDay(0.0)}
-          className="text-xs text-white hover:text-white hover:bg-white/20"
-        >
-          Midnight
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setTimeOfDay(0.125)}
-          className="text-xs text-white hover:text-white hover:bg-white/20"
-        >
-          Dawn
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setTimeOfDay(0.25)}
-          className="text-xs text-white hover:text-white hover:bg-white/20"
-        >
-          Noon
-        </Button>
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => setTimeOfDay(0.625)}
-          className="text-xs text-white hover:text-white hover:bg-white/20"
-        >
-          Dusk
-        </Button>
-      </div>
     </div>
   );
 }

@@ -12,6 +12,7 @@ export interface TerrainMaterialTSLOptions {
   sedimentMap?: Texture;
   showContours?: boolean;
   contourInterval?: number;
+  waterLevel?: number; // Normalized water level
 }
 
 /**
@@ -29,6 +30,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     sedimentMap,
     showContours = false,
     contourInterval = 0.05, // Contour every 5% of height (0.75m with scale 15)
+    waterLevel = 0.153, // Default normalized water level
   } = options;
 
   // Define terrain colors for different elevations
@@ -58,12 +60,14 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   // Color based on height - create elevation-based terrain coloring
   const normalizedHeight = clamp(heightSample, float(0), float(1));
 
-  // Define height thresholds for different terrain types
-  // Water is at 0.15 (2.25/15), so beach should be a smooth transition
-  const wetLevel = float(0.145);   // Just below water - wet sand/mud
-  const beachLevel = float(0.152); // Beach at water line
-  const sandLevel = float(0.165);  // Sand extends above beach
-  const grassLevel = float(0.185);  // Grass starts higher for smooth transition
+  // Add underwater coloring for terrain below water level
+  const waterLevelNode = float(waterLevel); // Use passed water level
+
+  // Define height thresholds for different terrain types relative to water level
+  const wetLevel = waterLevelNode.sub(float(0.008));   // Just below water - wet sand/mud
+  const beachLevel = waterLevelNode.add(float(0.002)); // Beach at water line
+  const sandLevel = waterLevelNode.add(float(0.015));  // Sand extends above beach
+  const grassLevel = waterLevelNode.add(float(0.035)); // Grass starts higher for smooth transition
   const rockLevel = float(0.45);   // Rocky terrain
 
   // Smooth transitions between terrain types
@@ -80,10 +84,8 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const color3 = mix(color2, rockColor, grassToRock);
   let terrainColor = mix(color3, snowColor, rockToSnow);
 
-  // Add underwater coloring for terrain below water level
-  const waterLevel = float(0.15); // Water level at 2.25/15
-  const isUnderwater = step(normalizedHeight, waterLevel);
-  const underwaterDepth = clamp(waterLevel.sub(normalizedHeight), float(0), float(1));
+  const isUnderwater = step(normalizedHeight, waterLevelNode);
+  const underwaterDepth = clamp(waterLevelNode.sub(normalizedHeight), float(0), float(1));
 
   // Define underwater tint colors based on depth
   const shallowWaterTint = vec3(0.4, 0.7, 0.8);   // Light blue-green for shallow

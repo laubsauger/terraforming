@@ -197,10 +197,28 @@ export function TerrainCursor({
       cursorGroupRef.current.position.copy(centerPosition);
 
       // Update the circle to conform to terrain
-      const line = cursorGroupRef.current.children[0] as THREE.Line;
+      const fillMesh = cursorGroupRef.current.children[0] as THREE.Mesh;
+      const line = cursorGroupRef.current.children[1] as THREE.Line;
+
+      // Calculate zoom-based scaling
+      const cameraDistance = camera.position.distanceTo(centerPosition);
+      const zoomScale = Math.max(0.5, Math.min(2.5, 30 / cameraDistance));
+
+      // Update fill mesh position
+      if (fillMesh) {
+        fillMesh.position.y = 0.05; // Slight offset above terrain
+      }
+
       if (line && line.geometry) {
         const positions = line.geometry.attributes.position;
         const segments = 64;
+
+        // Update line thickness based on zoom
+        const lineMaterial = line.material as THREE.LineBasicMaterial;
+        if (lineMaterial) {
+          const baseThickness = brushSize < 5 ? 5 : 3;
+          lineMaterial.linewidth = Math.max(2, Math.min(8, baseThickness * zoomScale));
+        }
 
         for (let i = 0; i <= segments; i++) {
           const angle = (i / segments) * Math.PI * 2;
@@ -264,7 +282,18 @@ export function TerrainCursor({
     });
 
     // Update cursor size
-    const line = cursorGroupRef.current.children[0] as THREE.Line;
+    const fillMesh = cursorGroupRef.current.children[0] as THREE.Mesh;
+    const line = cursorGroupRef.current.children[1] as THREE.Line;
+
+    // Update fill mesh
+    if (fillMesh && fillMesh.geometry) {
+      fillMesh.geometry.dispose();
+      const newFillGeometry = new THREE.CircleGeometry(brushSize, 32);
+      newFillGeometry.rotateX(-Math.PI / 2);
+      fillMesh.geometry = newFillGeometry;
+    }
+
+    // Update outline
     if (line && line.geometry) {
       const segments = 64;
       const points: THREE.Vector3[] = [];
@@ -273,7 +302,7 @@ export function TerrainCursor({
         const angle = (i / segments) * Math.PI * 2;
         const x = Math.cos(angle) * brushSize;
         const z = Math.sin(angle) * brushSize;
-        points.push(new THREE.Vector3(x, 0, z));
+        points.push(new THREE.Vector3(x, 0.05, z));
       }
 
       line.geometry.setFromPoints(points);

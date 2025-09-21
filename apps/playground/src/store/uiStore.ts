@@ -39,12 +39,32 @@ export interface SourcesSlice {
   setLavaSources: (list: Source[]) => void;
 }
 
+export type MaterialKind = 'soil' | 'rock' | 'lava';
+export type BrushMode = 'pickup' | 'deposit';
+
+export interface BrushSlice {
+  mode: BrushMode;
+  material: MaterialKind;
+  radius: number;
+  strength: number;
+  isActive: boolean;
+  handMass: number;
+  handCapacity: number;
+  setMode: (mode: BrushMode) => void;
+  setMaterial: (material: MaterialKind) => void;
+  setRadius: (radius: number) => void;
+  setStrength: (strength: number) => void;
+  setActive: (active: boolean) => void;
+  updateHandMass: (mass: number) => void;
+}
+
 export interface UiStateSlices {
   run: RunSlice;
   time: TimeSlice;
   quality: QualitySlice;
   debug: DebugSlice;
   sources: SourcesSlice;
+  brush: BrushSlice;
 }
 
 export type UiStore = UiStateSlices;
@@ -55,6 +75,7 @@ export interface UiInitialState {
   quality?: Partial<Pick<QualitySlice, 'settings'>>;
   debug?: Partial<Pick<DebugSlice, 'overlays'>>;
   sources?: Partial<Pick<SourcesSlice, 'water' | 'lava'>>;
+  brush?: Partial<BrushSlice>;
 }
 
 export function createUiStore(
@@ -148,6 +169,39 @@ export function createUiStore(
             ...state.sources,
             lava: cloneSources(list),
           },
+        })),
+    },
+    brush: {
+      mode: (initialState.brush?.mode ?? 'pickup') as BrushMode,
+      material: (initialState.brush?.material ?? 'soil') as MaterialKind,
+      radius: initialState.brush?.radius ?? 10,
+      strength: initialState.brush?.strength ?? 1000,
+      isActive: initialState.brush?.isActive ?? false,
+      handMass: initialState.brush?.handMass ?? 0,
+      handCapacity: initialState.brush?.handCapacity ?? 10000,
+      setMode: (mode: BrushMode) =>
+        set((state) => ({
+          brush: { ...state.brush, mode },
+        })),
+      setMaterial: (material: MaterialKind) =>
+        set((state) => ({
+          brush: { ...state.brush, material },
+        })),
+      setRadius: (radius: number) =>
+        set((state) => ({
+          brush: { ...state.brush, radius: Math.max(1, Math.min(100, radius)) },
+        })),
+      setStrength: (strength: number) =>
+        set((state) => ({
+          brush: { ...state.brush, strength: Math.max(100, Math.min(10000, strength)) },
+        })),
+      setActive: (active: boolean) =>
+        set((state) => ({
+          brush: { ...state.brush, isActive: active },
+        })),
+      updateHandMass: (mass: number) =>
+        set((state) => ({
+          brush: { ...state.brush, handMass: Math.max(0, Math.min(state.brush.handCapacity, mass)) },
         })),
     },
   }));

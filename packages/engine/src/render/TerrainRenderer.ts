@@ -4,6 +4,8 @@ import { BaseRenderer } from './BaseRenderer';
 import { createTerrainMaterialTSL } from './materials/TerrainMaterialTSL';
 import { createWaterMaterialTSL } from './materials/WaterMaterialTSL';
 import { createLavaMaterialTSL } from './materials/LavaMaterialTSL';
+import { BrushSystem } from '../sim/BrushSystem';
+import type { Fields } from '../sim/fields';
 
 export interface TerrainRendererOptions {
   canvas: HTMLCanvasElement;
@@ -25,6 +27,12 @@ export class TerrainRenderer extends BaseRenderer {
   private gridSize: number;
   private terrainSize: number;
 
+  // Brush system
+  private brushSystem?: BrushSystem;
+  private brushActive = false;
+  private brushMode: 'pickup' | 'deposit' = 'pickup';
+  private brushMaterial: 'soil' | 'rock' | 'lava' = 'soil';
+
   // Day/night cycle
   private sunLight!: THREE.DirectionalLight;
   private moonLight!: THREE.DirectionalLight;
@@ -34,6 +42,11 @@ export class TerrainRenderer extends BaseRenderer {
   private timeOfDay = 0.85; // 0-1, where 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm, 0.85 = ~8pm
   private dayNightCycleActive = false;
   private cycleSpeed = 0.0001; // Speed of day/night cycle
+
+  // Centralized water configuration
+  private readonly WATER_LEVEL = 2.3; // Absolute water height in world units
+  private readonly HEIGHT_SCALE = 15;  // Terrain height scale
+  private readonly WATER_LEVEL_NORMALIZED = 2.3 / 15; // Normalized for shaders
 
   // Textures for simulation data
   private heightTexture: THREE.DataTexture;
@@ -123,19 +136,63 @@ export class TerrainRenderer extends BaseRenderer {
       if (event.key === 'Shift') {
         this.controls.enabled = false;
       }
+      // Alt key for brush activation
+      if (event.key === 'Alt') {
+        event.preventDefault();
+        this.brushActive = true;
+        this.controls.enabled = false;
+      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Shift') {
         this.controls.enabled = true;
       }
+      // Alt key release
+      if (event.key === 'Alt') {
+        this.brushActive = false;
+        this.controls.enabled = true;
+      }
+    };
+
+    // Mouse events for brush interaction
+    const handleMouseDown = (event: MouseEvent) => {
+      if (this.brushActive && this.brushSystem) {
+        // Raycast to get world position
+        const rect = this.canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((event.clientX - rect.left) / rect.width) * 2 - 1,
+          -((event.clientY - rect.top) / rect.height) * 2 + 1
+        );
+
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, this.camera);
+
+        if (this.terrainMesh) {
+          const intersects = raycaster.intersectObject(this.terrainMesh);
+          if (intersects.length > 0) {
+            const point = intersects[0].point;
+            // Add brush operation
+            this.brushSystem.addBrushOp(
+              this.brushMode,
+              this.brushMaterial,
+              point.x,
+              point.z,
+              10, // radius
+              1000, // strength kg/s
+              0.016 // dt (~60fps)
+            );
+          }
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    window.addEventListener('mousedown', handleMouseDown);
 
     // Store references for cleanup
-    (this as any)._keyHandlers = { handleKeyDown, handleKeyUp };
+    (this as any)._keyHandlers = { handleKeyDown, handleKeyUp, handleMouseDown };
   }
 
   /**
@@ -187,8 +244,9 @@ export class TerrainRenderer extends BaseRenderer {
     this.sunLight.shadow.camera.top = 60;
     this.sunLight.shadow.camera.bottom = -60;
     this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.normalBias = 0.02; // Helps with self-shadowing
     this.sunLight.shadow.needsUpdate = true;
-    this.sunLight.shadow.autoUpdate = false; // Manual control for consistency
+    this.sunLight.shadow.autoUpdate = true; // Let Three.js handle updates
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target); // Add target to scene for proper world-space lighting
 
@@ -206,8 +264,9 @@ export class TerrainRenderer extends BaseRenderer {
     this.moonLight.shadow.camera.top = 60;
     this.moonLight.shadow.camera.bottom = -60;
     this.moonLight.shadow.bias = -0.001;
+    this.moonLight.shadow.normalBias = 0.02; // Helps with self-shadowing
     this.moonLight.shadow.needsUpdate = true;
-    this.moonLight.shadow.autoUpdate = false; // Manual control for consistency
+    this.moonLight.shadow.autoUpdate = true; // Let Three.js handle updates
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target); // Add target to scene for proper world-space lighting
 
@@ -270,11 +329,6 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.sunLight.visible) {
       this.sunLight.target.position.set(0, 0, 0);
       this.sunLight.target.updateMatrixWorld();
-
-      // Update shadow camera to be consistent with light direction
-      // Shadow camera needs explicit update to work properly
-      this.sunLight.shadow.camera.updateMatrixWorld(true);
-      this.sunLight.shadow.needsUpdate = true;
     }
 
     // Update sun sphere appearance based on elevation
@@ -306,11 +360,6 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.moonLight.visible) {
       this.moonLight.target.position.set(0, 0, 0);
       this.moonLight.target.updateMatrixWorld();
-
-      // Update shadow camera to be consistent with light direction
-      // Shadow camera needs explicit update to work properly
-      this.moonLight.shadow.camera.updateMatrixWorld(true);
-      this.moonLight.shadow.needsUpdate = true;
     }
 
     // Update moon sphere appearance based on elevation
@@ -458,12 +507,13 @@ export class TerrainRenderer extends BaseRenderer {
     // Create terrain material using TSL with GPU-based displacement
     const material = createTerrainMaterialTSL({
       heightMap: this.heightTexture,
-      heightScale: 15,
+      heightScale: this.HEIGHT_SCALE,
       terrainSize: this.terrainSize,
       flowMap: this.flowTexture,
       accumulationMap: this.accumulationTexture,
       showContours: this.showContours, // Enable contours by default
       contourInterval: 0.05,
+      waterLevel: this.WATER_LEVEL_NORMALIZED,
     });
 
     // Create mesh - height displacement happens in vertex shader via TSL
@@ -488,11 +538,11 @@ export class TerrainRenderer extends BaseRenderer {
     const oceanMaterial = createWaterMaterialTSL({
       opacity: 0.9,
       heightTexture: this.heightTexture, // Pass height texture for depth calculation
-      waterLevel: 2.25 / 15 // Normalized water level (2.25 units / 15 height scale)
+      waterLevel: this.WATER_LEVEL_NORMALIZED
     });
 
     this.oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
-    this.oceanMesh.position.y = 2.25; // Water level (0.15 normalized)
+    this.oceanMesh.position.y = this.WATER_LEVEL;
     this.oceanMesh.position.x = 0; // Ensure centered
     this.oceanMesh.position.z = 0; // Ensure centered
     this.oceanMesh.renderOrder = 1; // Render after terrain for proper blending
@@ -929,12 +979,13 @@ export class TerrainRenderer extends BaseRenderer {
       // Create new material with contour settings
       const newMaterial = createTerrainMaterialTSL({
         heightMap: this.heightTexture,
-        heightScale: 15,
+        heightScale: this.HEIGHT_SCALE,
         terrainSize: this.terrainSize,
         flowMap: this.flowTexture,
         accumulationMap: this.accumulationTexture,
         showContours: show,
         contourInterval: 0.05, // Every 5% height = 0.75m with scale 15
+        waterLevel: this.WATER_LEVEL_NORMALIZED,
       });
 
       this.terrainMesh.material = newMaterial;
@@ -962,9 +1013,17 @@ export class TerrainRenderer extends BaseRenderer {
   public override dispose(): void {
     // Clean up event listeners
     if ((this as any)._keyHandlers) {
-      const { handleKeyDown, handleKeyUp } = (this as any)._keyHandlers;
+      const { handleKeyDown, handleKeyUp, handleMouseDown } = (this as any)._keyHandlers;
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      if (handleMouseDown) {
+        window.removeEventListener('mousedown', handleMouseDown);
+      }
+    }
+
+    // Clean up brush system
+    if (this.brushSystem) {
+      this.brushSystem.destroy();
     }
 
     // Dispose of controls
