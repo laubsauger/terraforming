@@ -1,3 +1,3 @@
-export { createTerrainMaterial, type TerrainMaterialOptions } from './TerrainMaterial';
-export { createWaterMaterial, type WaterMaterialOptions } from './WaterMaterial';
-export { createLavaMaterial, type LavaMaterialOptions } from './LavaMaterial';
+export { createTerrainMaterialTSL, type TerrainMaterialTSLOptions } from './TerrainMaterialTSL';
+export { createWaterMaterialTSL, type WaterMaterialTSLOptions } from './WaterMaterialTSL';
+export { createLavaMaterialTSL, type LavaMaterialTSLOptions } from './LavaMaterialTSL';

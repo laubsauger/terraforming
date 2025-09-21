@@ -2,8 +2,8 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { createTerrainMaterialTSL } from './materials/TerrainMaterialTSL';
-import { createWaterMaterial } from './materials/WaterMaterial';
-import { createLavaMaterial } from './materials/LavaMaterial';
+import { createWaterMaterialTSL } from './materials/WaterMaterialTSL';
+import { createLavaMaterialTSL } from './materials/LavaMaterialTSL';
 
 export interface TerrainRendererOptions {
   canvas: HTMLCanvasElement;
@@ -17,6 +17,7 @@ export class TerrainRenderer extends BaseRenderer {
   private terrainMesh?: THREE.Mesh;
   private waterMesh?: THREE.Mesh;
   private lavaMesh?: THREE.Mesh;
+  private oceanMesh?: THREE.Mesh;
 
   private gridSize: number;
   private terrainSize: number;
@@ -79,15 +80,20 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private setupLighting(): void {
-    // Ambient light
-    const ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    // Ambient light - slightly warmer
+    const ambientLight = new THREE.AmbientLight(0xfff5e6, 0.5);
     this.scene.add(ambientLight);
 
-    // Directional light (sun)
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(50, 100, 50);
+    // Directional light (sun) - stronger for better shading
+    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+    directionalLight.position.set(30, 50, 30);
     directionalLight.castShadow = false; // Disable shadows for better performance
     this.scene.add(directionalLight);
+
+    // Add a second fill light from opposite direction
+    const fillLight = new THREE.DirectionalLight(0x8090ff, 0.3);
+    fillLight.position.set(-30, 20, -30);
+    this.scene.add(fillLight);
   }
 
   private createDataTexture(): THREE.DataTexture {
@@ -139,7 +145,25 @@ export class TerrainRenderer extends BaseRenderer {
 
     // No need to update vertices - GPU handles displacement via heightTexture
 
-    // Create water surface (initially invisible)
+    // Create ocean water plane at sea level (always visible)
+    const oceanGeometry = new THREE.PlaneGeometry(
+      this.terrainSize * 2, // Extend beyond terrain
+      this.terrainSize * 2,
+      1, // Simple plane for ocean
+      1
+    );
+    oceanGeometry.rotateX(-Math.PI / 2);
+
+    const oceanMaterial = createWaterMaterialTSL({
+      color: new THREE.Color(0x006994),
+      opacity: 0.85
+    });
+
+    this.oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
+    this.oceanMesh.position.y = 0.5; // Sea level
+    this.scene.add(this.oceanMesh);
+
+    // Create dynamic water surface (initially invisible) - for rivers/lakes
     const waterGeometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
@@ -148,14 +172,14 @@ export class TerrainRenderer extends BaseRenderer {
     );
     waterGeometry.rotateX(-Math.PI / 2);
 
-    const waterMaterial = createWaterMaterial({
-      waterDepthMap: this.waterDepthTexture,
-      flowMap: this.flowTexture,
+    const waterMaterial = createWaterMaterialTSL({
+      color: new THREE.Color(0x0099cc),
+      opacity: 0.7
     });
 
     this.waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
-    this.waterMesh.position.y = 0.1; // Slightly above terrain
-    this.waterMesh.visible = false; // Start hidden
+    this.waterMesh.position.y = 0.6; // Slightly above ocean
+    this.waterMesh.visible = false; // Start hidden until we have water depth data
     this.scene.add(this.waterMesh);
 
     // Create lava surface (initially invisible)
@@ -167,7 +191,7 @@ export class TerrainRenderer extends BaseRenderer {
     );
     lavaGeometry.rotateX(-Math.PI / 2);
 
-    const lavaMaterial = createLavaMaterial({
+    const lavaMaterial = createLavaMaterialTSL({
       lavaDepthMap: this.lavaDepthTexture,
       temperatureMap: this.temperatureTexture,
       flowMap: this.flowTexture,
@@ -316,6 +340,10 @@ private generateTestTerrain(): void {
     if (this.waterMesh) {
       this.waterMesh.geometry.dispose();
       (this.waterMesh.material as THREE.Material).dispose();
+    }
+    if (this.oceanMesh) {
+      this.oceanMesh.geometry.dispose();
+      (this.oceanMesh.material as THREE.Material).dispose();
     }
     if (this.lavaMesh) {
       this.lavaMesh.geometry.dispose();
