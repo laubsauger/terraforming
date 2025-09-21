@@ -59,7 +59,7 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Initialize textures
     this.heightTexture = this.createDataTexture();
-    this.flowTexture = this.createDataTexture(2);
+    this.flowTexture = this.createDataTexture();
     this.accumulationTexture = this.createDataTexture();
     this.waterDepthTexture = this.createDataTexture();
     this.lavaDepthTexture = this.createDataTexture();
@@ -90,7 +90,7 @@ export class TerrainRenderer extends BaseRenderer {
     this.scene.add(directionalLight);
   }
 
-  private createDataTexture(components: number = 1): THREE.DataTexture {
+  private createDataTexture(): THREE.DataTexture {
     const size = this.gridSize;
     const data = new Float32Array(size * size * 4);
 
@@ -98,21 +98,22 @@ export class TerrainRenderer extends BaseRenderer {
       data,
       size,
       size,
-      components === 1 ? THREE.RedFormat : THREE.RGFormat,
+      THREE.RGBAFormat, // Always use RGBA for consistency
       THREE.FloatType
     );
     texture.needsUpdate = true;
     texture.magFilter = THREE.LinearFilter;
-    texture.minFilter = THREE.LinearFilter;
+    texture.minFilter = THREE.LinearFilter; // No mipmaps for data textures
     texture.wrapS = THREE.ClampToEdgeWrapping;
     texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.generateMipmaps = false; // Disable mipmaps for data textures
 
     return texture;
   }
 
   private createTerrain(): void {
-    // Create terrain geometry - reduce subdivision for better performance
-    const subdivisions = Math.min(127, this.gridSize / 2 - 1); // Cap at 128x128 for performance
+    // Create terrain geometry - use lower subdivision for smoother terrain
+    const subdivisions = 63; // 64x64 grid for smooth terrain
     const geometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
@@ -195,34 +196,33 @@ private generateTestTerrain(): void {
         const dist = Math.sqrt(nx * nx + ny * ny);
 
         // Start with base island shape (circular falloff)
-        let height = Math.max(0, 1 - dist * 2.5) * 0.5; // Reduce overall height
+        let height = Math.max(0, 1 - dist * 2.2) * 0.3; // Gentler base shape
 
-        // Add gentler mountain features
-        if (height > 0.05) {
-          // Gentler mountain ridge
-          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 20) * 0.3;
+        // Add smooth mountain features
+        if (height > 0.02) {
+          // Smooth mountain ridge using smoother functions
+          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 8) * 0.15;
+          const ridge2 = Math.exp(-Math.pow(nx + ny, 2) * 8) * 0.1;
 
-          // Secondary ridge
-          const ridge2 = Math.exp(-Math.pow(nx + ny, 2) * 20) * 0.2;
-
-          // Central peak (gentler)
-          const centralPeak = Math.exp(-(nx * nx + ny * ny) * 10) * 0.4;
+          // Central peak with smooth falloff
+          const centralPeak = Math.exp(-(dist * dist) * 6) * 0.25;
 
           height += ridge1 + ridge2 + centralPeak;
 
-          // Very subtle variation
-          height += Math.sin(nx * Math.PI * 4) * Math.cos(ny * Math.PI * 4) * 0.02;
+          // Add very gentle rolling hills
+          height += Math.sin(nx * Math.PI * 2) * Math.cos(ny * Math.PI * 2) * 0.01;
         }
 
-        // Smooth beach transitions
-        if (dist > 0.35 && dist < 0.45) {
-          const beachFactor = (dist - 0.35) / 0.1;
-          height *= (1 - beachFactor * 0.8);
+        // Smooth beach transitions with smoother interpolation
+        if (dist > 0.3 && dist < 0.45) {
+          const t = Math.max(0, Math.min(1, (dist - 0.3) / 0.15));
+          const beachFactor = t * t * (3 - 2 * t); // smoothstep
+          height = height * (1 - beachFactor) + 0.02 * beachFactor;
         }
 
-        // Ensure water level around the island (flatten edges)
+        // Ensure water level around the island
         if (dist > 0.45) {
-          height = 0.05; // Slight underwater depth
+          height = 0.02; // Very slight underwater depth
         }
 
         // Clamp to valid range

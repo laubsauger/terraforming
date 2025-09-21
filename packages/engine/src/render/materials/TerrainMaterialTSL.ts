@@ -34,12 +34,16 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     metalness: 0.0,
   });
 
-  // Sample height from texture and displace vertex position
-  const heightSample = texture(heightMap, uv()).r;
+  // Get UV coordinates properly for the plane geometry
+  const uvCoords = uv();
+
+  // Sample height from texture using proper UV coordinates
+  const heightSample = texture(heightMap, uvCoords).r;
   const displacement = heightSample.mul(float(heightScale));
 
-  // Apply displacement to Y position
-  material.positionNode = positionLocal.add(vec3(0, displacement, 0));
+  // Apply displacement only to Y position (since plane is rotated, Y is up)
+  const displacedPosition = positionLocal.add(normalLocal.mul(displacement));
+  material.positionNode = displacedPosition;
 
   // If we have a normal map, use it; otherwise compute from height gradient
   if (normalMap) {

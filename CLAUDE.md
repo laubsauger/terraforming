@@ -55,6 +55,14 @@ Configured in both TypeScript and Vite:
 - `@terraforming/engine` → packages/engine/src
 - `@playground/*` → apps/playground/src/*
 
+## Code Maintenance Guidelines
+
+### File Management
+- **When creating new files, always cleanup old ones** - Remove deprecated versions to avoid duplication
+- **Generally prefer patching over duplication** - Modify existing code rather than creating parallel implementations
+- **Keep the codebase clean** - Remove unused imports, files, and dependencies
+- **Avoid redundant implementations** - If replacing a system (e.g., WGSL with TSL), remove the old implementation
+
 ## Key Implementation Notes
 
 ### Engine Integration Pattern
