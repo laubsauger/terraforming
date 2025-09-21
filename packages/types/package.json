@@ -11,6 +11,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "build:watch": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'no lint configured for @terraforming/types'",
     "test": "echo 'no tests yet for @terraforming/types'"

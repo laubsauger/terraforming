@@ -1,3 +1,5 @@
+/// <reference path="./wgsl.d.ts" />
+
 export type Unsub = () => void;
 
 export interface EngineOpts {

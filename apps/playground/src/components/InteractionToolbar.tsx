@@ -22,7 +22,6 @@ export interface ToolbarAction {
   label: string;
   icon: ReactNode;
   shortcut: string;
-  shortcut: string;
 }
 
 export interface InteractionToolbarProps {

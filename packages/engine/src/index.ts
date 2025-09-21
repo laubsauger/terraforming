@@ -55,7 +55,7 @@ export async function initEngine(
   return engine;
 }
 
-async function ensureWebGpuSupport(opts: EngineOpts): Promise<void> {
+async function ensureWebGpuSupport(_opts: EngineOpts): Promise<GPUAdapter> {
   if (typeof navigator === 'undefined' || !('gpu' in navigator)) {
     throw new Error('WebGPU is not available in this environment');
   }
@@ -68,11 +68,7 @@ async function ensureWebGpuSupport(opts: EngineOpts): Promise<void> {
     throw new Error('Failed to acquire a WebGPU adapter');
   }
 
-  if (opts.adapterLabel && adapter.label !== opts.adapterLabel) {
-    console.warn(
-      `Requested adapter "${opts.adapterLabel}" but acquired "${adapter.label}"`
-    );
-  }
+  return adapter;
 }
 
 class StubEngine implements Engine {

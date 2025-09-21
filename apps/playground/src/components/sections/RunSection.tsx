@@ -1,5 +1,6 @@
 import { UiSection } from '@playground/components/primitives/UiSection';
 import { Button } from '@playground/components/ui/button';
+import { Play, Pause } from 'lucide-react';
 
 interface RunSectionProps {
   paused: boolean;
@@ -8,13 +9,25 @@ interface RunSectionProps {
 
 export function RunSection({ paused, togglePaused }: RunSectionProps) {
   return (
-    <UiSection title="Run State">
+    <UiSection title="Simulation">
       <Button
         type="button"
-        variant={paused ? 'default' : 'secondary'}
+        variant="secondary"
+        size="default"
         onClick={togglePaused}
+        className="gap-2"
       >
-        {paused ? 'Resume Simulation' : 'Pause Simulation'}
+        {!paused ? (
+          <>
+            <Pause className="h-4 w-4" />
+            Pause
+          </>
+        ) : (
+          <>
+            <Play className="h-4 w-4" />
+            Play
+          </>
+        )}
       </Button>
     </UiSection>
   );

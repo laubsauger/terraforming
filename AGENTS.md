@@ -89,7 +89,6 @@ terraforming-proto/
 │  │  ├─ sim/                # terrain, fluids, erosion, lava
 │  │  ├─ render/             # terrain mesh, materials, renderer
 │  │  └─ perf/               # GPU timers, counters
-│  ├─ ui/                    # React components (HUD, panels)
 │  └─ assets/                # textures, LUTs
 ├─ pnpm-workspace.yaml
 ├─ tsconfig.json

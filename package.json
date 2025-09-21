@@ -4,7 +4,8 @@
   "private": true,
   "packageManager": "pnpm@8.15.4",
   "scripts": {
-    "dev": "pnpm --filter @playground dev",
+    "predev": "pnpm --filter @terraforming/types build && pnpm --filter @terraforming/engine build",
+    "dev": "concurrently -n \"types,engine,playground\" -c \"yellow,cyan,green\" \"pnpm --filter @terraforming/types build:watch\" \"pnpm --filter @terraforming/engine build:watch\" \"pnpm --filter @terraforming/playground dev\"",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
@@ -13,6 +14,8 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.30",
+    "@webgpu/types": "^0.1.43",
+    "concurrently": "^9.2.1",
     "typescript": "^5.4.2"
   }
 }
