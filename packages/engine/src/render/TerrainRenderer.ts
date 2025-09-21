@@ -19,8 +19,19 @@ export class TerrainRenderer extends BaseRenderer {
   private lavaMesh?: THREE.Mesh;
   private oceanMesh?: THREE.Mesh;
 
+  // Debug settings
+  private showContours = true; // Enable by default
+
   private gridSize: number;
   private terrainSize: number;
+
+  // Day/night cycle
+  private sunLight!: THREE.DirectionalLight;
+  private moonLight!: THREE.DirectionalLight;
+  private ambientLight!: THREE.AmbientLight;
+  private timeOfDay = 0.15625; // 0-1, where 0.25 = noon, 0.75 = midnight, 0.15625 = 3:45 AM
+  private dayNightCycleActive = false;
+  private cycleSpeed = 0.0001; // Speed of day/night cycle
 
   // Textures for simulation data
   private heightTexture: THREE.DataTexture;
@@ -155,37 +166,131 @@ export class TerrainRenderer extends BaseRenderer {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap; // Better quality soft shadows
 
-    // Ambient light - slightly increased for better overall illumination
-    const ambientLight = new THREE.AmbientLight(0xfff5e6, 0.4);
-    this.scene.add(ambientLight);
+    // Ambient light - will be adjusted based on time of day
+    this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.3);
+    this.scene.add(this.ambientLight);
 
-    // Main directional light (sun) - with shadows enabled
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    directionalLight.position.set(30, 50, 30);
-    directionalLight.castShadow = true;
+    // Sun light - warm yellow/white
+    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.5);
+    this.sunLight.castShadow = true;
 
-    // Configure shadow camera for better quality
-    directionalLight.shadow.mapSize.width = 2048;
-    directionalLight.shadow.mapSize.height = 2048;
-    directionalLight.shadow.camera.near = 10;
-    directionalLight.shadow.camera.far = 200;
-    directionalLight.shadow.camera.left = -50;
-    directionalLight.shadow.camera.right = 50;
-    directionalLight.shadow.camera.top = 50;
-    directionalLight.shadow.camera.bottom = -50;
-    directionalLight.shadow.bias = -0.0005;
+    // Configure sun shadow camera for better quality
+    this.sunLight.shadow.mapSize.width = 2048;
+    this.sunLight.shadow.mapSize.height = 2048;
+    this.sunLight.shadow.camera.near = 10;
+    this.sunLight.shadow.camera.far = 200;
+    this.sunLight.shadow.camera.left = -60;
+    this.sunLight.shadow.camera.right = 60;
+    this.sunLight.shadow.camera.top = 60;
+    this.sunLight.shadow.camera.bottom = -60;
+    this.sunLight.shadow.bias = -0.0005;
+    this.scene.add(this.sunLight);
 
-    this.scene.add(directionalLight);
+    // Moon light - cool blue/white
+    this.moonLight = new THREE.DirectionalLight(0xb0c4ff, 0.4);
+    this.moonLight.castShadow = true;
 
-    // Strong fill light from camera side (no shadows) - illuminates terrain features
-    const fillLight = new THREE.DirectionalLight(0xa0b0ff, 0.5);
-    fillLight.position.set(-35, 40, -35); // Same side as camera
-    this.scene.add(fillLight);
+    // Configure moon shadow camera (softer shadows)
+    this.moonLight.shadow.mapSize.width = 1024;
+    this.moonLight.shadow.mapSize.height = 1024;
+    this.moonLight.shadow.camera.near = 10;
+    this.moonLight.shadow.camera.far = 200;
+    this.moonLight.shadow.camera.left = -60;
+    this.moonLight.shadow.camera.right = 60;
+    this.moonLight.shadow.camera.top = 60;
+    this.moonLight.shadow.camera.bottom = -60;
+    this.moonLight.shadow.bias = -0.001;
+    this.scene.add(this.moonLight);
 
-    // Additional side light for better form definition
-    const sideLight = new THREE.DirectionalLight(0xffe0a0, 0.3);
-    sideLight.position.set(0, 30, -50); // From the side
-    this.scene.add(sideLight);
+    // Initialize lighting positions
+    this.updateDayNightCycle();
+  }
+
+  /**
+   * Update the day/night cycle
+   */
+  private updateDayNightCycle(): void {
+    // Convert time to radians for circular motion
+    const angle = this.timeOfDay * Math.PI * 2;
+
+    // Early autumn sun arc - tilted 30 degrees from vertical
+    const sunTilt = Math.PI / 6; // 30 degrees tilt
+    // Maximum elevation is 60 degrees (not 90)
+
+    // Calculate sun position on tilted arc
+    const sunX = Math.sin(angle) * 50;
+    const sunY = Math.cos(angle) * Math.cos(sunTilt) * 50; // Height affected by tilt
+    const sunZ = Math.cos(angle) * Math.sin(sunTilt) * 50; // Depth affected by tilt
+
+    // Set sun position (only above horizon during day)
+    this.sunLight.position.set(sunX, Math.max(0, sunY), sunZ);
+    this.sunLight.visible = sunY > -5; // Visible slightly below horizon for sunset
+
+    // Moon is opposite to sun
+    const moonX = -sunX;
+    const moonY = -sunY;
+    const moonZ = -sunZ;
+
+    // Set moon position (only above horizon during night)
+    this.moonLight.position.set(moonX, Math.max(0, moonY), moonZ);
+    this.moonLight.visible = moonY > -5; // Visible slightly below horizon
+
+    // Adjust light intensities based on sun elevation
+    const sunElevation = Math.max(0, sunY / 50); // 0 to 1
+    const moonElevation = Math.max(0, moonY / 50); // 0 to 1
+
+    // Sun intensity varies with elevation
+    this.sunLight.intensity = sunElevation * 1.5;
+
+    // Moon intensity varies with elevation
+    this.moonLight.intensity = moonElevation * 0.4;
+
+    // Ambient light varies throughout the day
+    // Brighter during day, darker at night
+    const dayFactor = Math.max(0, Math.cos(angle)); // 1 at noon, -1 at midnight
+    const ambientIntensity = 0.2 + dayFactor * 0.3; // 0.2 to 0.5
+    this.ambientLight.intensity = ambientIntensity;
+
+    // Adjust ambient color - warmer during sunrise/sunset
+    const twilightFactor = Math.abs(Math.sin(angle * 2)) * (1 - Math.abs(dayFactor));
+    const ambientR = 1.0;
+    const ambientG = 1.0 - twilightFactor * 0.2; // Slightly less green during twilight
+    const ambientB = 1.0 - twilightFactor * 0.4; // Much less blue during twilight
+    this.ambientLight.color.setRGB(ambientR, ambientG, ambientB);
+
+    // Adjust sun color during sunrise/sunset
+    if (sunElevation < 0.3 && sunElevation > 0) {
+      const sunsetFactor = 1 - (sunElevation / 0.3);
+      this.sunLight.color.setRGB(
+        1.0,
+        1.0 - sunsetFactor * 0.2,
+        0.9 - sunsetFactor * 0.3
+      );
+    } else {
+      this.sunLight.color.setHex(0xfffaed); // Normal sun color
+    }
+  }
+
+  /**
+   * Set the time of day (0-1)
+   */
+  public setTimeOfDay(time: number): void {
+    this.timeOfDay = time % 1; // Ensure it wraps around
+    this.updateDayNightCycle();
+  }
+
+  /**
+   * Start or stop the day/night cycle animation
+   */
+  public setDayNightCycleActive(active: boolean): void {
+    this.dayNightCycleActive = active;
+  }
+
+  /**
+   * Set the speed of the day/night cycle
+   */
+  public setCycleSpeed(speed: number): void {
+    this.cycleSpeed = speed;
   }
 
   private createDataTexture(): THREE.DataTexture {
@@ -227,6 +332,8 @@ export class TerrainRenderer extends BaseRenderer {
       terrainSize: this.terrainSize,
       flowMap: this.flowTexture,
       accumulationMap: this.accumulationTexture,
+      showContours: this.showContours, // Enable contours by default
+      contourInterval: 0.05,
     });
 
     // Create mesh - height displacement happens in vertex shader via TSL
@@ -239,8 +346,8 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Create ocean water plane at sea level (always visible)
     const oceanGeometry = new THREE.PlaneGeometry(
-      this.terrainSize * 2, // Extend beyond terrain
-      this.terrainSize * 2,
+      this.terrainSize * 1.1, // Slightly larger than terrain for clean edges
+      this.terrainSize * 1.1,
       1, // Simple plane for ocean
       1
     );
@@ -248,11 +355,13 @@ export class TerrainRenderer extends BaseRenderer {
 
     const oceanMaterial = createWaterMaterialTSL({
       color: new THREE.Color(0x006994),
-      opacity: 0.85
+      opacity: 0.85,
+      heightTexture: this.heightTexture, // Pass height texture for depth calculation
+      waterLevel: 2.1 / 15 // Normalized water level (2.1 units / 15 height scale)
     });
 
     this.oceanMesh = new THREE.Mesh(oceanGeometry, oceanMaterial);
-    this.oceanMesh.position.y = 0.5; // Sea level
+    this.oceanMesh.position.y = 2.1; // Water level for visible ocean (0.14 normalized, clearly below beach at 0.15)
     this.scene.add(this.oceanMesh);
 
     // Create dynamic water surface (initially invisible) - for rivers/lakes
@@ -315,34 +424,68 @@ private generateTestTerrain(): void {
         // Distance from center
         const dist = Math.sqrt(nx * nx + ny * ny);
 
-        // Start with base island shape (circular falloff)
-        let height = Math.max(0, 1 - dist * 2.5) * 0.35; // Main island
+        // Start with base island shape - smaller main island
+        let height = Math.max(0, 1 - dist * 3.5) * 0.28; // Smaller, more compact base island
 
         // Add smooth mountain features to main island
         if (height > 0.02) {
-          // Smooth mountain ridge using smoother functions
-          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 8) * 0.15;
-          const ridge2 = Math.exp(-Math.pow(nx + ny, 2) * 8) * 0.1;
+          // Multiple mountain peaks for variety (reduced to prevent plateau)
+          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 10) * 0.15;
+          const ridge2 = Math.exp(-Math.pow(nx + ny * 0.8, 2) * 12) * 0.12;
 
-          // Central peak with smooth falloff
-          const centralPeak = Math.exp(-(dist * dist) * 6) * 0.25;
+          // Off-center tall peak (reduced height)
+          const peakDist = Math.sqrt((nx - 0.1) * (nx - 0.1) + (ny + 0.1) * (ny + 0.1));
+          const mainPeak = Math.exp(-peakDist * peakDist * 15) * 0.25;
 
-          height += ridge1 + ridge2 + centralPeak;
+          height += ridge1 + ridge2 + mainPeak;
 
-          // Add very gentle rolling hills
-          height += Math.sin(nx * Math.PI * 2) * Math.cos(ny * Math.PI * 2) * 0.01;
+          // Add gentle rolling hills
+          height += Math.sin(nx * Math.PI * 3) * Math.cos(ny * Math.PI * 3) * 0.02;
+
+          // Create a more organic lagoon - use noise-like pattern
+          const lagoonX = -0.12;
+          const lagoonY = 0.08;
+          const lagoonDist = Math.sqrt((nx - lagoonX) * (nx - lagoonX) + (ny - lagoonY) * (ny - lagoonY));
+          const lagoonAngle = Math.atan2(ny - lagoonY, nx - lagoonX);
+          const lagoonRadius = 0.1 + Math.sin(lagoonAngle * 3) * 0.02 + Math.cos(lagoonAngle * 5) * 0.015;
+
+          if (lagoonDist < lagoonRadius) {
+            // Create organic shaped depression
+            const depthFactor = 1 - (lagoonDist / lagoonRadius);
+            const lagoonDepression = depthFactor * depthFactor * 0.08;
+            height -= lagoonDepression;
+
+            // Keep irregular rim just above water (water at 0.14)
+            if (lagoonDist > lagoonRadius * 0.7) {
+              const rimNoise = Math.sin(lagoonAngle * 7) * 0.01;
+              height = Math.max(height, 0.145 + rimNoise); // Variable rim height
+            }
+          }
         }
 
         // Add smaller islands and sandbanks
-        // Small island to the northeast
-        const island1Dist = Math.sqrt((nx - 0.25) * (nx - 0.25) + (ny - 0.2) * (ny - 0.2));
-        const island1Height = Math.max(0, 1 - island1Dist * 8) * 0.08;
-        height = Math.max(height, island1Height);
+        // Rocky outcrop to the northeast - more prominent
+        const island1X = 0.28;
+        const island1Y = 0.22;
+        const island1Dist = Math.sqrt((nx - island1X) * (nx - island1X) + (ny - island1Y) * (ny - island1Y));
+        if (island1Dist < 0.15) {
+          const island1Height = Math.max(0, 1 - island1Dist * 8) * 0.25;
+          // Add some rocky texture
+          const rockNoise = Math.sin(nx * 20) * Math.cos(ny * 20) * 0.01;
+          height = Math.max(height, island1Height + rockNoise);
+        }
 
-        // Small island to the southwest
-        const island2Dist = Math.sqrt((nx + 0.3) * (nx + 0.3) + (ny + 0.15) * (ny + 0.15));
-        const island2Height = Math.max(0, 1 - island2Dist * 12) * 0.06;
-        height = Math.max(height, island2Height);
+        // Small crescent atoll to the southwest
+        const island2X = -0.32;
+        const island2Y = -0.18;
+        const island2Dist = Math.sqrt((nx - island2X) * (nx - island2X) + (ny - island2Y) * (ny - island2Y));
+        const island2Angle = Math.atan2(ny - island2Y, nx - island2X);
+        // Create crescent shape
+        const crescentFactor = 1 + Math.cos(island2Angle) * 0.3;
+        if (island2Dist < 0.08 * crescentFactor) {
+          const island2Height = Math.max(0, 1 - island2Dist * 15) * 0.17;
+          height = Math.max(height, island2Height);
+        }
 
         // Sandbank to the east
         const sandbank1Dist = Math.sqrt((nx - 0.35) * (nx - 0.35) + (ny - 0.05) * (ny - 0.05));
@@ -356,14 +499,23 @@ private generateTestTerrain(): void {
         const sandbank2Height = Math.max(0, 1 - sandbank2Dist * 1.5) * 0.035;
         height = Math.max(height, sandbank2Height);
 
-        // Create much more gradual beach transitions
-        if (height > 0.02 && dist > 0.25) {
-          const beachStart = 0.25;
-          const beachEnd = 0.5;
-          if (dist > beachStart && dist < beachEnd) {
-            const t = Math.max(0, Math.min(1, (dist - beachStart) / (beachEnd - beachStart)));
-            const beachFactor = t * t * (3 - 2 * t); // smoothstep
-            height = height * (1 - beachFactor) + 0.01 * beachFactor;
+        // Create ultra-shallow beach slopes in the narrow beach zone
+        // Water is at 0.14 (2.1/15), beach zone is 0.135-0.145 (very narrow)
+        const waterLevel = 0.14;
+        if (height > 0.15 && height < 0.25) {
+          // Force ultra-shallow slope near water line
+          const distFromWater = Math.abs(height - waterLevel);
+          if (distFromWater < 0.03) {
+            // Very gentle cubic easing for beach slope
+            const beachT = distFromWater / 0.03;
+            height = waterLevel + (height > waterLevel ? 1 : -1) * 0.03 * Math.pow(beachT, 3);
+          }
+
+          // Smooth transition to higher terrain
+          if (height > 0.18 && height < 0.22) {
+            const t = (height - 0.18) / 0.04;
+            const smoothT = t * t * (3 - 2 * t);
+            height = 0.18 + smoothT * 0.04;
           }
         }
 
@@ -441,14 +593,46 @@ private generateTestTerrain(): void {
     }
   }
 
+  /**
+   * Toggle topographic contour lines
+   */
+  public setShowContours(show: boolean): void {
+    if (this.showContours === show) return;
+    this.showContours = show;
+
+    // Recreate terrain material with contour settings
+    if (this.terrainMesh) {
+      const oldMaterial = this.terrainMesh.material as THREE.Material;
+
+      // Create new material with contour settings
+      const newMaterial = createTerrainMaterialTSL({
+        heightMap: this.heightTexture,
+        heightScale: 15,
+        terrainSize: this.terrainSize,
+        flowMap: this.flowTexture,
+        accumulationMap: this.accumulationTexture,
+        showContours: show,
+        contourInterval: 0.05, // Every 5% height = 0.75m with scale 15
+      });
+
+      this.terrainMesh.material = newMaterial;
+      oldMaterial.dispose();
+    }
+  }
+
   public override render(): void {
     this.controls.update();
-    super.render();
 
-    // Debug every 60 frames
-    if (Math.floor(Date.now() / 1000) % 2 === 0 && Math.random() < 0.01) {
-      console.log('TerrainRenderer: Rendering with', this.scene.children.length, 'scene children');
+    // Update day/night cycle if active
+    if (this.dayNightCycleActive) {
+      this.timeOfDay += this.cycleSpeed;
+      if (this.timeOfDay > 1) {
+        this.timeOfDay -= 1;
+      }
+      this.updateDayNightCycle();
     }
+
+    super.render();
   }
 
   public override dispose(): void {

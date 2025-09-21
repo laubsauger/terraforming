@@ -34,7 +34,8 @@ export type DebugOverlay =
   | 'pools'
   | 'sediment'
   | 'lava'
-  | 'temperature';
+  | 'temperature'
+  | 'contours';
 
 export interface PerfGpuPassTiming {
   name: string;

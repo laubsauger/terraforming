@@ -40,6 +40,11 @@ export interface Engine {
   perf: {
     onSample(cb: (sample: PerfSample) => void): Unsub;
   };
+  dayNight: {
+    setTimeOfDay(time: number): void;
+    setActive(active: boolean): void;
+    setCycleSpeed(speed: number): void;
+  };
   getScene(): THREE.Scene | null;
   getCamera(): THREE.Camera | null;
   getTerrainMesh(): THREE.Mesh | null;
@@ -86,7 +91,7 @@ class StubEngine implements Engine {
   private renderingActive = true;   // Renderer runs by default
   private timeScale = 1;
   private quality: QualityOpts = { simResolution: 512, simSubsteps: 1 };
-  private overlay: DebugOverlay | 'none' = 'none';
+  private overlay: DebugOverlay | 'none' = 'contours'; // Contours enabled by default
   private readonly brushQueue: BrushOp[] = [];
   private readonly sourceMap: Record<'water' | 'lava', Source[]> = {
     water: [],
@@ -158,21 +163,54 @@ class StubEngine implements Engine {
   get debug() {
     return {
       setOverlay: (kind: DebugOverlay | 'none') => {
+        const previousOverlay = this.overlay;
         this.overlay = kind;
         // Update renderer debug mode
         if (this.renderer) {
-          const debugModeMap: Record<DebugOverlay | 'none', number> = {
-            'none': 0,
-            'height': 8,
-            'flow': 1,
-            'accumulation': 2,
-            'erosion': 3,
-            'pools': 5,
-            'sediment': 7,
-            'lava': 4,
-            'temperature': 6,
-          };
-          this.renderer.setDebugMode(debugModeMap[kind] || 0);
+          // Handle contours specially since it's a material setting
+          if (kind === 'contours') {
+            this.renderer.setShowContours(true);
+            this.renderer.setDebugMode(0); // Clear other debug modes
+          } else {
+            // Always turn off contours when switching to any other mode
+            this.renderer.setShowContours(false);
+          }
+
+          // Handle other debug modes
+          if (kind !== 'contours') {
+            const debugModeMap: Record<Exclude<DebugOverlay, 'contours'> | 'none', number> = {
+              'none': 0,
+              'height': 8,
+              'flow': 1,
+              'accumulation': 2,
+              'erosion': 3,
+              'pools': 5,
+              'sediment': 7,
+              'lava': 4,
+              'temperature': 6,
+            };
+            this.renderer.setDebugMode(debugModeMap[kind as keyof typeof debugModeMap] || 0);
+          }
+        }
+      },
+    };
+  }
+
+  get dayNight() {
+    return {
+      setTimeOfDay: (time: number) => {
+        if (this.renderer) {
+          this.renderer.setTimeOfDay(time);
+        }
+      },
+      setActive: (active: boolean) => {
+        if (this.renderer) {
+          this.renderer.setDayNightCycleActive(active);
+        }
+      },
+      setCycleSpeed: (speed: number) => {
+        if (this.renderer) {
+          this.renderer.setCycleSpeed(speed);
         }
       },
     };

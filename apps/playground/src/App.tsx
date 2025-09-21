@@ -9,6 +9,7 @@ import { StatsPanel } from '@playground/components/StatsPanel';
 import { BrushSettings } from '@playground/components/BrushSettings';
 import { ToolCursor, TOOL_COLORS } from '@playground/components/ToolCursor';
 import { TerrainCursor } from '@playground/components/TerrainCursor';
+import { DayNightControls } from '@playground/components/DayNightControls';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
@@ -244,6 +245,11 @@ export function App() {
       )}
 
       <StatsPanel />
+
+      <DayNightControls
+        engine={engine}
+        className="absolute bottom-4 right-4"
+      />
 
       {/* Show appropriate cursor based on tool type */}
       {activeTool === 'select' ? (

@@ -40,6 +40,7 @@ const PANEL_CLASS = [
 
 const OVERLAY_OPTIONS: OverlayOption[] = [
   'none',
+  'contours',
   'height',
   'flow',
   'accumulation',
