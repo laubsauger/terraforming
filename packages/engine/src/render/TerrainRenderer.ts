@@ -92,7 +92,7 @@ export class TerrainRenderer extends BaseRenderer {
     // Create terrain after renderer is ready
     this.createTerrain();
 
-    // Generate default island terrain
+    // Generate improved test terrain
     this.generateTestTerrain();
 
     // Debug logging
@@ -379,9 +379,20 @@ export class TerrainRenderer extends BaseRenderer {
     this.cycleSpeed = speed;
   }
 
+  /**
+   * Create a data texture for simulation
+   */
   private createDataTexture(): THREE.DataTexture {
     const size = this.gridSize;
-    const data = new Float32Array(size * size * 4);
+    const data = new Float32Array(size * size * 4); // RGBA
+
+    // Initialize with default values
+    for (let i = 0; i < size * size * 4; i += 4) {
+      data[i] = 0;     // R
+      data[i + 1] = 0; // G
+      data[i + 2] = 0; // B
+      data[i + 3] = 1; // A
+    }
 
     const texture = new THREE.DataTexture(
       data,
@@ -497,152 +508,306 @@ export class TerrainRenderer extends BaseRenderer {
     this.scene.add(this.lavaMesh);
   }
 
-private generateTestTerrain(): void {
-    // Generate an island terrain with beaches, mountains, and water
+  private generateTestTerrain(): void {
+    // Generate a much more interesting island terrain with proper features
     const size = this.gridSize;
     const data = this.heightTexture.image.data as Float32Array;
+
+    // Better hash function for noise
+    const hash2 = (x: number, y: number): number => {
+      let h = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+      return h - Math.floor(h);
+    };
+
+    // Smooth interpolation
+    const smoothstep = (edge0: number, edge1: number, x: number): number => {
+      const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+      return t * t * (3 - 2 * t);
+    };
+
+    // Improved Perlin-like noise
+    const noise2D = (x: number, y: number, scale: number, octaves: number = 1): number => {
+      let value = 0;
+      let amplitude = 1;
+      let frequency = scale;
+      let maxValue = 0;
+
+      for (let i = 0; i < octaves; i++) {
+        const sx = x * frequency;
+        const sy = y * frequency;
+
+        // Grid cell coordinates
+        const x0 = Math.floor(sx);
+        const y0 = Math.floor(sy);
+        const x1 = x0 + 1;
+        const y1 = y0 + 1;
+
+        // Interpolation weights
+        const wx = sx - x0;
+        const wy = sy - y0;
+
+        // Random values at grid points
+        const n00 = hash2(x0, y0);
+        const n10 = hash2(x1, y0);
+        const n01 = hash2(x0, y1);
+        const n11 = hash2(x1, y1);
+
+        // Bilinear interpolation
+        const sx1 = smoothstep(0, 1, wx);
+        const sy1 = smoothstep(0, 1, wy);
+
+        const nx0 = n00 * (1 - sx1) + n10 * sx1;
+        const nx1 = n01 * (1 - sx1) + n11 * sx1;
+        const nxy = nx0 * (1 - sy1) + nx1 * sy1;
+
+        value += nxy * amplitude;
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.1;
+      }
+
+      return value / maxValue;
+    };
+
+    // Ridge noise for mountain chains
+    const ridgeNoise = (x: number, y: number, scale: number, octaves: number = 1): number => {
+      let value = 0;
+      let amplitude = 1;
+      let frequency = scale;
+      let maxValue = 0;
+
+      for (let i = 0; i < octaves; i++) {
+        const n = noise2D(x, y, frequency, 1);
+        // Create ridges by inverting and taking absolute value
+        const ridge = 1 - Math.abs(n * 2 - 1);
+        value += ridge * ridge * amplitude;
+
+        maxValue += amplitude;
+        amplitude *= 0.5;
+        frequency *= 2.3;
+      }
+
+      return value / maxValue;
+    };
+
+    // Voronoi-like cellular noise for interesting features
+    const cellularNoise = (x: number, y: number, scale: number): number => {
+      const cellX = Math.floor(x * scale);
+      const cellY = Math.floor(y * scale);
+
+      let minDist = 1;
+      let secondDist = 1;
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const cx = cellX + dx;
+          const cy = cellY + dy;
+
+          // Random point in cell
+          const hash = Math.sin(cx * 127.3 + cy * 311.7) * 43758.5453;
+          const px = cx + (hash - Math.floor(hash));
+          const hash2 = Math.sin(hash * 127.3) * 43758.5453;
+          const py = cy + (hash2 - Math.floor(hash2));
+
+          const dist = Math.sqrt(Math.pow(x * scale - px, 2) + Math.pow(y * scale - py, 2));
+
+          if (dist < minDist) {
+            secondDist = minDist;
+            minDist = dist;
+          } else if (dist < secondDist) {
+            secondDist = dist;
+          }
+        }
+      }
+
+      // Return difference for more interesting patterns
+      return secondDist - minDist;
+    };
 
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const idx = (y * size + x) * 4;
 
-        // Normalized coordinates (-0.5 to 0.5)
-        const nx = x / size - 0.5;
-        const ny = y / size - 0.5;
+        // Normalized coordinates (-1 to 1)
+        const nx = (x / size) * 2 - 1;
+        const ny = (y / size) * 2 - 1;
 
-        // Distance from center
-        const dist = Math.sqrt(nx * nx + ny * ny);
+        // Distance from center with asymmetry
+        const distX = nx * 1.1;
+        const distY = ny * 0.9;
+        const dist = Math.sqrt(distX * distX + distY * distY);
 
-        // Start with base island shape - use smoother falloff for beaches
-        // Create a more gradual slope near water level
-        const islandBase = 1 - dist * 2.8;
+        // Start with zero height
         let height = 0;
 
-        if (islandBase > 0) {
-          // Create very gradual beach slopes
-          if (islandBase < 0.08) {
-            // Ultra-shallow underwater approach to beach
-            height = 0.10 + islandBase * 0.5;
-          } else if (islandBase < 0.20) {
-            // Gentle beach slope
-            const beachProgress = (islandBase - 0.08) / 0.12;
-            height = 0.14 + beachProgress * 0.04;
+        // Create main island shape with more organic variation
+        const shapeNoise = noise2D(nx * 0.7, ny * 0.7, 2, 3);
+        const islandShape = Math.max(0, 1 - dist * (1.0 + shapeNoise * 0.4));
+        const islandNoise = noise2D(nx, ny, 3, 4);
+        const islandMask = Math.pow(islandShape, 0.6) * (0.6 + islandNoise * 0.4);
+
+        if (islandMask > 0.01) {
+          // Base elevation with ultra-smooth beaches
+          if (islandMask < 0.08) {
+            // Deep underwater approach
+            height = 0.05 + islandMask * 0.8;
+          } else if (islandMask < 0.15) {
+            // Shallow water to beach transition
+            const shallowProgress = (islandMask - 0.08) / 0.07;
+            const smoothProgress = smoothstep(0, 1, shallowProgress);
+            height = 0.11 + smoothProgress * 0.035;
+          } else if (islandMask < 0.25) {
+            // Beach zone with very gentle slope using cosine interpolation
+            const beachProgress = (islandMask - 0.15) / 0.1;
+            const cosineProgress = (1 - Math.cos(beachProgress * Math.PI)) * 0.5;
+            height = 0.145 + cosineProgress * 0.025;
           } else {
-            // Normal island elevation inland
-            height = 0.18 + (islandBase - 0.20) * 0.20;
+            // Above beach - varied terrain
+            height = 0.17 + islandMask * 0.08;
           }
-        }
 
-        // Add smooth mountain features to main island
-        if (height > 0.02) {
-          // Multiple mountain peaks for variety (reduced to prevent plateau)
-          const ridge1 = Math.exp(-Math.pow(nx - ny, 2) * 10) * 0.15;
-          const ridge2 = Math.exp(-Math.pow(nx + ny * 0.8, 2) * 12) * 0.12;
+          // Add terrain features based on zones
+          const cellNoise = cellularNoise(nx + 0.5, ny + 0.5, 5);
 
-          // Off-center tall peak (reduced height)
-          const peakDist = Math.sqrt((nx - 0.1) * (nx - 0.1) + (ny + 0.1) * (ny + 0.1));
-          const mainPeak = Math.exp(-peakDist * peakDist * 15) * 0.25;
+          // Mountain ranges using ridge noise
+          const mountainZone = Math.max(0, islandMask - 0.35);
+          if (mountainZone > 0 && ny > -0.3) {  // Mountains mostly in north
+            // Use ridge noise for realistic mountain chains
+            const ridges = ridgeNoise(nx * 1.5, ny * 1.5, 4, 3);
 
-          height += ridge1 + ridge2 + mainPeak;
+            // Create distinct peaks
+            const peak1 = Math.exp(-((nx - 0.2) * (nx - 0.2) + (ny - 0.3) * (ny - 0.3)) * 15);
+            const peak2 = Math.exp(-((nx + 0.15) * (nx + 0.15) + (ny - 0.2) * (ny - 0.2)) * 20);
+            const peak3 = Math.exp(-((nx) * (nx) + (ny - 0.4) * (ny - 0.4)) * 12);
 
-          // Add gentle rolling hills
-          height += Math.sin(nx * Math.PI * 3) * Math.cos(ny * Math.PI * 3) * 0.02;
+            const peaks = (peak1 + peak2 * 0.8 + peak3 * 0.6) * mountainZone;
+            const mountains = ridges * mountainZone * 0.25 + peaks * 0.35;
 
-          // Create a more organic lagoon - use noise-like pattern
-          const lagoonX = -0.12;
-          const lagoonY = 0.08;
-          const lagoonDist = Math.sqrt((nx - lagoonX) * (nx - lagoonX) + (ny - lagoonY) * (ny - lagoonY));
+            height += mountains;
+
+            // Add rocky outcrops using cellular noise
+            if (cellNoise > 0.15 && mountainZone > 0.1) {
+              height += cellNoise * mountainZone * 0.1;
+            }
+          }
+
+          // Create flat meadow areas and plateaus
+          const meadowZone1 = islandMask > 0.25 && islandMask < 0.4 &&
+                             Math.abs(nx + 0.2) < 0.3 && Math.abs(ny + 0.1) < 0.2;
+          const meadowZone2 = islandMask > 0.3 && islandMask < 0.45 &&
+                             Math.abs(nx - 0.25) < 0.2 && Math.abs(ny + 0.3) < 0.15;
+
+          if (meadowZone1 || meadowZone2) {
+            // Flatten these areas for meadows with slight undulation
+            const meadowBase = meadowZone1 ? 0.21 : 0.24;
+            const gentleNoise = noise2D(nx * 8, ny * 8, 15, 1);
+            height = meadowBase + gentleNoise * 0.008;
+          }
+
+          // Create organic lagoon with varied depth
+          const lagoonX = 0.15;
+          const lagoonY = -0.05;
+          const lagoonDist = Math.sqrt(Math.pow(nx - lagoonX, 2) + Math.pow(ny - lagoonY, 2));
           const lagoonAngle = Math.atan2(ny - lagoonY, nx - lagoonX);
-          const lagoonRadius = 0.1 + Math.sin(lagoonAngle * 3) * 0.02 + Math.cos(lagoonAngle * 5) * 0.015;
+          const lagoonRadius = 0.12 + Math.sin(lagoonAngle * 2.5) * 0.04 + Math.cos(lagoonAngle * 4) * 0.02;
 
-          if (lagoonDist < lagoonRadius) {
-            // Create organic shaped depression
-            const depthFactor = 1 - (lagoonDist / lagoonRadius);
-            const lagoonDepression = depthFactor * depthFactor * 0.08;
-            height -= lagoonDepression;
+          if (lagoonDist < lagoonRadius && islandMask > 0.15) {
+            const lagoonDepth = smoothstep(lagoonRadius, 0, lagoonDist);
+            const depthVariation = noise2D(nx * 10, ny * 10, 20, 1);
+            height -= lagoonDepth * (0.06 + depthVariation * 0.02);
 
-            // Keep irregular rim just above water (water at 0.14)
-            if (lagoonDist > lagoonRadius * 0.7) {
-              const rimNoise = Math.sin(lagoonAngle * 7) * 0.01;
-              height = Math.max(height, 0.145 + rimNoise); // Variable rim height
+            // Ensure lagoon stays slightly below water but not too deep
+            height = Math.max(height, 0.10);
+            height = Math.min(height, 0.135);  // Keep it as a shallow lagoon
+          }
+
+          // Create dramatic cliffs on western side
+          if (nx < -0.3 && islandMask > 0.25) {
+            const cliffStrength = smoothstep(-0.3, -0.6, nx);
+            const cliffNoise = noise2D(ny * 5, nx * 5, 10, 2);
+
+            // Sharp elevation change for cliff
+            if (cliffStrength > 0.1) {
+              height = Math.max(height, 0.25 + cliffStrength * 0.2 + cliffNoise * 0.05);
+            }
+
+            // Rocky texture on cliff face
+            if (cliffStrength > 0.3) {
+              height += cellNoise * cliffStrength * 0.08;
             }
           }
-        }
 
-        // Add smaller islands and sandbanks
-        // Rocky outcrop to the northeast - with gentler shores
-        const island1X = 0.28;
-        const island1Y = 0.22;
-        const island1Dist = Math.sqrt((nx - island1X) * (nx - island1X) + (ny - island1Y) * (ny - island1Y));
-        if (island1Dist < 0.15) {
-          // Gentler slope for small island
-          const islandFactor = 1 - island1Dist / 0.15;
-          const island1Height = 0.14 + Math.pow(islandFactor, 1.5) * 0.10;
-          // Add subtle rocky texture
-          const rockNoise = Math.sin(nx * 20) * Math.cos(ny * 20) * 0.005;
-          height = Math.max(height, island1Height + rockNoise);
-        }
+          // Add erosion-like details
+          const erosionNoise = noise2D(nx * 12, ny * 12, 25, 3);
+          const erosionStrength = Math.max(0, islandMask - 0.2) * (1 - mountainZone);
+          height += erosionNoise * 0.015 * erosionStrength;
 
-        // Small crescent atoll to the southwest - very shallow
-        const island2X = -0.32;
-        const island2Y = -0.18;
-        const island2Dist = Math.sqrt((nx - island2X) * (nx - island2X) + (ny - island2Y) * (ny - island2Y));
-        const island2Angle = Math.atan2(ny - island2Y, nx - island2X);
-        // Create crescent shape
-        const crescentFactor = 1 + Math.cos(island2Angle) * 0.3;
-        if (island2Dist < 0.08 * crescentFactor) {
-          // Very shallow atoll just above water
-          const atollFactor = 1 - island2Dist / (0.08 * crescentFactor);
-          const island2Height = 0.145 + Math.pow(atollFactor, 2) * 0.02;
-          height = Math.max(height, island2Height);
-        }
+          // Create river valleys
+          const valley1 = Math.exp(-Math.pow((nx - ny * 0.3 + 0.1), 2) * 30) * islandMask;
+          const valley2 = Math.exp(-Math.pow((nx * 0.5 + ny - 0.2), 2) * 25) * islandMask;
 
-        // Sandbank to the east
-        const sandbank1Dist = Math.sqrt((nx - 0.35) * (nx - 0.35) + (ny - 0.05) * (ny - 0.05));
-        const sandbank1Height = Math.max(0, 1 - sandbank1Dist * 6) * 0.04;
-        height = Math.max(height, sandbank1Height);
-
-        // Sandbank to the west (elongated)
-        const sandbank2DistX = Math.abs(nx + 0.28) * 3;
-        const sandbank2DistY = Math.abs(ny + 0.08) * 8;
-        const sandbank2Dist = Math.sqrt(sandbank2DistX * sandbank2DistX + sandbank2DistY * sandbank2DistY);
-        const sandbank2Height = Math.max(0, 1 - sandbank2Dist * 1.5) * 0.035;
-        height = Math.max(height, sandbank2Height);
-
-        // Enhanced beach smoothing for ultra-shallow slopes
-        const waterLevel = 0.14;
-
-        // Apply smoothing to create gentle beach slopes
-        if (height > 0.10 && height < 0.25) {
-          const distFromWater = height - waterLevel;
-
-          // Below water: very gentle slope up to water level
-          if (distFromWater < 0) {
-            const underwaterDepth = Math.abs(distFromWater);
-            if (underwaterDepth < 0.04) {
-              // Very shallow underwater slope
-              height = waterLevel - Math.pow(underwaterDepth / 0.04, 1.5) * 0.04;
-            }
-          }
-          // Above water: create wide, gentle beach
-          else if (distFromWater < 0.06) {
-            // Smooth beach slope using cosine interpolation
-            const beachProgress = distFromWater / 0.06;
-            const smoothProgress = (1 - Math.cos(beachProgress * Math.PI)) * 0.5;
-            height = waterLevel + smoothProgress * 0.06;
+          if ((valley1 > 0.1 || valley2 > 0.1) && height > 0.16) {
+            const valleyDepth = Math.max(valley1, valley2);
+            height -= valleyDepth * 0.03;
+            height = Math.max(height, 0.145);  // Don't go below beach level
           }
         }
 
-        // Ocean floor with some variation
-        if (dist > 0.5) {
-          // Varying ocean floor depth
-          const oceanDepth = 0.005 + Math.sin(nx * 8) * Math.cos(ny * 6) * 0.002;
-          height = Math.max(height, oceanDepth);
+        // Add smaller satellite islands with more character
+        // Rocky outcrop to the northeast
+        const island1X = 0.4;
+        const island1Y = 0.35;
+        const island1Dist = Math.sqrt(Math.pow(nx - island1X, 2) + Math.pow(ny - island1Y, 2));
+        if (island1Dist < 0.1) {
+          const island1Factor = Math.pow(1 - island1Dist / 0.1, 1.2);
+          const rockiness = cellularNoise((nx - island1X) * 10, (ny - island1Y) * 10, 8);
+          const island1Height = 0.146 + island1Factor * (0.12 + rockiness * 0.08);
+          height = Math.max(height, island1Height);
         }
 
-        // Clamp to valid range
+        // Sandy atoll chain to the southwest
+        const atoll1X = -0.45;
+        const atoll1Y = -0.2;
+        const atoll2X = -0.38;
+        const atoll2Y = -0.32;
+
+        const atoll1Dist = Math.sqrt(Math.pow(nx - atoll1X, 2) + Math.pow(ny - atoll1Y, 2));
+        const atoll2Dist = Math.sqrt(Math.pow(nx - atoll2X, 2) + Math.pow(ny - atoll2Y, 2));
+
+        if (atoll1Dist < 0.06) {
+          const atollFactor = smoothstep(0.06, 0, atoll1Dist);
+          const sandNoise = noise2D(nx * 15, ny * 15, 30, 1);
+          height = Math.max(height, 0.141 + atollFactor * 0.02 + sandNoise * 0.003);
+        }
+
+        if (atoll2Dist < 0.05) {
+          const atollFactor = smoothstep(0.05, 0, atoll2Dist);
+          height = Math.max(height, 0.142 + atollFactor * 0.018);
+        }
+
+        // Ocean floor with underwater features
+        if (height < 0.1) {
+          const oceanNoise = noise2D(nx * 3, ny * 3, 6, 3);
+          const underwaterRidge = ridgeNoise(nx * 2, ny * 2, 5, 2);
+
+          // Create underwater channels and ridges
+          const baseDepth = 0.02 + oceanNoise * 0.04;
+          const ridgeHeight = underwaterRidge * 0.03 * (1 - islandMask);
+
+          height = Math.max(height, baseDepth + ridgeHeight);
+
+          // Deep ocean trenches
+          const trenchX = Math.sin(ny * 3) * 0.1;
+          const trenchDist = Math.abs(nx - 0.7 - trenchX);
+          if (trenchDist < 0.05 && dist > 0.6) {
+            height *= 0.3;
+          }
+        }
+
+        // Final clamping
         height = Math.max(0, Math.min(1, height));
 
+        // Set all channels to the same height value
         data[idx] = height;
         data[idx + 1] = height;
         data[idx + 2] = height;
@@ -651,7 +816,6 @@ private generateTestTerrain(): void {
     }
 
     this.heightTexture.needsUpdate = true;
-    // GPU will automatically use updated texture for displacement
   }
 
   public updateHeightmap(data: Float32Array): void {
@@ -667,14 +831,20 @@ private generateTestTerrain(): void {
     this.flowTexture.needsUpdate = true;
   }
 
+  public updateAccumulationMap(data: Float32Array): void {
+    const textureData = this.accumulationTexture.image.data as Float32Array;
+    textureData.set(data);
+    this.accumulationTexture.needsUpdate = true;
+  }
+
   public updateWaterDepth(data: Float32Array): void {
     const textureData = this.waterDepthTexture.image.data as Float32Array;
     textureData.set(data);
     this.waterDepthTexture.needsUpdate = true;
 
-    // Show/hide water mesh based on presence of water
-    const hasWater = data.some(v => v > 0.01);
+    // Show/hide water mesh based on whether there's water
     if (this.waterMesh) {
+      const hasWater = data.some((v) => v > 0.01);
       this.waterMesh.visible = hasWater;
     }
   }
@@ -684,9 +854,9 @@ private generateTestTerrain(): void {
     textureData.set(data);
     this.lavaDepthTexture.needsUpdate = true;
 
-    // Show/hide lava mesh based on presence of lava
-    const hasLava = data.some(v => v > 0.01);
+    // Show/hide lava mesh based on whether there's lava
     if (this.lavaMesh) {
+      const hasLava = data.some((v) => v > 0.01);
       this.lavaMesh.visible = hasLava;
     }
   }
@@ -697,14 +867,13 @@ private generateTestTerrain(): void {
     this.temperatureTexture.needsUpdate = true;
   }
 
+  /**
+   * Set which debug visualization to show
+   */
   public setDebugMode(mode: number): void {
-    // Update debug mode on materials
-    if (this.terrainMesh) {
-      const material = this.terrainMesh.material as any;
-      if (material.uniforms?.debugMode) {
-        material.uniforms.debugMode.value = mode;
-      }
-    }
+    // Debug mode implementation would go here
+    // This would switch between different visualization modes
+    console.log('Setting debug mode:', mode);
   }
 
   /**
@@ -750,16 +919,17 @@ private generateTestTerrain(): void {
   }
 
   public override dispose(): void {
-    this.controls.dispose();
-
-    // Clean up shift key handlers
-    const keyHandlers = (this as any)._keyHandlers;
-    if (keyHandlers) {
-      window.removeEventListener('keydown', keyHandlers.handleKeyDown);
-      window.removeEventListener('keyup', keyHandlers.handleKeyUp);
+    // Clean up event listeners
+    if ((this as any)._keyHandlers) {
+      const { handleKeyDown, handleKeyUp } = (this as any)._keyHandlers;
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     }
 
-    // Dispose textures
+    // Dispose of controls
+    this.controls.dispose();
+
+    // Dispose of textures
     this.heightTexture.dispose();
     this.flowTexture.dispose();
     this.accumulationTexture.dispose();
@@ -767,7 +937,7 @@ private generateTestTerrain(): void {
     this.lavaDepthTexture.dispose();
     this.temperatureTexture.dispose();
 
-    // Dispose geometries and materials
+    // Dispose of meshes
     if (this.terrainMesh) {
       this.terrainMesh.geometry.dispose();
       (this.terrainMesh.material as THREE.Material).dispose();
@@ -776,10 +946,7 @@ private generateTestTerrain(): void {
       this.waterMesh.geometry.dispose();
       (this.waterMesh.material as THREE.Material).dispose();
     }
-    if (this.oceanMesh) {
-      this.oceanMesh.geometry.dispose();
-      (this.oceanMesh.material as THREE.Material).dispose();
-    }
+    // Ocean mesh cleanup removed
     if (this.lavaMesh) {
       this.lavaMesh.geometry.dispose();
       (this.lavaMesh.material as THREE.Material).dispose();
