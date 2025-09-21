@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { positionLocal, texture, uv, vec3, float, normalLocal, mix, smoothstep, clamp, fract, step } from 'three/tsl';
+import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize, cross } from 'three/tsl';
 import type { Texture } from 'three';
 
 export interface TerrainMaterialTSLOptions {
@@ -124,13 +124,28 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
 
   material.colorNode = terrainColor;
 
-  // If we have a normal map, use it; otherwise compute from height gradient
+  // Compute normals from height gradient for proper lighting
   if (normalMap) {
     material.normalNode = texture(normalMap, uv()).xyz;
   } else {
-    // For now, use the default normal calculation
-    // TODO: Compute normals from height gradient in shader
-    material.normalNode = normalLocal;
+    // Compute normals from height gradient
+    // Sample neighboring heights to calculate gradient
+    const texelSize = float(1.0 / 512); // Assuming 512x512 heightmap
+
+    // Sample heights at neighboring points
+    const hL = texture(heightMap, uv().sub(vec2(texelSize, 0))).r;
+    const hR = texture(heightMap, uv().add(vec2(texelSize, 0))).r;
+    const hD = texture(heightMap, uv().sub(vec2(0, texelSize))).r;
+    const hU = texture(heightMap, uv().add(vec2(0, texelSize))).r;
+
+    // Calculate tangent and bitangent from height differences
+    const tangent = vec3(texelSize.mul(2), hR.sub(hL).mul(float(heightScale)), 0);
+    const bitangent = vec3(0, hU.sub(hD).mul(float(heightScale)), texelSize.mul(2));
+
+    // Calculate normal as cross product of tangent and bitangent
+    const computedNormal = normalize(cross(tangent, bitangent));
+
+    material.normalNode = computedNormal;
   }
 
   // Store additional maps for potential use in fragment shader

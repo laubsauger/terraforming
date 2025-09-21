@@ -11,7 +11,7 @@ interface DayNightControlsProps {
 }
 
 export function DayNightControls({ engine, className = '' }: DayNightControlsProps) {
-  const [timeOfDay, setTimeOfDay] = useState(0.0); // Start at midnight (00:00)
+  const [timeOfDay, setTimeOfDay] = useState(0.85); // Start at 20:00 (8PM)
   const [isPlaying, setIsPlaying] = useState(false);
   const [cycleSpeed, setCycleSpeed] = useState(0.0005); // Default speed
   const [showAdvanced, setShowAdvanced] = useState(false);

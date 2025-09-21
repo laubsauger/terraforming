@@ -31,7 +31,7 @@ export class TerrainRenderer extends BaseRenderer {
   private ambientLight!: THREE.AmbientLight;
   private sunSphere!: THREE.Mesh;
   private moonSphere!: THREE.Mesh;
-  private timeOfDay = 0.0; // 0-1, where 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm
+  private timeOfDay = 0.85; // 0-1, where 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm, 0.85 = ~8pm
   private dayNightCycleActive = false;
   private cycleSpeed = 0.0001; // Speed of day/night cycle
 
@@ -187,6 +187,8 @@ export class TerrainRenderer extends BaseRenderer {
     this.sunLight.shadow.camera.top = 60;
     this.sunLight.shadow.camera.bottom = -60;
     this.sunLight.shadow.bias = -0.0005;
+    this.sunLight.shadow.needsUpdate = true;
+    this.sunLight.shadow.autoUpdate = false; // Manual control for consistency
     this.scene.add(this.sunLight);
     this.scene.add(this.sunLight.target); // Add target to scene for proper world-space lighting
 
@@ -204,6 +206,8 @@ export class TerrainRenderer extends BaseRenderer {
     this.moonLight.shadow.camera.top = 60;
     this.moonLight.shadow.camera.bottom = -60;
     this.moonLight.shadow.bias = -0.001;
+    this.moonLight.shadow.needsUpdate = true;
+    this.moonLight.shadow.autoUpdate = false; // Manual control for consistency
     this.scene.add(this.moonLight);
     this.scene.add(this.moonLight.target); // Add target to scene for proper world-space lighting
 
@@ -260,6 +264,11 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.sunLight.visible) {
       this.sunLight.target.position.set(0, 0, 0);
       this.sunLight.target.updateMatrixWorld();
+
+      // Update shadow camera to be consistent with light direction
+      // Shadow camera needs explicit update to work properly
+      this.sunLight.shadow.camera.updateMatrixWorld(true);
+      this.sunLight.shadow.needsUpdate = true;
     }
 
     // Moon is opposite to sun
@@ -277,6 +286,11 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.moonLight.visible) {
       this.moonLight.target.position.set(0, 0, 0);
       this.moonLight.target.updateMatrixWorld();
+
+      // Update shadow camera to be consistent with light direction
+      // Shadow camera needs explicit update to work properly
+      this.moonLight.shadow.camera.updateMatrixWorld(true);
+      this.moonLight.shadow.needsUpdate = true;
     }
 
     // Adjust light intensities based on sun elevation
