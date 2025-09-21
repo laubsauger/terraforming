@@ -88,10 +88,10 @@ export function TerrainCursor({
       return;
     }
 
-    // Convert mouse position to normalized device coordinates
+    // Convert canvas-relative mouse position to normalized device coordinates
     const rect = canvasElement.getBoundingClientRect();
-    const x = ((mousePosition.x - rect.left) / rect.width) * 2 - 1;
-    const y = -((mousePosition.y - rect.top) / rect.height) * 2 + 1;
+    const x = (mousePosition.x / rect.width) * 2 - 1;
+    const y = -(mousePosition.y / rect.height) * 2 + 1;
 
     // Update raycaster
     const raycaster = raycasterRef.current;

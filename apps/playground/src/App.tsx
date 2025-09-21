@@ -27,6 +27,7 @@ export function App() {
   const [brushStrength, setBrushStrength] = useState(0.5);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
+  const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
 
   const toolbarActions = useMemo(
     () => [
@@ -146,7 +147,14 @@ export function App() {
   // Mouse tracking for tool cursor
   useEffect(() => {
     const handleMouseMove = (event: MouseEvent) => {
-      setMousePosition({ x: event.clientX, y: event.clientY });
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        setMousePosition({
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top
+        });
+      }
     };
 
     const handleMouseEnter = () => setShowCursor(true);
@@ -169,6 +177,8 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    let brushAdjustTimeout: number | null = null;
+
     const handleWheel = (event: WheelEvent) => {
       // Only handle brush size adjustment when Shift is held
       if (!event.shiftKey) return;
@@ -179,6 +189,19 @@ export function App() {
 
       // Prevent page scroll when adjusting brush size
       event.preventDefault();
+
+      // Mark that we're adjusting brush size
+      setIsAdjustingBrush(true);
+
+      // Clear existing timeout
+      if (brushAdjustTimeout) {
+        clearTimeout(brushAdjustTimeout);
+      }
+
+      // Set timeout to stop adjusting after 200ms of no wheel events
+      brushAdjustTimeout = window.setTimeout(() => {
+        setIsAdjustingBrush(false);
+      }, 200);
 
       // Calculate size change (fine control with shift)
       const delta = event.deltaY > 0 ? -1 : 1;
@@ -191,7 +214,12 @@ export function App() {
     };
 
     window.addEventListener('wheel', handleWheel, { passive: false });
-    return () => window.removeEventListener('wheel', handleWheel);
+    return () => {
+      window.removeEventListener('wheel', handleWheel);
+      if (brushAdjustTimeout) {
+        clearTimeout(brushAdjustTimeout);
+      }
+    };
   }, []);
 
   return (
@@ -235,7 +263,7 @@ export function App() {
         <TerrainCursor
           activeTool={activeTool}
           brushSize={brushSize}
-          isVisible={showCursor}
+          isVisible={showCursor || isAdjustingBrush}
           engine={engine}
           mousePosition={mousePosition}
           canvasElement={canvasRef.current}
