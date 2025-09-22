@@ -627,18 +627,18 @@ export class TerrainRenderer extends BaseRenderer {
     this.lastBrushWorldPos = worldPos;
 
     // Get the highest point in brush radius for better positioning
-    const maxHeight = this.getHighestPointInRadius(worldPos!.x, worldPos!.z, this.brushRadius);
-    const safeY = Math.max(maxHeight, 0.15); // Ensure minimum height above ocean floor
+    const maxHeight = this.getHighestPointInRadius(worldPos.x, worldPos.z, this.brushRadius);
 
-    // Position sphere ABOVE the terrain based on its current size
-    if (!this.brushCursorSphere || !this.brushCursorRing) return;
+    // Position sphere ABOVE the center of brush area at consistent height
+    if (!this.brushCursorSphere || !this.brushCursorRing || !worldPos) return;
 
     const sphereScale = this.brushCursorSphere.scale.x; // Current scale
-    const sphereOffset = sphereScale + 0.5; // Always above terrain by radius + margin
-    this.brushCursorSphere.position.set(worldPos!.x, safeY + sphereOffset, worldPos!.z);
+    // Keep sphere at consistent height above the brush center point
+    const sphereOffset = 3.0 + sphereScale; // Fixed height + scale adjustment
+    this.brushCursorSphere.position.set(worldPos.x, maxHeight + sphereOffset, worldPos.z);
 
     // Update ring to conform to terrain
-    this.brushCursorRing.position.set(worldPos!.x, 0, worldPos!.z);
+    this.brushCursorRing.position.set(worldPos.x, 0, worldPos.z);
 
     // Update ring vertices to follow terrain with better slope handling
     const ringGeometry = this.brushCursorRing.geometry;
@@ -820,7 +820,9 @@ export class TerrainRenderer extends BaseRenderer {
       }
 
       // Show active mode indicators
-      this.updateModeIndicator(worldPos!, true, true);
+      if (worldPos) {
+        this.updateModeIndicator(worldPos, true, true);
+      }
     }
 
     // Update material properties

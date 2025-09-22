@@ -9,6 +9,7 @@ import {
   Fn,
   uniform,
   positionWorld,
+  positionLocal,
   varyingProperty,
   min,
   max,
@@ -37,7 +38,7 @@ export function createBrushDecalMaterialTSL(options: BrushDecalMaterialOptions =
     brushState = 0
   } = options;
 
-  const material = new THREE.MeshBasicMaterial() as any; // Will be replaced with TSL nodes
+  const material = (THREE as any).MeshStandardNodeMaterial ? new (THREE as any).MeshStandardNodeMaterial() : new THREE.MeshStandardMaterial();
 
   // Uniforms for dynamic updates
   const brushPosUniform = uniform(vec2(brushPosition.x, brushPosition.y));
