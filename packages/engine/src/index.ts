@@ -10,6 +10,8 @@ import type {
 import * as THREE from 'three/webgpu';
 import { TerrainRenderer } from './render/TerrainRenderer';
 import { BrushSystem } from './sim/BrushSystem';
+import { FluidSystem } from './sim/FluidSystem';
+import { FluidConfig } from './sim/FluidConfig';
 
 export type {
   BrushOp,
@@ -22,6 +24,9 @@ export type {
   Source,
   Unsub,
 } from '@terraforming/types';
+
+// Export FluidConfig for UI usage
+export { FluidConfig } from './sim/FluidConfig';
 
 export interface Engine {
   canvas: HTMLCanvasElement;
@@ -395,7 +400,7 @@ class StubEngine implements Engine {
             if (op.mode === 'pickup') {
               // Lower terrain
               data[index] -= op.strength * strengthScale * effect;
-              data[index] = Math.max(-1, data[index]); // Prevent going too deep
+              data[index] = Math.max(0, data[index]); // Ocean floor at 0.0 normalized - NEVER go below
             } else {
               // Raise terrain
               data[index] += op.strength * strengthScale * effect;
@@ -494,6 +499,13 @@ class StubEngine implements Engine {
     // Process all queued brush operations
     for (const op of this.brushQueue) {
       console.log('Brush op:', op);
+
+      // Calculate height at brush position for logging
+      let heightMeters: number | undefined;
+      if (this.renderer) {
+        heightMeters = this.renderer.getHeightAtWorldPos(op.worldX, op.worldZ);
+      }
+
       this.brushSystem.addBrushOp(
         op.mode,
         op.material,
@@ -501,7 +513,8 @@ class StubEngine implements Engine {
         op.worldZ,
         op.radius,
         op.strength,
-        op.dt || dt || 0.016 // Use provided dt first, then calculated dt, then default to 60fps
+        op.dt || dt || 0.016, // Use provided dt first, then calculated dt, then default to 60fps
+        heightMeters
       );
     }
 

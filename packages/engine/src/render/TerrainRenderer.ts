@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { BrushSystem } from '../sim/BrushSystem';
+import { FluidSystem } from '../sim/FluidSystem';
 import { TerrainConfig } from '@terraforming/types';
 
 // Import subsystems
@@ -42,6 +43,7 @@ export class TerrainRenderer extends BaseRenderer {
   private heightSampler: HeightSampler;
   private sourceEmitterManager: SourceEmitterManager;
   private brushSystem?: BrushSystem;
+  private fluidSystem?: FluidSystem;
 
   // State
   private showContours = true;
@@ -188,12 +190,15 @@ export class TerrainRenderer extends BaseRenderer {
       const waterLevelMeters = TerrainConfig.WATER_LEVEL_ABSOLUTE;
 
       // Split height into rock base and soil layer IN METERS
+      // Rock represents bedrock that forms the foundation
+      // Soil is the loose material on top
       if (heightMeters > waterLevelMeters) {
-        // Above water: rock goes up to water level, rest is soil
-        rockData[i] = Math.max(0, waterLevelMeters - 0.5); // Rock up to just below water
-        soilData[i] = Math.max(0, heightMeters - waterLevelMeters); // Soil is everything above water
+        // Above water: most is rock with thin soil layer
+        const soilDepth = Math.min(2.0, (heightMeters - waterLevelMeters) * 0.2); // Thin soil layer
+        rockData[i] = heightMeters - soilDepth;
+        soilData[i] = soilDepth;
       } else {
-        // Below water: all rock, no soil
+        // Below water: all rock, no soil (underwater erosion)
         rockData[i] = heightMeters;
         soilData[i] = 0;
       }

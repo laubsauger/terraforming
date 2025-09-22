@@ -176,23 +176,36 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   material.opacityNode = opacityNode;
 
   // Add significant roughness variation to scatter reflections realistically
-  const roughnessBase = animatedUV.x.sin().mul(animatedUV.y.cos()).mul(0.15); // More variation
-  const roughnessWaves = time.mul(0.5).sin().mul(0.08); // Stronger temporal variation
-  const roughnessNoise = sin(uv().x.mul(50).add(time)).mul(cos(uv().y.mul(45).sub(time.mul(0.7)))).mul(0.1);
+  const roughnessBase = animatedUV.x.sin().mul(animatedUV.y.cos()).mul(0.25); // Increased variation
+  const roughnessWaves = time.mul(0.5).sin().mul(0.15); // Stronger temporal variation
+  const roughnessNoise = sin(uv().x.mul(80).add(time)).mul(cos(uv().y.mul(75).sub(time.mul(0.7)))).mul(0.2);
+
+  // Add high-frequency glints for sparkles
+  const glintNoise1 = sin(uv().x.mul(120).add(time.mul(2))).mul(cos(uv().y.mul(110).sub(time.mul(1.5))));
+  const glintNoise2 = cos(uv().x.mul(150).sub(time.mul(1.8))).mul(sin(uv().y.mul(140).add(time.mul(2.2))));
+  const glintPattern = glintNoise1.mul(glintNoise2).mul(0.3).clamp(0, 1);
 
   // Create depth-based roughness - smoother in deep water, rougher near shore
-  let roughnessNode: any = roughnessBase.add(roughnessWaves).add(roughnessNoise).add(float(0.25)); // Base roughness of 0.25
+  let roughnessNode: any = roughnessBase.add(roughnessWaves).add(roughnessNoise).add(float(0.15)); // Lower base for more contrast
 
   if (heightTexture && waterLevel !== undefined) {
     const terrainHeight = texture(heightTexture, uv()).r;
     const waterDepth = float(waterLevel).sub(terrainHeight);
     const clampedWaterDepth = waterDepth.clamp(float(0), float(TerrainConfig.SEA_LEVEL_NORMALIZED));
     // Shore is rougher (more scattered), deep water slightly smoother
-    const depthRoughness = mix(float(0.35), float(0.2), smoothstep(float(0), float(0.10), clampedWaterDepth));
-    roughnessNode = roughnessNode.mul(depthRoughness.div(float(0.25))); // Scale relative to base
+    const depthRoughness = mix(float(0.45), float(0.15), smoothstep(float(0), float(0.10), clampedWaterDepth));
+    roughnessNode = roughnessNode.mul(depthRoughness.div(float(0.15))); // Scale relative to base
+
+    // Add glint pattern - sparkles on wave crests (lower roughness = brighter reflection)
+    roughnessNode = roughnessNode.sub(glintPattern.mul(0.4).mul(float(1).sub(smoothstep(float(0), float(0.02), clampedWaterDepth))));
   }
 
-  material.roughnessNode = roughnessNode;
+  material.roughnessNode = roughnessNode.clamp(0.05, 0.95); // Clamp to valid range
+
+  // Add metalness variation for sparkles on wave crests
+  const metalnessBase = float(0.02);
+  const metalnessSparkle = glintPattern.mul(0.15); // Slight metalness on glints for sparkle
+  material.metalnessNode = metalnessBase.add(metalnessSparkle).clamp(0, 0.2);
 
   // Add physical vertex displacement for waves at shore (must be before normal calculation)
   if (heightTexture && waterLevel !== undefined) {
@@ -272,9 +285,9 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
 
     // Radial beach break patterns - waves moving INWARD at 60 frequency
     const radialBeachCoord = radialDist.mul(60);  // 60 frequency
-    const beachBreak1 = sin(radialBeachCoord.sub(time.mul(3.5))).mul(0.25);   // SUB time for inward
-    const beachBreak2 = cos(radialBeachCoord.mul(1.1).sub(time.mul(3.0))).mul(0.22);
-    const beachBreak3 = sin(radialBeachCoord.mul(0.9).sub(time.mul(2.8))).mul(0.20);
+    const beachBreak1 = sin(radialBeachCoord.sub(time.mul(3.5))).mul(0.35);   // Moderate strength
+    const beachBreak2 = cos(radialBeachCoord.mul(1.1).sub(time.mul(3.0))).mul(0.30);
+    const beachBreak3 = sin(radialBeachCoord.mul(0.9).sub(time.mul(2.8))).mul(0.28);
 
     // Circular ripples moving inward
     const shoreRipples = sin(shoreUV1.x).mul(cos(shoreUV1.y)).mul(0.22);
@@ -294,18 +307,18 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const oceanUV1 = uv().mul(oceanScale1).add(vec2(time.mul(0.01), time.mul(0.008)));
     const oceanUV2 = uv().mul(oceanScale2).add(vec2(time.mul(-0.008), time.mul(0.012)));
 
-    const oceanHeight1 = sin(oceanUV1.x).mul(cos(oceanUV1.y)).mul(0.25);
-    const oceanHeight2 = cos(oceanUV2.x).mul(sin(oceanUV2.y)).mul(0.15);
+    const oceanHeight1 = sin(oceanUV1.x).mul(cos(oceanUV1.y)).mul(0.35);  // Moderate waves
+    const oceanHeight2 = cos(oceanUV2.x).mul(sin(oceanUV2.y)).mul(0.2);  // Secondary waves
 
     // Ocean waves fade out in deep water
     const oceanWaves = oceanHeight1.add(oceanHeight2).mul(float(1).sub(deepOceanFade.mul(0.7)));
 
-    // Combine shore and ocean waves
-    const dx = shoreWaves.add(oceanWaves.mul(nearShoreZone));
-    const dy = shoreWaves.mul(0.8).add(oceanWaves);
+    // Combine shore and ocean waves with visible but not extreme amplitude
+    const dx = shoreWaves.add(oceanWaves.mul(nearShoreZone)).mul(1.5);  // Visible waves
+    const dy = shoreWaves.mul(0.8).add(oceanWaves).mul(1.5);
 
-    // Create normal with appropriate tilt
-    const normal = normalize(vec3(dx, dy, float(0.5)));
+    // Create normal with good tilt for visible waves without artifacts
+    const normal = normalize(vec3(dx, dy, float(0.35)));  // Balanced tilt
     material.normalNode = normal;
   } else {
     // Fallback - simple wave pattern for lakes/rivers

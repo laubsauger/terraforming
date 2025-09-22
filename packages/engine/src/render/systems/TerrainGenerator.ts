@@ -163,52 +163,61 @@ export class TerrainGenerator {
         // Initialize height based on whether we're in island or ocean
         let height = 0;
 
-        // For ocean areas (no island), create varied ocean floor
+        // For pure ocean areas (far from island), create varied ocean floor
+        // Ocean should only be 15% of height range (0 to 0.15)
         if (islandMask < 0.01) {  // Only true ocean far from island
           const oceanNoise = this.noise2D(nx * 3, ny * 3, 6, 3);
           const deepNoise = this.noise2D(nx * 1.5, ny * 1.5, 3, 2);
 
-          // Ocean depth varies from absolute floor (0) to just below sea level
-          // Create more variation in ocean depths to show the full range
-          const depthFactor = deepNoise * 0.5 + 0.5; // 0 to 1
+          // Ocean varies from absolute floor (0) to just below sea level (0.15)
+          // Most ocean should be deep (closer to 0) with some shallow areas
+          const depthFactor = Math.pow(deepNoise * 0.5 + 0.5, 2); // Bias towards deeper
 
-          // Make some areas very deep (near 0) and others shallow (near sea level)
-          const baseOceanDepth = depthFactor * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.9;
+          // Ocean floor between 0 (deepest) and 0.14 (shallow)
+          height = depthFactor * (TerrainConfig.SEA_LEVEL_NORMALIZED * 0.93);
 
-          // Add some variation
-          height = baseOceanDepth + oceanNoise * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.1;
+          // Add subtle variation
+          height += oceanNoise * 0.01;
 
-          // Clamp to ocean range
-          height = Math.max(0, Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.95));
+          // Ensure we stay in ocean range
+          height = Math.max(0.001, Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.95));
         }
 
         if (islandMask > 0.01) {
-          // Base elevation derived from config - adjusted thresholds for more land
-          if (islandMask < 0.05) {
-            // Deep to medium underwater - smaller underwater zone
-            const progress = islandMask / 0.05;
+          // CRITICAL: We want most terrain ABOVE water (0.15)
+          // Only the edges should be underwater
+          if (islandMask < 0.03) {
+            // Very edge - deep water
+            const progress = islandMask / 0.03;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = TerrainConfig.OCEAN_DEEP + smoothProgress * (TerrainConfig.OCEAN_SHALLOW - TerrainConfig.OCEAN_DEEP);
-          } else if (islandMask < 0.12) {
-            // Shallow water to beach - transition zone
-            const progress = (islandMask - 0.05) / 0.07;
+            height = 0.02 + smoothProgress * (TerrainConfig.OCEAN_SHALLOW - 0.02);
+          } else if (islandMask < 0.08) {
+            // Shallow water to beach - quick transition through water
+            const progress = (islandMask - 0.03) / 0.05;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = TerrainConfig.OCEAN_SHALLOW + smoothProgress * (TerrainConfig.BEACH_DRY - TerrainConfig.OCEAN_SHALLOW);
+            // Go from shallow ocean (0.12) to above water (0.16)
+            height = TerrainConfig.OCEAN_SHALLOW + smoothProgress * (0.16 - TerrainConfig.OCEAN_SHALLOW);
           } else if (islandMask < 0.25) {
-            // Beach to foothills - above water terrain starts here
-            const progress = (islandMask - 0.12) / 0.13;
+            // Coastal plains to grasslands - most common elevation
+            const progress = (islandMask - 0.08) / 0.17;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = TerrainConfig.BEACH_DRY + smoothProgress * (TerrainConfig.GRASSLANDS - TerrainConfig.BEACH_DRY);
-          } else if (islandMask < 0.6) {
-            // Foothills to mid elevation - significant height gain
-            const progress = (islandMask - 0.25) / 0.35;
+            // Start at 0.16 (just above water) and go to grasslands
+            height = 0.16 + smoothProgress * (TerrainConfig.GRASSLANDS - 0.16);
+          } else if (islandMask < 0.5) {
+            // Foothills to mountains - mid-range heights
+            const progress = (islandMask - 0.25) / 0.25;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = TerrainConfig.GRASSLANDS + smoothProgress * (TerrainConfig.MOUNTAINS_MID - TerrainConfig.GRASSLANDS);
+            height = TerrainConfig.GRASSLANDS + smoothProgress * (TerrainConfig.MOUNTAINS_LOW - TerrainConfig.GRASSLANDS);
+          } else if (islandMask < 0.75) {
+            // Mountains - significant elevation
+            const progress = (islandMask - 0.5) / 0.25;
+            const smoothProgress = this.smootherstep(0, 1, progress);
+            height = TerrainConfig.MOUNTAINS_LOW + smoothProgress * (TerrainConfig.MOUNTAINS_HIGH - TerrainConfig.MOUNTAINS_LOW);
           } else {
-            // High terrain - mountains and peaks using remaining height
-            const progress = Math.min(1, (islandMask - 0.6) / 0.4);
+            // Peaks - utilize full height range up to 1.0
+            const progress = Math.min(1, (islandMask - 0.75) / 0.25);
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = TerrainConfig.MOUNTAINS_MID + smoothProgress * (TerrainConfig.PEAKS - TerrainConfig.MOUNTAINS_MID);
+            height = TerrainConfig.MOUNTAINS_HIGH + smoothProgress * (TerrainConfig.PEAKS - TerrainConfig.MOUNTAINS_HIGH);
           }
 
           // Add terrain features based on zones

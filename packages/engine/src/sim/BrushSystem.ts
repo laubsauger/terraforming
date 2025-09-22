@@ -145,7 +145,8 @@ export class BrushSystem {
     worldZ: number,
     radius: number,
     strength: number,
-    dt: number
+    dt: number,
+    heightMeters?: number
   ): void {
     if (mode === 'smooth') {
       // Handle smoothing operations separately
@@ -200,7 +201,18 @@ export class BrushSystem {
         strengthKgPerS: strength,
         dt,
       });
-      console.log('Added brush op:', { mode, material, worldX, worldZ, radius, strength });
+      const heightNormalized = heightMeters !== undefined ? heightMeters / 64.0 : undefined;
+      console.log('Added brush op:', {
+        mode,
+        material,
+        worldX,
+        worldZ,
+        radius,
+        strength,
+        heightMeters: heightMeters !== undefined ? `${heightMeters.toFixed(1)}m` : 'unknown',
+        heightNormalized: heightNormalized !== undefined ? heightNormalized.toFixed(3) : 'unknown',
+        heightPercent: heightNormalized !== undefined ? `${(heightNormalized * 100).toFixed(1)}%` : 'unknown'
+      });
     }
   }
 

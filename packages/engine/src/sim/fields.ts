@@ -1,4 +1,5 @@
 export type Fields = {
+  // Material fields
   soil: GPUTexture;
   rock: GPUTexture;
   lava: GPUTexture;
@@ -7,12 +8,23 @@ export type Fields = {
   deltaLava: GPUTexture;
   // Additional texture for thermal repose ping-pong
   soilOut: GPUTexture;
+
+  // Fluid simulation fields
+  flow: GPUTexture;         // RG16F for u,v velocity components
+  flowOut: GPUTexture;      // Ping-pong buffer for flow
+  waterDepth: GPUTexture;   // R16F water depth
+  waterDepthOut: GPUTexture; // Ping-pong buffer for water
+  flowAccumulation: GPUTexture; // R32F for flow accumulation
+  poolMask: GPUTexture;     // R8 for pool detection
+  temperature: GPUTexture;  // R16F for lava temperature
+  sediment: GPUTexture;     // R16F for erosion sediment
+  sedimentOut: GPUTexture;  // Ping-pong buffer for sediment
 };
 
-export function createFieldTex(device: GPUDevice, w: number, h: number): GPUTexture {
+export function createFieldTex(device: GPUDevice, w: number, h: number, format: GPUTextureFormat = 'r32float'): GPUTexture {
   return device.createTexture({
     size: { width: w, height: h },
-    format: 'r32float',
+    format,
     usage: GPUTextureUsage.STORAGE_BINDING |
            GPUTextureUsage.TEXTURE_BINDING |
            GPUTextureUsage.COPY_SRC |
@@ -20,8 +32,24 @@ export function createFieldTex(device: GPUDevice, w: number, h: number): GPUText
   });
 }
 
+// Helper for creating flow velocity textures (2-component)
+export function createFlowTex(device: GPUDevice, w: number, h: number): GPUTexture {
+  return createFieldTex(device, w, h, 'rg16float');
+}
+
+// Helper for creating mask textures (1-component, 8-bit)
+export function createMaskTex(device: GPUDevice, w: number, h: number): GPUTexture {
+  return createFieldTex(device, w, h, 'r8unorm');
+}
+
+// Helper for creating depth/temperature textures (1-component, 16-bit float)
+export function createDepthTex(device: GPUDevice, w: number, h: number): GPUTexture {
+  return createFieldTex(device, w, h, 'r16float');
+}
+
 export function createFields(device: GPUDevice, w: number, h: number): Fields {
   return {
+    // Material fields (r32float)
     soil: createFieldTex(device, w, h),
     rock: createFieldTex(device, w, h),
     lava: createFieldTex(device, w, h),
@@ -29,6 +57,17 @@ export function createFields(device: GPUDevice, w: number, h: number): Fields {
     deltaRock: createFieldTex(device, w, h),
     deltaLava: createFieldTex(device, w, h),
     soilOut: createFieldTex(device, w, h),
+
+    // Fluid simulation fields
+    flow: createFlowTex(device, w, h),                    // RG16F for u,v
+    flowOut: createFlowTex(device, w, h),                 // Ping-pong
+    waterDepth: createDepthTex(device, w, h),             // R16F
+    waterDepthOut: createDepthTex(device, w, h),          // Ping-pong
+    flowAccumulation: createFieldTex(device, w, h),       // R32F for precision
+    poolMask: createMaskTex(device, w, h),                // R8
+    temperature: createDepthTex(device, w, h),            // R16F
+    sediment: createDepthTex(device, w, h),               // R16F
+    sedimentOut: createDepthTex(device, w, h),            // Ping-pong
   };
 }
 

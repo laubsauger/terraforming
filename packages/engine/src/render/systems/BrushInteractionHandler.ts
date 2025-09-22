@@ -328,10 +328,16 @@ export class BrushInteractionHandler {
           this.brushMode;
 
         // Get height at brush position for debugging
-        const heightMeters = this.getHeightAtWorldPos?.(lastWorldPos.x, lastWorldPos.z) ?? 0;
+        const rawHeight = this.getHeightAtWorldPos?.(lastWorldPos.x, lastWorldPos.z);
+        const heightMeters = rawHeight ?? 0;
         const heightNormalized = heightMeters / 64.0; // Convert to normalized
         const waterLevelNormalized = 0.15;
         const isUnderwater = heightNormalized < waterLevelNormalized;
+
+        // Debug: Check if height callback is working
+        if (rawHeight === undefined) {
+          console.warn('Height callback returned undefined - callback may not be set properly');
+        }
 
         console.log(`Brush op at (${lastWorldPos.x.toFixed(1)}, ${lastWorldPos.z.toFixed(1)}):`, {
           mode: actualMode,
@@ -349,7 +355,8 @@ export class BrushInteractionHandler {
           lastWorldPos.z,
           this.brushRadius,
           this.brushStrength,
-          0.016
+          0.016,
+          heightMeters
         );
 
         this.updateBrushCursor(lastWorldPos);

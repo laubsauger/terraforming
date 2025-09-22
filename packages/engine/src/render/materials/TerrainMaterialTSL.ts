@@ -297,7 +297,37 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const causticsStrength = isUnderwater.mul(clamp(underwaterDepth.mul(5.0), float(0), float(1))).mul(0.8);
   const causticsEffect = vec3(causticsPattern).mul(causticsStrength);
 
-  const terrainColorFinal = terrainColorTinted.add(causticsEffect);
+  let terrainColorWithCaustics = terrainColorTinted.add(causticsEffect);
+
+  // === FLOW AND EROSION VISUALIZATION ===
+  // Apply flow accumulation to create stream/river darkening
+  if (accumulationMap) {
+    const accumulation = texture(accumulationMap, uv()).r;
+    // Create river mask with smoothstep for natural edges
+    const riverMask = smoothstep(float(0.01), float(0.1), accumulation);
+    const streamMask = smoothstep(float(0.001), float(0.01), accumulation);
+
+    // Darken and add wetness to stream/river areas
+    const riverColor = vec3(0.3, 0.35, 0.4);  // Dark wet soil/rock
+    const streamColor = vec3(0.5, 0.52, 0.55); // Lighter wet areas
+
+    // Blend based on accumulation strength
+    terrainColorWithCaustics = mix(
+      terrainColorWithCaustics,
+      mix(terrainColorWithCaustics.mul(0.7), riverColor, riverMask),
+      streamMask
+    );
+  }
+
+  // Apply sediment visualization (lighter areas where sediment deposited)
+  if (sedimentMap) {
+    const sediment = texture(sedimentMap, uv()).r;
+    const sedimentMask = smoothstep(float(0), float(0.1), sediment);
+    const sedimentColor = vec3(0.8, 0.75, 0.65); // Light sandy sediment
+    terrainColorWithCaustics = mix(terrainColorWithCaustics, sedimentColor, sedimentMask.mul(0.3));
+  }
+
+  const terrainColorFinal = terrainColorWithCaustics;
 
   // Add topographic contour lines if enabled
   const finalTerrainColor = (() => {
@@ -321,7 +351,17 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   material.colorNode = finalTerrainColor;
 
   // Apply dynamic roughness based on biome
-  material.roughnessNode = clamp(biomeRoughness, float(0.1), float(1.0));
+  let dynamicRoughness = biomeRoughness;
+
+  // Reduce roughness in wet areas (streams/rivers)
+  if (accumulationMap) {
+    const accumulation = texture(accumulationMap, uv()).r;
+    const wetnessMask = smoothstep(float(0), float(0.05), accumulation);
+    // Wet areas are glossier (lower roughness)
+    dynamicRoughness = mix(dynamicRoughness, float(0.1), wetnessMask.mul(0.8));
+  }
+
+  material.roughnessNode = clamp(dynamicRoughness, float(0.1), float(1.0));
 
   // Compute normals from height gradient for proper lighting
   if (normalMap) {

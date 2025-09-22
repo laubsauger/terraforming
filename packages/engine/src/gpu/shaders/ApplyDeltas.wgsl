@@ -19,7 +19,8 @@ const MAX_HEIGHT_ABSOLUTE: f32 = 64.0;
 const OCEAN_DEPTH_RANGE: f32 = 9.6;
 
 // Ocean zones (normalized)
-const OCEAN_FLOOR: f32 = 0;
+const OCEAN_FLOOR_NORMALIZED: f32 = 0;
+const OCEAN_FLOOR_METERS: f32 = 0.0; // Ocean floor in meters (absolute minimum)
 const OCEAN_DEEP: f32 = 0.03;
 const OCEAN_MID: f32 = 0.075;
 const OCEAN_SHALLOW: f32 = 0.12;
@@ -62,10 +63,10 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
   let totalHeight = newFields.r + newFields.g + newFields.b;
 
   // Enforce absolute world minimum (ocean floor at 0 meters)
-  if (totalHeight < OCEAN_FLOOR) {
+  if (totalHeight < OCEAN_FLOOR_METERS) {
     // Don't allow digging below ocean floor
     // Scale back the deltas proportionally to maintain at minimum height
-    let deficit = OCEAN_FLOOR - totalHeight;
+    let deficit = OCEAN_FLOOR_METERS - totalHeight;
     // Add the deficit back to rock (bedrock can't be eroded below ocean floor)
     newFields.g += deficit;
   }
