@@ -1,6 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { vec3, float, mix, uv, vec2, time, texture, smoothstep, length, abs, sin, cos, normalize, positionLocal, atan, step } from 'three/tsl';
-import { TerrainConfig } from '../../config/TerrainConfig';
+import { TerrainConfig } from '@terraforming/types';
 
 export interface WaterMaterialTSLOptions {
   color?: THREE.Color;

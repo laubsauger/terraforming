@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { TerrainConfig } from '../../config/TerrainConfig';
+import { TerrainConfig } from '@terraforming/types';
 
 export interface TerrainGeneratorOptions {
   gridSize: number;

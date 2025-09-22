@@ -1,7 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize, normalWorld, sin, cos, mul, add, sub, div, abs, pow, dot, length } from 'three/tsl';
 import type { Texture } from 'three';
-import { TerrainConfig } from '../../config/TerrainConfig';
+import { TerrainConfig } from '@terraforming/types';
 
 export interface TerrainMaterialTSLOptions {
   heightMap: Texture;
@@ -96,11 +96,11 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const grassBright = vec3(0.3, 1.0, 0.25);        // Electric tropical green
   const grassDry = vec3(0.5, 0.9, 0.35);           // Bright lime green
 
-  // Rock colors - rich earth tones with high saturation
-  const rockDark = vec3(0.4, 0.35, 0.3);           // Rich chocolate rock
-  const rockMedium = vec3(0.65, 0.55, 0.5);        // Warm sandstone
-  const rockLight = vec3(0.8, 0.7, 0.65);          // Light golden rock
-  const rockRed = vec3(0.85, 0.45, 0.35);          // Vibrant red sandstone
+  // Rock colors - cool gray gradient for mountain progression
+  const rockDark = vec3(0.25, 0.27, 0.3);          // Dark bluish-gray base rock
+  const rockMedium = vec3(0.4, 0.42, 0.45);        // Medium gray rock
+  const rockLight = vec3(0.55, 0.57, 0.6);         // Lighter gray for higher elevations
+  const rockPale = vec3(0.7, 0.72, 0.75);          // Pale gray approaching snow line
 
   // Snow and high altitude - keep pure but not gray
   const snowPure = vec3(0.98, 0.98, 1.0);          // Pure white snow
@@ -197,16 +197,18 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const cliffNoise1 = fbm(coarseUV1.mul(float(7.2)), 2);
   const cliffNoise2 = fbm(coarseUV2.mul(float(9.1)), 3);
 
-  // Mix different rock types based on multiple noise layers
-  const rockColor1 = mix(rockDark, rockMedium, rockNoise1);
-  const rockColor2 = mix(rockColor1, rockLight, cliffNoise1);
-  const rockColor3 = mix(rockColor2, rockMedium, rockNoise2.mul(0.5));
+  // Calculate elevation within rock zone for gradient
+  const rockZoneProgress = smoothstep(rockLevel, snowLevel, normalizedHeight);
 
-  // Add some red sandstone variation with more complex masking
-  const redRockMask1 = step(float(0.6), largeNoise);
-  const redRockMask2 = step(float(0.4), cliffNoise2);
-  const redRockMask = redRockMask1.mul(redRockMask2);
-  const rockColor4 = mix(rockColor3, rockRed, redRockMask.mul(0.3));
+  // Base rock color that gets lighter with elevation
+  const rockBaseColor = mix(rockDark, rockMedium, rockZoneProgress.mul(0.5));
+  const rockMidColor = mix(rockBaseColor, rockLight, rockZoneProgress.mul(0.7));
+  const rockHighColor = mix(rockMidColor, rockPale, rockZoneProgress);
+
+  // Add noise variation to break up uniformity
+  const rockColor1 = mix(rockHighColor, rockHighColor.mul(1.1), rockNoise1.mul(0.3));
+  const rockColor2 = mix(rockColor1, rockHighColor.mul(0.9), cliffNoise1.mul(0.2));
+  const rockColor3 = mix(rockColor2, rockHighColor, rockNoise2.mul(0.15));
 
   // Multiple striation patterns at different scales
   const striation1 = fract(normalizedHeight.mul(float(47.0)).add(detailNoise1.mul(3.0))).sub(0.5).abs().mul(2.0);
@@ -214,7 +216,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const striationMask1 = step(float(0.85), striation1);
   const striationMask2 = step(float(0.9), striation2);
   const striationMask = striationMask1.add(striationMask2.mul(0.5));
-  const rockColor = mix(rockColor4, rockColor4.mul(0.7), striationMask.mul(0.25));
+  const rockColor = mix(rockColor3, rockColor3.mul(0.8), striationMask.mul(0.2));
 
   // === SNOW BIOMES ===
   const snowNoise1 = noise(worldUV1.mul(float(2.8)));
@@ -230,14 +232,17 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const beachToSand = smoothstep(beachLevel.sub(transitionNoise), sandLevel.add(transitionNoise), normalizedHeight);
   const sandToGrass = smoothstep(sandLevel.sub(transitionNoise), grassLevel.add(transitionNoise), normalizedHeight);
   const grassToRock = smoothstep(grassLevel.sub(transitionNoise), rockLevel.add(transitionNoise), normalizedHeight);
-  const rockToSnow = smoothstep(rockLevel.sub(transitionNoise), snowLevel.add(transitionNoise), normalizedHeight);
+  const rockToSnow = smoothstep(snowLevel.sub(transitionNoise.mul(2.0)), snowLevel.add(transitionNoise.mul(3.0)), normalizedHeight);
 
   // Blend biomes with natural transitions
   const color0 = mix(wetSandColor, texturedSand, wetToBeach);
   const color1 = mix(color0, texturedSand, beachToSand);
   const color2 = mix(color1, grassColor, sandToGrass);
   const color3 = mix(color2, rockColor, grassToRock);
-  const terrainColorBase = mix(color3, snowColor, rockToSnow);
+
+  // Mix rock with snow at high elevations for realistic alpine appearance
+  const snowRockMix = mix(rockColor, snowColor, rockToSnow.mul(0.7).add(snowNoise.mul(0.3)));
+  const terrainColorBase = mix(color3, snowRockMix, rockToSnow);
 
   // === DYNAMIC MATERIAL PROPERTIES BY BIOME ===
   // Calculate biome weights for material property variation

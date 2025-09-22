@@ -57,3 +57,5 @@ export interface PerfSample extends PerfCounters {
   gpuFrameMs: number | null;
   passes: PerfGpuPassTiming[];
 }
+
+export { TerrainConfig } from './TerrainConfig';

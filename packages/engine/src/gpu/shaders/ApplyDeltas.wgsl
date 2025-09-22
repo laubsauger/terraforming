@@ -11,9 +11,36 @@
 
 @group(0) @binding(3) var<uniform> gridSize : vec2<u32>;
 
+// Auto-generated terrain constants - DO NOT EDIT MANUALLY
+const SEA_LEVEL_NORMALIZED: f32 = 0.15;
+const HEIGHT_SCALE: f32 = 64.0;
+const WATER_LEVEL_ABSOLUTE: f32 = 9.6;
+const MAX_HEIGHT_ABSOLUTE: f32 = 64.0;
+const OCEAN_DEPTH_RANGE: f32 = 9.6;
+
+// Ocean zones (normalized)
+const OCEAN_FLOOR: f32 = 0;
+const OCEAN_DEEP: f32 = 0.03;
+const OCEAN_MID: f32 = 0.075;
+const OCEAN_SHALLOW: f32 = 0.12;
+
+// Beach zones (normalized)
+const BEACH_WATER_LINE: f32 = 0.15;
+const BEACH_DRY: f32 = 0.155;
+const BEACH_HIGH: f32 = 0.17;
+
+// Land zones (normalized)
+const COASTAL_PLAINS: f32 = 0.1925;
+const GRASSLANDS: f32 = 0.2775;
+const FOOTHILLS: f32 = 0.405;
+const MOUNTAINS_LOW: f32 = 0.575;
+const MOUNTAINS_MID: f32 = 0.745;
+const MOUNTAINS_HIGH: f32 = 0.8725;
+const PEAKS: f32 = 1;
+
 const ROCK_MIN_HEIGHT = 0.0; // Minimum rock height (allow ocean floor at 0)
-const MAX_TOTAL_HEIGHT = 64.0; // Maximum total height in meters (matching HEIGHT_SCALE from TerrainConfig)
-const SEA_LEVEL_HEIGHT = 9.6; // Sea level in meters (0.15 * 64)
+const MAX_TOTAL_HEIGHT = MAX_HEIGHT_ABSOLUTE; // Maximum total height in meters
+const SEA_LEVEL_HEIGHT = WATER_LEVEL_ABSOLUTE; // Sea level in meters
 
 @compute @workgroup_size(8,8,1)
 fn main(@builtin(global_invocation_id) gid:vec3<u32>) {

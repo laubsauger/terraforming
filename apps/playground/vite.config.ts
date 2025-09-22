@@ -9,7 +9,7 @@ export default defineConfig({
   resolve: {
     alias: {
       '@terraforming/engine': path.resolve(__dirname, '../../packages/engine/src'),
-      '@terraforming/types': path.resolve(__dirname, '../../packages/types/src'),
+      '@terraforming/types': path.resolve(__dirname, '../../packages/types/dist'),
       '@playground': path.resolve(__dirname, './src'),
     },
   },

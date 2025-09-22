@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host",
     "build": "vite build",
+    "build:deploy": "vite build --base=/terraforming/",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'no lint configured for playground yet'",

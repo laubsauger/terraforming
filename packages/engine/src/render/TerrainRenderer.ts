@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { BrushSystem } from '../sim/BrushSystem';
-import { TerrainConfig } from '../config/TerrainConfig';
+import { TerrainConfig } from '@terraforming/types';
 
 // Import subsystems
 import { BrushInteractionHandler } from './systems/BrushInteractionHandler';

@@ -7,10 +7,12 @@
     "predev": "pnpm --filter @terraforming/types build && pnpm --filter @terraforming/engine build",
     "dev": "concurrently -n \"types,engine,playground\" -c \"yellow,cyan,green\" \"pnpm --filter @terraforming/types build:watch\" \"pnpm --filter @terraforming/engine build:watch\" \"pnpm --filter @terraforming/playground dev\"",
     "build": "pnpm -r build",
+    "build:deploy": "./scripts/deploy-build.sh",
     "typecheck": "pnpm -r typecheck",
     "lint": "pnpm -r lint",
     "test": "pnpm -r test",
-    "check": "pnpm run typecheck && pnpm run lint"
+    "check": "pnpm run typecheck && pnpm run lint",
+    "deploy": "pnpm build:deploy"
   },
   "devDependencies": {
     "@types/node": "^20.11.30",

@@ -2,6 +2,51 @@
 
 Based on the architecture defined in `docs/concept/02_fluids.md`, `AGENTS.md`, and `docs/concept/01_core.md`, here's the implementation plan:
 
+## Current Readiness Assessment (Dec 2024)
+
+### ✅ What's Ready:
+- [x] **Source Placement System** - Water/lava sources can be placed with configurable flow rates
+- [x] **Visual Indicators** - Animated ripple overlays for hover and placed sources
+- [x] **GPU Shader Files** - All required shaders written (flow-velocity, flow-accumulation, water, lava, erosion)
+- [x] **Basic Field System** - GPU textures for soil, rock, lava with ping-pong buffers
+- [x] **Rendering Materials** - WaterMaterialTSL and LavaMaterialTSL fully implemented
+- [x] **Thermal Repose** - Working angle-of-repose physics
+- [x] **Mass-conserving Brush** - Pick up/deposit system functional
+
+### ❌ What's Missing for Actual Fluid Simulation:
+- [ ] **Extended Field System** - Need additional GPU textures:
+  - [ ] Flow field `F` (RG16F for u,v velocity components)
+  - [ ] Water depth `D` (R16F)
+  - [ ] Flow accumulation `A` (R16F/R32F)
+  - [ ] Pool mask `P` (R8)
+  - [ ] Temperature field `T` for lava (R16F)
+  - [ ] Sediment field `S` for erosion (R16F)
+
+- [ ] **FluidSystem Class** - Core simulation system missing:
+  - [ ] Compute pipeline integration for flow passes
+  - [ ] Source emission logic (add water/lava per frame at source positions)
+  - [ ] Field update loop
+  - [ ] Mass conservation enforcement
+
+- [ ] **Pipeline Integration** - Shaders exist but aren't connected:
+  - [ ] Flow velocity compute pass
+  - [ ] Flow accumulation compute pass
+  - [ ] Water advection along flow field
+  - [ ] Pool detection pass
+  - [ ] Actual fluid emission from sources
+
+- [ ] **Erosion Connection** - Erosion shaders need integration:
+  - [ ] Hydraulic erosion tied to water flow
+  - [ ] Carrying capacity calculation
+  - [ ] Sediment transport and deposition
+
+### 🚀 Priority Implementation Steps:
+1. Extend `fields.ts` to include water/flow fields
+2. Create `FluidSystem.ts` class (similar to BrushSystem)
+3. Set up compute pipeline for flow calculation
+4. Connect source emitters to actually emit fluids
+5. Integrate erosion with water flow
+
 ## Phase 1: GPU Field Infrastructure ✅ (Mostly Complete)
 - [x] Height field (H) - R32F texture
 - [x] Ping-pong buffer management
