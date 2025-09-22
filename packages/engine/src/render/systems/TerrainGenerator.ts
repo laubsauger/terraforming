@@ -183,25 +183,25 @@ export class TerrainGenerator {
         }
 
         if (islandMask > 0.01) {
-          // Base elevation derived from config
-          if (islandMask < 0.08) {
-            // Deep to medium underwater - very gradual
-            const progress = islandMask / 0.08;
+          // Base elevation derived from config - adjusted thresholds for more land
+          if (islandMask < 0.05) {
+            // Deep to medium underwater - smaller underwater zone
+            const progress = islandMask / 0.05;
             const smoothProgress = this.smootherstep(0, 1, progress);
             height = TerrainConfig.OCEAN_DEEP + smoothProgress * (TerrainConfig.OCEAN_SHALLOW - TerrainConfig.OCEAN_DEEP);
-          } else if (islandMask < 0.18) {
-            // Shallow water to beach - critical smooth transition
-            const progress = (islandMask - 0.08) / 0.10;
+          } else if (islandMask < 0.12) {
+            // Shallow water to beach - transition zone
+            const progress = (islandMask - 0.05) / 0.07;
             const smoothProgress = this.smootherstep(0, 1, progress);
             height = TerrainConfig.OCEAN_SHALLOW + smoothProgress * (TerrainConfig.BEACH_DRY - TerrainConfig.OCEAN_SHALLOW);
-          } else if (islandMask < 0.3) {
-            // Beach to foothills - gentle rise above water
-            const progress = (islandMask - 0.18) / 0.12;
+          } else if (islandMask < 0.25) {
+            // Beach to foothills - above water terrain starts here
+            const progress = (islandMask - 0.12) / 0.13;
             const smoothProgress = this.smootherstep(0, 1, progress);
             height = TerrainConfig.BEACH_DRY + smoothProgress * (TerrainConfig.GRASSLANDS - TerrainConfig.BEACH_DRY);
           } else if (islandMask < 0.6) {
             // Foothills to mid elevation - significant height gain
-            const progress = (islandMask - 0.3) / 0.3;
+            const progress = (islandMask - 0.25) / 0.35;
             const smoothProgress = this.smootherstep(0, 1, progress);
             height = TerrainConfig.GRASSLANDS + smoothProgress * (TerrainConfig.MOUNTAINS_MID - TerrainConfig.GRASSLANDS);
           } else {
