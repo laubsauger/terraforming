@@ -133,6 +133,12 @@ export class TerrainGenerator {
     const size = this.gridSize;
     const data = heightTexture.image.data as Float32Array;
 
+    // Debug: Track min/max heights
+    let minHeight = 1.0;
+    let maxHeight = 0.0;
+    let belowWaterCount = 0;
+    let totalCount = 0;
+
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const idx = (y * size + x) * 4;
@@ -146,30 +152,34 @@ export class TerrainGenerator {
         const distY = ny * 0.9;
         const dist = Math.sqrt(distX * distX + distY * distY);
 
-        // Create main island shape with very smooth variation
+        // Create main island shape - smaller to show more ocean
         const shapeNoise = this.noise2D(nx * 0.5, ny * 0.5, 1.5, 2);
-        const islandShape = Math.max(0, 1 - dist * (0.9 + shapeNoise * 0.2));
+        // Make island smaller by increasing the distance falloff
+        const islandShape = Math.max(0, 1 - dist * (1.5 + shapeNoise * 0.3));
         const islandNoise = this.noise2D(nx, ny, 2, 2);
-        const islandMask = Math.pow(islandShape, 0.8) * (0.7 + islandNoise * 0.3);
+        // Reduce island influence to create more ocean area
+        const islandMask = Math.pow(islandShape, 1.2) * (0.5 + islandNoise * 0.2);
 
         // Initialize height based on whether we're in island or ocean
         let height = 0;
 
         // For ocean areas (no island), create varied ocean floor
-        if (islandMask < 0.01) {
+        if (islandMask < 0.05) {  // Increased threshold for more ocean
           const oceanNoise = this.noise2D(nx * 3, ny * 3, 6, 3);
           const deepNoise = this.noise2D(nx * 1.5, ny * 1.5, 3, 2);
 
-          // Ocean depth varies from floor to just below sea level
-          // Use full range from 0 to SEA_LEVEL_NORMALIZED
-          const baseOceanDepth = TerrainConfig.OCEAN_FLOOR +
-            (deepNoise * 0.6 + 0.4) * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.8;
+          // Ocean depth varies from absolute floor (0) to just below sea level
+          // Create more variation in ocean depths to show the full range
+          const depthFactor = deepNoise * 0.5 + 0.5; // 0 to 1
+
+          // Make some areas very deep (near 0) and others shallow (near sea level)
+          const baseOceanDepth = depthFactor * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.9;
 
           // Add some variation
           height = baseOceanDepth + oceanNoise * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.1;
 
-          // Ensure we don't go above sea level in pure ocean areas
-          height = Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.9);
+          // Clamp to ocean range
+          height = Math.max(0, Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.95));
         }
 
         if (islandMask > 0.01) {
@@ -347,11 +357,21 @@ export class TerrainGenerator {
             height += underwaterRidge * 0.2 * TerrainConfig.SEA_LEVEL_NORMALIZED;
           }
 
-          // Deep ocean trenches
+          // Deep ocean trenches - make them more prominent
           const trenchX = Math.sin(ny * 3) * 0.1;
           const trenchDist = Math.abs(nx - 0.7 - trenchX);
-          if (trenchDist < 0.05 && dist > 0.6) {
-            height = TerrainConfig.OCEAN_FLOOR + Math.random() * 0.01;  // Very deep trenches
+          if (trenchDist < 0.08 && dist > 0.5) {
+            // Create deep trenches that go down to 0
+            const trenchDepth = this.smoothstep(0.08, 0, trenchDist);
+            height = height * (1 - trenchDepth) + (TerrainConfig.OCEAN_FLOOR + Math.random() * 0.02) * trenchDepth;
+          }
+
+          // Add another trench for variety
+          const trench2Y = Math.cos(nx * 2.5) * 0.1;
+          const trench2Dist = Math.abs(ny - 0.6 - trench2Y);
+          if (trench2Dist < 0.06 && dist > 0.4) {
+            const trenchDepth = this.smoothstep(0.06, 0, trench2Dist);
+            height = height * (1 - trenchDepth) + (TerrainConfig.OCEAN_FLOOR + Math.random() * 0.015) * trenchDepth;
           }
 
           // Clamp to valid ocean range
@@ -360,6 +380,14 @@ export class TerrainGenerator {
 
         // Final clamping
         height = Math.max(0, Math.min(1, height));
+
+        // Track statistics
+        minHeight = Math.min(minHeight, height);
+        maxHeight = Math.max(maxHeight, height);
+        if (height < TerrainConfig.SEA_LEVEL_NORMALIZED) {
+          belowWaterCount++;
+        }
+        totalCount++;
 
         // Set all channels to the same height value
         data[idx] = height;
@@ -371,6 +399,15 @@ export class TerrainGenerator {
 
     // Apply smoothing pass to eliminate rough edges
     this.applySmoothingPass(data, size);
+
+    // Debug output
+    const waterPercentage = (belowWaterCount / totalCount) * 100;
+    console.log(`Terrain Generation Stats (updated):
+      Min Height: ${minHeight.toFixed(4)} (${(minHeight * 64).toFixed(2)}m)
+      Max Height: ${maxHeight.toFixed(4)} (${(maxHeight * 64).toFixed(2)}m)
+      Sea Level: ${TerrainConfig.SEA_LEVEL_NORMALIZED} (${TerrainConfig.WATER_LEVEL_ABSOLUTE}m)
+      Below Water: ${waterPercentage.toFixed(1)}% of terrain
+      Ocean should be: ${(TerrainConfig.SEA_LEVEL_NORMALIZED * 100).toFixed(1)}% of height range`);
 
     heightTexture.needsUpdate = true;
   }

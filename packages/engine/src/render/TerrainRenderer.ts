@@ -184,7 +184,7 @@ export class TerrainRenderer extends BaseRenderer {
       const height = heightData[i * 4]; // R channel
 
       // Split height into rock base and soil layer
-      const waterLevel = 0.153;
+      const waterLevel = TerrainConfig.SEA_LEVEL_NORMALIZED;
 
       if (height > waterLevel) {
         rockData[i] = Math.max(0, waterLevel - 0.01);
