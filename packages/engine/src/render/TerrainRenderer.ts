@@ -32,6 +32,7 @@ export class TerrainRenderer extends BaseRenderer {
   private brushHovering = false;    // Mouse over terrain (stage 1)
   private brushReady = false;       // Alt held - ready to act (stage 2)
   private brushActive = false;      // Alt + Click held - actively brushing (stage 3)
+  private temporaryModeInvert = false; // CMD held to invert mode
   private brushMode: 'pickup' | 'deposit' = 'pickup';
   private brushMaterial: 'soil' | 'rock' | 'lava' = 'soil';
   private brushRadius = 10;
@@ -188,7 +189,7 @@ export class TerrainRenderer extends BaseRenderer {
       // Removed to prevent conflicts with playground brush handling
     };
 
-    // Mouse move for hover feedback
+    // Mouse move for hover feedback and drag tracking
     const handleMouseMove = (event: MouseEvent) => {
       const rect = this.canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
@@ -208,20 +209,28 @@ export class TerrainRenderer extends BaseRenderer {
           if (event.altKey) {
             this.brushReady = true;
             this.brushHovering = false;
+            // Track CMD for mode inversion
+            this.temporaryModeInvert = event.metaKey;
           } else {
+            // Only reset active state if not currently dragging
             this.brushReady = false;
-            this.brushActive = false;
-            this.brushHovering = true;
+            if (!this.brushActive) {
+              this.brushHovering = true;
+            }
+            this.temporaryModeInvert = false;
           }
 
-          // Update cursor position and state
+          // Always update cursor position during drag or hover
           this.updateBrushCursor(lastWorldPos);
         } else {
           // Mouse not over terrain
           lastWorldPos = undefined;
           this.brushHovering = false;
           this.brushReady = false;
-          this.brushActive = false;
+          // Don't reset active if still dragging
+          if (!event.buttons) {
+            this.brushActive = false;
+          }
           this.updateBrushCursor();
         }
       }
@@ -254,6 +263,8 @@ export class TerrainRenderer extends BaseRenderer {
       // Check if Alt is held (from external state)
       if (event.altKey && event.button === 0) {
         this.brushActive = true;
+        // Check if CMD is held to temporarily invert mode
+        this.temporaryModeInvert = event.metaKey;
         // Update cursor to show active state
         if (lastWorldPos) {
           this.updateBrushCursor(lastWorldPos);
@@ -265,6 +276,7 @@ export class TerrainRenderer extends BaseRenderer {
     const handleMouseUp = (event: MouseEvent) => {
       if (event.button === 0) { // Left click only
         this.brushActive = false;
+        this.temporaryModeInvert = false;
 
         // Stop continuous operation
         if (animationFrameId !== null) {
@@ -275,6 +287,7 @@ export class TerrainRenderer extends BaseRenderer {
         // Update cursor to show ready state if Alt still held
         if (event.altKey && lastWorldPos) {
           this.brushReady = true;
+          this.temporaryModeInvert = event.metaKey; // Check CMD again
           this.updateBrushCursor(lastWorldPos);
         } else {
           this.brushReady = false;
@@ -478,7 +491,12 @@ export class TerrainRenderer extends BaseRenderer {
 
       // Ring: Mode-specific color, pulsing
       const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
-      if (this.brushMode === 'pickup') {
+      // Use inverted mode if CMD is held
+      const effectiveMode = this.temporaryModeInvert
+        ? (this.brushMode === 'pickup' ? 'deposit' : 'pickup')
+        : this.brushMode;
+
+      if (effectiveMode === 'pickup') {
         ringMat.color.setHex(0x00AAFF); // Blue for pickup
       } else {
         ringMat.color.setHex(0xFFAA00); // Orange for deposit
@@ -525,7 +543,12 @@ export class TerrainRenderer extends BaseRenderer {
 
       // Ring: Bright active colors
       const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
-      if (this.brushMode === 'pickup') {
+      // Use inverted mode if CMD is held
+      const effectiveMode = this.temporaryModeInvert
+        ? (this.brushMode === 'pickup' ? 'deposit' : 'pickup')
+        : this.brushMode;
+
+      if (effectiveMode === 'pickup') {
         ringMat.color.setHex(0x00FF00); // Bright green for active pickup
       } else {
         ringMat.color.setHex(0xFF0000); // Bright red for active deposit
@@ -661,8 +684,13 @@ export class TerrainRenderer extends BaseRenderer {
       child.visible = false;
     });
 
-    // Show appropriate indicators based on mode
-    if (this.brushMode === 'pickup') {
+    // Use inverted mode if CMD is held
+    const effectiveMode = this.temporaryModeInvert
+      ? (this.brushMode === 'pickup' ? 'deposit' : 'pickup')
+      : this.brushMode;
+
+    // Show appropriate indicators based on effective mode
+    if (effectiveMode === 'pickup') {
       // Show upward arrows
       this.brushModeIndicator.children.forEach(child => {
         if (child.name === 'pickup-arrow') {
@@ -844,8 +872,35 @@ export class TerrainRenderer extends BaseRenderer {
    */
   private updateDayNightCycle(): void {
 
+    // Remap time to favor daytime (0-1 input, but stretched/compressed output)
+    let adjustedTime = this.timeOfDay;
+
+    // Create a non-linear mapping that spends more time in day
+    // 0.0-0.15 = night (compressed from 0.0-0.25)
+    // 0.15-0.2 = dawn (compressed transition)
+    // 0.2-0.8 = day (stretched from 0.25-0.75)
+    // 0.8-0.85 = dusk (compressed transition)
+    // 0.85-1.0 = night (compressed from 0.75-1.0)
+
+    if (adjustedTime < 0.15) {
+      // Night (midnight to 3am) - compress
+      adjustedTime = adjustedTime * (0.25 / 0.15);
+    } else if (adjustedTime < 0.2) {
+      // Dawn (3am to 6am) - quick transition
+      adjustedTime = 0.25 + (adjustedTime - 0.15) * (0.05 / 0.05);
+    } else if (adjustedTime < 0.8) {
+      // Day (6am to 6pm) - stretch this period
+      adjustedTime = 0.3 + (adjustedTime - 0.2) * (0.4 / 0.6);
+    } else if (adjustedTime < 0.85) {
+      // Dusk (6pm to 9pm) - quick transition
+      adjustedTime = 0.7 + (adjustedTime - 0.8) * (0.05 / 0.05);
+    } else {
+      // Night (9pm to midnight) - compress
+      adjustedTime = 0.75 + (adjustedTime - 0.85) * (0.25 / 0.15);
+    }
+
     // Convert time to radians for circular motion
-    const angle = this.timeOfDay * Math.PI * 2;
+    const angle = adjustedTime * Math.PI * 2;
 
     // Sun arc configuration - more realistic path
     const sunTilt = Math.PI / 4; // 45 degrees tilt for more pronounced seasonal arc
@@ -933,16 +988,16 @@ export class TerrainRenderer extends BaseRenderer {
     const isDaytime = sunElevation > moonElevation;
 
     if (isDaytime) {
-      // Day time - sun is primary light
-      this.sunLight.intensity = sunElevation * 1.0;
+      // Day time - sun is primary light (increased intensity for better shadows)
+      this.sunLight.intensity = sunElevation * 1.5;
       this.sunLight.castShadow = true;
-      this.moonLight.intensity = moonElevation * 0.1; // Very dim moon during day
+      this.moonLight.intensity = moonElevation * 0.05; // Very dim moon during day
       this.moonLight.castShadow = false;
     } else {
       // Night time - moon is primary light
-      this.sunLight.intensity = sunElevation * 0.1; // Very dim sun during night
+      this.sunLight.intensity = sunElevation * 0.05; // Very dim sun during night
       this.sunLight.castShadow = false;
-      this.moonLight.intensity = moonElevation * 0.4;
+      this.moonLight.intensity = moonElevation * 0.3;
       this.moonLight.castShadow = true;
     }
 

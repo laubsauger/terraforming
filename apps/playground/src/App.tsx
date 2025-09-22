@@ -140,6 +140,25 @@ export function App() {
       }
 
       if (event.defaultPrevented) return;
+
+      // Handle spacebar to toggle pickup/deposit mode
+      if (event.key === ' ' || event.key === 'Space') {
+        const target = event.target as HTMLElement | null;
+        if (target && target.closest('input, textarea, select, [contenteditable="true"]')) {
+          return;
+        }
+
+        event.preventDefault();
+        const uiStore = (window as any).__uiStore;
+        if (uiStore) {
+          const brushState = uiStore.getState().brush;
+          const newMode = brushState.mode === 'pickup' ? 'deposit' : 'pickup';
+          brushState.setMode(newMode);
+          console.log('Toggled brush mode to:', newMode);
+        }
+        return;
+      }
+
       // Don't block shortcuts when Alt is pressed, but block others
       if (event.metaKey || event.ctrlKey) return;
 
@@ -203,6 +222,7 @@ export function App() {
     let animationFrameId: number | null = null;
     let localIsDragging = false;
     let localIsAltPressed = false;
+    let localIsCmdPressed = false;
 
     const performBrushOperation = (event: MouseEvent) => {
       const uiStore = (window as any).__uiStore;
@@ -221,18 +241,24 @@ export function App() {
         const point = raycastResult.point;
         const brushState = uiStore.getState().brush;
 
+        // Invert mode if CMD is held
+        const actualMode = (event.metaKey || localIsCmdPressed)
+          ? (brushState.mode === 'pickup' ? 'deposit' : 'pickup')
+          : brushState.mode;
+
         console.log('Queueing brush operation:', {
-          mode: brushState.mode,
+          mode: actualMode,
           material: brushState.material,
           worldX: point.x,
           worldZ: point.z,
           radius: brushState.radius,
-          strength: brushState.strength
+          strength: brushState.strength,
+          cmdHeld: event.metaKey || localIsCmdPressed
         });
 
-        // Queue the brush operation
+        // Queue the brush operation with potentially inverted mode
         engine.brush.enqueue({
-          mode: brushState.mode,
+          mode: actualMode,
           material: brushState.material,
           worldX: point.x,
           worldZ: point.z,
@@ -289,12 +315,12 @@ export function App() {
     };
 
     const handlePointerMove = (event: MouseEvent) => {
-      // Always update mouse position
-      setMousePosition({ x: event.clientX, y: event.clientY });
-      lastMouseEvent = event; // Store for continuous operation
+      // Store for continuous brush operation
+      lastMouseEvent = event;
 
-      // Track alt key state
+      // Track modifier key states
       localIsAltPressed = event.altKey;
+      localIsCmdPressed = event.metaKey;
     };
 
     const handlePointerUp = () => {
@@ -316,10 +342,13 @@ export function App() {
       }
     };
 
-    // Track Alt key state
+    // Track modifier key states
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.altKey) {
         localIsAltPressed = true;
+      }
+      if (event.metaKey) {
+        localIsCmdPressed = true;
       }
     };
 
@@ -330,6 +359,9 @@ export function App() {
         if (localIsDragging) {
           handlePointerUp();
         }
+      }
+      if (!event.metaKey) {
+        localIsCmdPressed = false;
       }
     };
 
@@ -356,10 +388,10 @@ export function App() {
     };
   }, [engine]); // Remove isAltPressed and isDragging from dependencies
 
-  // Mouse tracking for tool cursor
+  // Mouse tracking for tool cursor - always track position
   useEffect(() => {
-    const handleMouseMove = (event: MouseEvent) => {
-      // Store global mouse position for accurate raycasting
+    const handlePointerMove = (event: MouseEvent) => {
+      // Always update mouse position for cursor tracking
       setMousePosition({ x: event.clientX, y: event.clientY });
     };
 
@@ -368,12 +400,13 @@ export function App() {
 
     const canvas = canvasRef.current;
     if (canvas) {
-      canvas.addEventListener('mousemove', handleMouseMove);
+      // Use pointermove for consistent tracking during drag operations
+      canvas.addEventListener('pointermove', handlePointerMove);
       canvas.addEventListener('mouseenter', handleMouseEnter);
       canvas.addEventListener('mouseleave', handleMouseLeave);
 
       return () => {
-        canvas.removeEventListener('mousemove', handleMouseMove);
+        canvas.removeEventListener('pointermove', handlePointerMove);
         canvas.removeEventListener('mouseenter', handleMouseEnter);
         canvas.removeEventListener('mouseleave', handleMouseLeave);
       };

@@ -178,7 +178,7 @@ export function createUiStore(
       strength: initialState.brush?.strength ?? 500000, // 500k kg/s default for rapid terraforming
       isActive: initialState.brush?.isActive ?? false,
       handMass: initialState.brush?.handMass ?? 0,
-      handCapacity: initialState.brush?.handCapacity ?? 10000000, // 10,000 tons!
+      handCapacity: initialState.brush?.handCapacity ?? 100000000, // 100,000 tons - mountain scale!
       setMode: (mode: BrushMode) =>
         set((state) => ({
           brush: { ...state.brush, mode },

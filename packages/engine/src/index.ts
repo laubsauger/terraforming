@@ -138,7 +138,7 @@ class StubEngine implements Engine {
         gridSize: [256, 256],
         cellSize: 100 / 256, // terrainSize / gridSize
         angleOfRepose: 33,
-        handCapacityKg: 10000000, // 10,000 tons capacity
+        handCapacityKg: 100000000, // 100,000 tons capacity - mountain scale!
       });
     } catch (error) {
       console.error('Failed to initialize GPU device:', error);
@@ -304,8 +304,9 @@ class StubEngine implements Engine {
     const terrainSize = 100; // World size in meters
 
     // Convert world coordinates to texture coordinates
+    // Note: Z axis needs to be flipped for correct mapping
     const centerU = (op.worldX + terrainSize/2) / terrainSize;
-    const centerV = (op.worldZ + terrainSize/2) / terrainSize;
+    const centerV = 1.0 - (op.worldZ + terrainSize/2) / terrainSize; // Flip V coordinate
     const centerX = Math.floor(centerU * gridSize);
     const centerY = Math.floor(centerV * gridSize);
 
@@ -313,7 +314,7 @@ class StubEngine implements Engine {
     const radiusPixels = (op.radius / terrainSize) * gridSize;
 
     // Apply brush effect
-    const strengthScale = op.dt * 0.00001; // Scale strength for reasonable terrain changes
+    const strengthScale = op.dt * 0.000002; // Scale strength for more controlled terrain changes
 
     for (let dy = -Math.ceil(radiusPixels); dy <= Math.ceil(radiusPixels); dy++) {
       for (let dx = -Math.ceil(radiusPixels); dx <= Math.ceil(radiusPixels); dx++) {
