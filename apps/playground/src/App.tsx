@@ -23,7 +23,7 @@ export function App() {
   const [engine, setEngine] = useState<Engine | null>(null);
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
-  const [activeTool, setActiveTool] = useState<InteractionTool>('select');
+  const [activeTool, setActiveTool] = useState<InteractionTool>('brush-raise');
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
@@ -290,6 +290,30 @@ export function App() {
         const point = raycastResult.point;
         const brushState = uiStore.getState().brush;
 
+        // Handle smoothing tool differently
+        if (activeTool === 'brush-smooth') {
+          console.log('Queueing smooth operation:', {
+            worldX: point.x,
+            worldZ: point.z,
+            radius: brushState.radius,
+            strength: brushState.strength,
+          });
+
+          // Queue the smooth operation
+          engine.brush.enqueue({
+            mode: 'smooth',
+            material: brushState.material, // Not used for smoothing but required by interface
+            worldX: point.x,
+            worldZ: point.z,
+            radius: brushState.radius,
+            strength: brushState.strength,
+            dt: 0.033 // ~30fps for smooth operations
+          });
+
+          return true;
+        }
+
+        // Regular brush operations (pickup/deposit)
         // Invert mode if CMD is held
         const actualMode = (event.metaKey || localIsCmdPressed)
           ? (brushState.mode === 'pickup' ? 'deposit' : 'pickup')

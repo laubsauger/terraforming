@@ -16,11 +16,18 @@ export function handRemainingFixed_deposit(hand: HandState): number {
 }
 
 export interface BrushOp {
-  mode: number;          // 0=pickup, 1=deposit
+  mode: number;          // 0=pickup, 1=deposit, 2=smooth
   kind: number;          // 0=soil, 1=rock, 2=lava
   center: [number, number]; // world meters (x,z)
   radius: number;        // meters
   strengthKgPerS: number;
+  dt: number;
+}
+
+export interface SmoothOp {
+  center: [number, number]; // world meters (x,z)
+  radius: number;        // meters
+  strength: number;      // smoothing strength (0-1)
   dt: number;
 }
 

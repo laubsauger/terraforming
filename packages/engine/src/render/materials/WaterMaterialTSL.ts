@@ -1,5 +1,5 @@
 import * as THREE from 'three/webgpu';
-import { vec3, float, mix, uv, vec2, time, texture, smoothstep, length, abs, sin, cos, normalize, positionLocal, atan } from 'three/tsl';
+import { vec3, float, mix, uv, vec2, time, texture, smoothstep, length, abs, sin, cos, normalize, positionLocal, atan, step } from 'three/tsl';
 
 export interface WaterMaterialTSLOptions {
   color?: THREE.Color;
@@ -22,31 +22,31 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
 
   const material = new THREE.MeshPhysicalNodeMaterial({
     transparent: true,
-    roughness: 0.25, // Much rougher for scattered reflections
-    metalness: 0.05,   // Very low metalness - water is not metallic
-    transmission: 0.6, // More transmission for water transparency
-    thickness: 2.5,
+    roughness: 0.15, // Smoother for better reflections
+    metalness: 0.02,   // Very low metalness - water is not metallic
+    transmission: 0.7, // More transmission for water transparency
+    thickness: 1.5,
     ior: 1.33, // Water's index of refraction
     side: THREE.DoubleSide,
-    clearcoat: 0.5,  // Moderate clearcoat
-    clearcoatRoughness: 0.35,  // Rough clearcoat for scattered reflections
+    clearcoat: 0.8,  // Higher clearcoat for better reflections
+    clearcoatRoughness: 0.1,  // Smoother clearcoat for sharper reflections
     depthWrite: false, // Allow transparency to work properly
     depthTest: true,
-    envMapIntensity: 0.8, // Reduced reflections - more realistic
-    specularIntensity: 1.2,  // Moderate specular highlights
-    sheen: 0.3,  // Lower sheen for more natural look
+    envMapIntensity: 0.8, // Reduced back to more reasonable level
+    specularIntensity: 1.0,  // More moderate specular highlights
+    sheen: 0.1,  // Lower sheen for more natural look
   });
 
   // Animated UV for flowing water effect
   const animatedUV = uv().add(vec2(time.mul(0.015), time.mul(0.008)));
 
-  // Water colors - Even lighter beach colors for better visibility
-  const deepWaterColor = vec3(0.05, 0.20, 0.35);      // Deep ocean blue
-  const mediumDeepColor = vec3(0.08, 0.35, 0.50);     // Medium-deep water
-  const mediumWaterColor = vec3(0.15, 0.50, 0.65);    // Medium depth blue
-  const shallowWaterColor = vec3(0.45, 0.85, 0.95);   // Very light turquoise
-  const veryShallowColor = vec3(0.65, 0.95, 1.0);     // Almost white-blue at shore
-  const foamColor = vec3(0.98, 0.99, 1.0);            // Pure white foam at shore
+  // Water colors - VIVID tropical turquoise
+  const deepWaterColor = vec3(0.0, 0.3, 0.6);         // Deep tropical blue
+  const mediumDeepColor = vec3(0.0, 0.5, 0.8);        // Rich turquoise
+  const mediumWaterColor = vec3(0.0, 0.7, 0.9);       // Vibrant turquoise
+  const shallowWaterColor = vec3(0.2, 0.85, 1.0);     // Brilliant shallow turquoise
+  const veryShallowColor = vec3(0.4, 0.9, 1.0);       // Crystal clear shallow
+  const foamColor = vec3(0.98, 0.99, 1.0);            // Pure white foam
 
   // Calculate water depth and create depth-based color
   let waterColorNode;
@@ -68,14 +68,14 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const distFromCenter = length(uvCentered).mul(2); // 0 at center, 1 at edges
 
     // Add wet sand color for areas just at/above waterline
-    const wetSandColor = vec3(0.25, 0.45, 0.55); // Darker, more saturated for wet sand
+    const wetSandColor = vec3(0.15, 0.4, 0.6); // More blue-turquoise for wet sand
 
-    // Extended shallow water zones with wet sand transition
+    // Extended shallow water zones with wet sand transition - MORE BLUE retained
     const wetSand = mix(wetSandColor, veryShallowColor, smoothstep(float(-0.002), float(0.002), waterDepth));
-    const foam = mix(wetSand, foamColor, smoothstep(float(0.002), float(0.004), waterDepth));
-    const veryShallow = mix(foam, veryShallowColor, smoothstep(float(0.004), float(0.015), waterDepth));
-    const shallow = mix(veryShallow, shallowWaterColor, smoothstep(float(0.015), float(0.04), waterDepth));
-    const mediumShallow = mix(shallow, mediumWaterColor, smoothstep(float(0.04), float(0.08), waterDepth));
+    const foam = mix(wetSand, shallowWaterColor, smoothstep(float(0.002), float(0.006), waterDepth)); // Keep more blue
+    const veryShallow = mix(foam, shallowWaterColor, smoothstep(float(0.006), float(0.02), waterDepth));
+    const shallow = mix(veryShallow, mediumWaterColor, smoothstep(float(0.02), float(0.05), waterDepth));
+    const mediumShallow = mix(shallow, mediumDeepColor, smoothstep(float(0.05), float(0.08), waterDepth));
     const medium = mix(mediumShallow, mediumDeepColor, smoothstep(float(0.08), float(0.12), waterDepth));
     const deep = mix(medium, deepWaterColor, smoothstep(float(0.12), float(0.20), waterDepth));
 
@@ -90,19 +90,24 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
 
     waterColorNode = slopeColor;
 
-    // Create wet sand effect with gradual transparency falloff
-    const wetSandZone = smoothstep(float(-0.005), float(0.008), waterDepth); // Extend slightly above waterline
-    const shoreDistance = waterDepth.mul(80); // Wider transition zone
-    const shoreOpacity = smoothstep(float(0), float(1), shoreDistance);
+    // Create SOFT, GRADUAL shore break like tropical beaches
+    const shoreTransition = smoothstep(float(-0.01), float(0.05), waterDepth); // Much wider, softer transition
 
-    // More gradual opacity falloff for wet sand effect
-    const wetSandOpacity = mix(float(0.3), float(0.95), wetSandZone); // Start at 30% for wet sand look
-    const depthOpacity = mix(wetSandOpacity, float(0.92), smoothstep(float(0), float(0.15), waterDepth));
-    const finalOpacity = shoreOpacity.mul(depthOpacity);
+    // VERY HIGH BASE OPACITY - water should be mostly opaque like the reference
+    const baseWaterOpacity = float(0.85); // High base opacity for tropical look
+    const deepWaterOpacity = float(0.92); // Even higher for deeper areas
 
-    // Make areas above water have wet sand darkening effect
-    const wetSandDarkening = smoothstep(float(0.01), float(-0.008), waterDepth); // Darkening above waterline
-    opacityNode = mix(finalOpacity, wetSandDarkening.mul(0.15), isAboveWater); // 15% darkening for wet sand
+    // Soft gradual opacity transition - NO sharp edges
+    const depthOpacity = mix(baseWaterOpacity, deepWaterOpacity, smoothstep(float(0), float(0.08), waterDepth));
+
+    // Gentle shore foam opacity - soft transition
+    const shoreWhiteIntensity = smoothstep(float(0), float(0.02), waterDepth); // Very gentle foam zone
+    const finalOpacity = mix(float(0.75), depthOpacity, shoreWhiteIntensity); // Still visible even at shore
+
+    // Minimal wet sand effect - just slight darkening, no transparency
+    const wetSandDarkening = smoothstep(float(0.008), float(-0.005), waterDepth);
+    const wetSandMask = float(1).sub(step(terrainHeight, float(waterLevel))).mul(wetSandDarkening); // Convert to float
+    opacityNode = mix(finalOpacity, float(0.3), wetSandMask); // Light wet sand darkening
 
     // Add more pronounced wave animation to color
     const waveAnimation = animatedUV.x.add(animatedUV.y).sin().mul(0.05).add(0.95);
@@ -114,72 +119,21 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const ripples = rippleFreq.sin().mul(0.04).mul(rippleFactor);
     waterColorNode = waterColorNode.add(ripples);
 
-    // STRONG FOAM LINE - wider and more visible
-    const foamLineZone = smoothstep(float(0.01), float(-0.002), waterDepth);  // Extend slightly above water
-    const foamZone1 = smoothstep(float(0.02), float(0), waterDepth);          // Wider main foam area
-    const foamZone2 = smoothstep(float(0.035), float(0.005), waterDepth);     // Secondary foam
-    const foamZone3 = smoothstep(float(0.05), float(0.01), waterDepth);       // Foam wash trailing
+    // GENTLE SOFT FOAM - like the reference image (very subtle, no harsh edges)
+    const gentleFoamZone = smoothstep(float(0), float(0.015), waterDepth); // Very soft foam zone
+    const veryGentleFoam = smoothstep(float(0), float(0.008), waterDepth);  // Closest to shore
 
-    // Create continuous foam line that follows shore contour
-    const foamRadialCoord = distFromCenter.mul(15);  // Lower frequency for continuous foam
-    const continuousFoam = sin(foamRadialCoord.sub(time.mul(1.0))).mul(0.2).add(0.8); // SUB for inward, mostly continuous
+    // Subtle white foam mixing - much softer than before
+    const softFoamColor = vec3(0.7, 0.9, 1.0);  // Light blue-white foam, not pure white
+    const gentleFoamColor = vec3(0.85, 0.95, 1.0); // Very gentle foam
 
-    // Add turbulent foam texture along the shore line
-    const foamTurbulence = sin(uv().x.mul(80).add(time.mul(2))).mul(cos(uv().y.mul(60).sub(time.mul(1.5))));
-    const foamLineIntensity = continuousFoam.add(foamTurbulence.mul(0.3));
+    // Add just a hint of foam - no sharp white lines
+    const foamIntensity = veryGentleFoam.mul(0.15); // Very low intensity
+    waterColorNode = mix(waterColorNode, softFoamColor, foamIntensity);
 
-    // Sporadic bursts for dynamic movement - all moving inward
-    const foamBurst1 = sin(foamRadialCoord.sub(time.mul(2.0))).pow(4).mul(0.4);  // SUB for inward
-    const foamBurst2 = cos(foamRadialCoord.mul(1.3).sub(time.mul(1.8))).pow(6).mul(0.3);
-    const foamBurst3 = sin(foamRadialCoord.mul(0.7).sub(time.mul(2.2))).pow(3).mul(0.25);
-
-    // Primary waves - main foam color with sporadic intensity
-    const primaryWavePhase = time.mul(1.8).sub(uv().y.mul(6));  // Slower rhythm
-    const primaryBreaking = primaryWavePhase.sin().mul(0.5).add(0.5).add(foamBurst1);
-
-    // Secondary waves - slightly blue-tinted foam
-    const secondaryWavePhase = time.mul(1.2).sub(uv().y.mul(4).add(uv().x.mul(2)));
-    const secondaryBreaking = secondaryWavePhase.cos().mul(0.4).add(0.4).add(foamBurst2.mul(0.5));
-
-    // Detailed foam texture patterns
-    const foamTex1 = sin(animatedUV.x.mul(30)).mul(cos(animatedUV.y.mul(20)));
-    const foamTex2 = cos(animatedUV.x.mul(50).sub(animatedUV.y.mul(40)));
-    const foamTex3 = sin(animatedUV.x.mul(80).add(animatedUV.y.mul(60)));
-
-    // Combine foam textures with variation
-    const foamTexture = foamTex1.mul(0.4).add(foamTex2.mul(0.3)).add(foamTex3.mul(0.3)).add(0.5);
-
-    // Two wave sets create different foam colors
-    const primaryFoam = primaryBreaking.mul(foamZone1);
-    const secondaryFoam = secondaryBreaking.mul(foamZone2).mul(0.8);
-    const steadyFoam = foamZone3.mul(0.3);  // Persistent foam wash
-
-    // Create bright white foam for beach break
-    const brightFoamColor = vec3(1.0, 1.0, 1.0);  // Pure white for visibility
-    const secondaryFoamColor = vec3(0.98, 0.99, 1.0);  // Almost pure white
-
-    // FORCE STRONG WHITE FOAM LINE
-    const mainFoamLine = foamLineZone.add(foamZone1.mul(0.8));  // Combine zones for thicker line
-    const foamLineStrength = mainFoamLine.pow(0.3);  // Less aggressive power for wider coverage
-    waterColorNode = mix(waterColorNode, brightFoamColor, foamLineStrength.min(float(1.0)));  // Full opacity
-
-    // ADDITIONAL FOAM LAYERS for visibility
-    // Add static foam right at waterline
-    const staticFoam = foamZone1.mul(0.9);  // Strong static foam
-    waterColorNode = mix(waterColorNode, brightFoamColor, staticFoam);
-
-    // Add wave-based foam using distFromCenter (which is already defined)
-    const waveFoam = sin(distFromCenter.mul(40).sub(time.mul(2))).mul(0.5).add(0.5);
-    const waveFoamZone = waveFoam.mul(foamZone2);
-    waterColorNode = mix(waterColorNode, vec3(0.95, 0.98, 1.0), waveFoamZone.mul(0.7));
-
-    // Ensure foam is visible with additive brightening
-    const anyFoam = foamLineZone.add(foamZone1).add(foamZone2.mul(0.5));
-    waterColorNode = waterColorNode.add(vec3(anyFoam.mul(0.3)));  // Additive white
-
-    // Extra brightening for all foam areas
-    const extraBrightness = anyFoam.mul(0.1);
-    waterColorNode = waterColorNode.add(vec3(extraBrightness));
+    // Even gentler secondary foam layer
+    const secondaryFoamIntensity = gentleFoamZone.mul(0.08);
+    waterColorNode = mix(waterColorNode, gentleFoamColor, secondaryFoamIntensity);
 
   } else if (depthTexture) {
     // For dynamic water (rivers/lakes): use provided depth texture with more saturation

@@ -50,6 +50,7 @@ export class TerrainRenderer extends BaseRenderer {
   private sunLight!: THREE.DirectionalLight;
   private moonLight!: THREE.DirectionalLight;
   private ambientLight!: THREE.AmbientLight;
+  private fillLight!: THREE.DirectionalLight; // Non-shadow casting fill light
   private sunSphere!: THREE.Mesh;
   private moonSphere!: THREE.Mesh;
   private timeOfDay = 0.35; // Start at 9:30 AM (nice morning light)
@@ -169,6 +170,39 @@ export class TerrainRenderer extends BaseRenderer {
   /**
    * Setup shift key handling to disable camera controls during brush adjustment
    */
+  private createSkyGradientTexture(): THREE.CubeTexture {
+    // Create a simple procedural sky gradient for environment reflections
+    const size = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+
+    // Create gradient from horizon to zenith
+    const gradient = ctx.createLinearGradient(0, size, 0, 0);
+    gradient.addColorStop(0, '#87CEEB'); // Sky blue at horizon
+    gradient.addColorStop(0.4, '#4682B4'); // Steel blue
+    gradient.addColorStop(0.7, '#191970'); // Midnight blue
+    gradient.addColorStop(1, '#000033'); // Very dark blue at zenith
+
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, size, size);
+
+    // Create cube texture from the same gradient for all faces
+    const faces = [];
+    for (let i = 0; i < 6; i++) {
+      faces.push(canvas);
+    }
+
+    const cubeTexture = new THREE.CubeTexture(faces);
+    cubeTexture.needsUpdate = true;
+    cubeTexture.format = THREE.RGBAFormat; // Use RGBA format for WebGPU compatibility
+    cubeTexture.generateMipmaps = false;
+    cubeTexture.minFilter = THREE.LinearFilter;
+    cubeTexture.magFilter = THREE.LinearFilter;
+
+    return cubeTexture;
+  }
+
   private setupShiftKeyHandling(): void {
     let animationFrameId: number | null = null;
     let lastWorldPos: THREE.Vector3 | undefined;
@@ -177,16 +211,53 @@ export class TerrainRenderer extends BaseRenderer {
       if (event.key === 'Shift') {
         this.controls.enabled = false;
       }
-      // Alt key handling disabled - now handled in App.tsx
-      // Removed to prevent conflicts with playground brush handling
+
+      // Update brush visual state immediately on Alt/Cmd key press
+      if (event.key === 'Alt' || event.altKey) {
+        this.brushReady = true;
+        this.brushHovering = false;
+        this.temporaryModeInvert = event.metaKey;
+        // Update cursor immediately if we have a valid position
+        if (lastWorldPos) {
+          this.updateBrushCursor(lastWorldPos);
+        }
+      }
+
+      if (event.key === 'Meta' || event.metaKey) {
+        this.temporaryModeInvert = true;
+        // Update cursor immediately if we have a valid position and Alt is held
+        if (lastWorldPos && this.brushReady) {
+          this.updateBrushCursor(lastWorldPos);
+        }
+      }
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Shift') {
         this.controls.enabled = true;
       }
-      // Alt key handling disabled - now handled in App.tsx
-      // Removed to prevent conflicts with playground brush handling
+
+      // Update brush visual state immediately on Alt/Cmd key release
+      if (event.key === 'Alt' || !event.altKey) {
+        this.brushReady = false;
+        this.brushActive = false;
+        this.brushHovering = !!lastWorldPos; // Show hovering if over terrain
+        this.temporaryModeInvert = false;
+        // Update cursor immediately
+        if (lastWorldPos) {
+          this.updateBrushCursor(lastWorldPos);
+        } else {
+          this.updateBrushCursor();
+        }
+      }
+
+      if (event.key === 'Meta' || !event.metaKey) {
+        this.temporaryModeInvert = false;
+        // Update cursor immediately if we have a valid position
+        if (lastWorldPos && (this.brushReady || this.brushHovering)) {
+          this.updateBrushCursor(lastWorldPos);
+        }
+      }
     };
 
     // Mouse move for hover feedback and drag tracking
@@ -803,8 +874,18 @@ export class TerrainRenderer extends BaseRenderer {
     this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.2);
     this.scene.add(this.ambientLight);
 
-    // Sun light - warm yellow/white (reduced intensity to prevent overexposure)
-    this.sunLight = new THREE.DirectionalLight(0xfffaed, 1.0);
+    // Add a simple environment map for better water reflections
+    const gradientTexture = this.createSkyGradientTexture();
+    this.scene.environment = gradientTexture;
+
+    // Remove fill light - it was washing out the colors and flattening contrast
+    // this.fillLight = new THREE.DirectionalLight(0xffffff, 0.12);
+    // this.fillLight.position.set(-1, 1, 1);
+    // this.fillLight.castShadow = false;
+    // this.scene.add(this.fillLight);
+
+    // Sun light - warm golden color for rich tropical lighting
+    this.sunLight = new THREE.DirectionalLight(0xfff4e0, 1.0); // Warmer golden tone, full intensity
     this.sunLight.castShadow = true;
 
     // Configure sun shadow camera for consistent lighting
@@ -911,7 +992,7 @@ export class TerrainRenderer extends BaseRenderer {
     // Calculate sun position with better arc
     // Note: angle = 0 is midnight, PI/2 is 6am, PI is noon, 3PI/2 is 6pm
     const orbitRadius = 150; // Much further away to avoid camera occlusion
-    const verticalScale = 0.7; // Higher zenith for more overhead sun at noon
+    const verticalScale = 0.45; // Reduced from 0.7 to avoid zenith - max 67.5 units high
 
     // Fix sun positioning: use -cos for Y so sun is UP at noon (angle=PI)
     const baseX = Math.sin(angle) * orbitRadius;
@@ -1009,7 +1090,7 @@ export class TerrainRenderer extends BaseRenderer {
     // Ambient light varies throughout the day
     // Brighter during day, darker at night
     const dayFactor = Math.max(0, Math.cos(angle)); // 1 at noon, -1 at midnight
-    const ambientIntensity = 0.15 + dayFactor * 0.2; // 0.15 to 0.35 (reduced to prevent overexposure)
+    const ambientIntensity = 0.05 + dayFactor * 0.08; // 0.05 to 0.13 (much lower for better contrast)
     this.ambientLight.intensity = ambientIntensity;
 
     // Adjust ambient color - warmer during sunrise/sunset
@@ -1236,6 +1317,7 @@ export class TerrainRenderer extends BaseRenderer {
       heightMap: this.heightTexture,
       heightScale: this.HEIGHT_SCALE,
       terrainSize: this.terrainSize,
+      gridSize: this.gridSize, // Pass the actual grid size for correct normal calculation
       flowMap: this.flowTexture,
       accumulationMap: this.accumulationTexture,
       showContours: this.showContours, // Enable contours by default
@@ -1744,18 +1826,60 @@ export class TerrainRenderer extends BaseRenderer {
     // Clear existing data first to avoid artifacts
     textureData.fill(0);
 
-    // Copy the new heightmap data
-    for (let y = 0; y < size; y++) {
-      for (let x = 0; x < size; x++) {
-        const idx = y * size + x;
-        const texIdx = idx * 4; // RGBA format
-        const height = data[idx] || 0;
+    // Determine input data size
+    const inputSize = Math.sqrt(data.length);
 
-        // Set all channels to the same height value
-        textureData[texIdx] = height;     // R
-        textureData[texIdx + 1] = height; // G
-        textureData[texIdx + 2] = height; // B
-        textureData[texIdx + 3] = 1.0;    // A
+    if (inputSize !== size) {
+      console.warn(`HeightMap size mismatch: input ${inputSize}x${inputSize}, expected ${size}x${size}. Resizing...`);
+
+      // Resize the input data using bilinear interpolation
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const texIdx = (y * size + x) * 4; // RGBA format
+
+          // Map to input coordinates
+          const srcX = (x / (size - 1)) * (inputSize - 1);
+          const srcY = (y / (size - 1)) * (inputSize - 1);
+
+          // Bilinear interpolation
+          const x0 = Math.floor(srcX);
+          const x1 = Math.min(x0 + 1, inputSize - 1);
+          const y0 = Math.floor(srcY);
+          const y1 = Math.min(y0 + 1, inputSize - 1);
+
+          const fx = srcX - x0;
+          const fy = srcY - y0;
+
+          const h00 = data[y0 * inputSize + x0] || 0;
+          const h10 = data[y0 * inputSize + x1] || 0;
+          const h01 = data[y1 * inputSize + x0] || 0;
+          const h11 = data[y1 * inputSize + x1] || 0;
+
+          const h0 = h00 * (1 - fx) + h10 * fx;
+          const h1 = h01 * (1 - fx) + h11 * fx;
+          const height = h0 * (1 - fy) + h1 * fy;
+
+          // Set all channels to the same height value
+          textureData[texIdx] = height;     // R
+          textureData[texIdx + 1] = height; // G
+          textureData[texIdx + 2] = height; // B
+          textureData[texIdx + 3] = 1.0;    // A
+        }
+      }
+    } else {
+      // Direct copy when sizes match
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const idx = y * size + x;
+          const texIdx = idx * 4; // RGBA format
+          const height = data[idx] || 0;
+
+          // Set all channels to the same height value
+          textureData[texIdx] = height;     // R
+          textureData[texIdx + 1] = height; // G
+          textureData[texIdx + 2] = height; // B
+          textureData[texIdx + 3] = 1.0;    // A
+        }
       }
     }
 
@@ -1856,6 +1980,7 @@ export class TerrainRenderer extends BaseRenderer {
         heightMap: this.heightTexture,
         heightScale: this.HEIGHT_SCALE,
         terrainSize: this.terrainSize,
+        gridSize: this.gridSize, // Pass the actual grid size for correct normal calculation
         flowMap: this.flowTexture,
         accumulationMap: this.accumulationTexture,
         showContours: show,

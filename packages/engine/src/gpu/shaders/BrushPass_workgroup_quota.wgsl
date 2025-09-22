@@ -1,5 +1,5 @@
 struct BrushOp {
-  mode : u32,     // 0=pickup, 1=deposit
+  mode : u32,     // 0=pickup, 1=deposit, 2=smooth
   kind : u32,     // 0=soil, 1=rock, 2=lava
   center : vec2<f32>, // world meters (x,z)
   radius : f32,       // meters

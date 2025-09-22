@@ -53,6 +53,7 @@ export interface Engine {
   updateHeightmap(data: Float32Array): void;
   getCurrentHeightmap(): Float32Array | null;
   applyHeightmap(data: Float32Array, size: number): void;
+  getGridSize(): number;
   dispose(): void;
 }
 
@@ -309,6 +310,10 @@ class StubEngine implements Engine {
     if (this.renderer) {
       this.renderer.updateHeightmap(data);
     }
+  }
+
+  getGridSize(): number {
+    return this.renderer ? (this.renderer as any).gridSize || 256 : 256;
   }
 
   private applyBrushToTerrain(op: BrushOp): void {

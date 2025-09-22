@@ -159,8 +159,8 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
   const generateHeightmap = useCallback(async () => {
     setIsGenerating(true);
 
-    // Use a reasonable size for generation
-    const size = 512;
+    // Use the engine's grid size to ensure compatibility
+    const size = engine ? engine.getGridSize() : 256;
     const data = new Float32Array(size * size);
 
     // Generate in chunks to avoid blocking the UI
@@ -329,16 +329,20 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
     const img = new Image();
     img.onload = () => {
+      // Use the engine's grid size to ensure compatibility
+      const targetSize = engine ? engine.getGridSize() : 256;
+
       const canvas = document.createElement('canvas');
-      canvas.width = img.width;
-      canvas.height = img.height;
+      canvas.width = targetSize;
+      canvas.height = targetSize;
       const ctx = canvas.getContext('2d');
       if (!ctx) return;
 
-      ctx.drawImage(img, 0, 0);
-      const imageData = ctx.getImageData(0, 0, img.width, img.height);
+      // Resize the image to match the target grid size
+      ctx.drawImage(img, 0, 0, targetSize, targetSize);
+      const imageData = ctx.getImageData(0, 0, targetSize, targetSize);
 
-      const data = new Float32Array(img.width * img.height);
+      const data = new Float32Array(targetSize * targetSize);
       for (let i = 0; i < data.length; i++) {
         const pixelIndex = i * 4;
         const gray = imageData.data[pixelIndex]; // Use red channel
@@ -346,11 +350,11 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
       }
 
       setHeightData(data);
-      updateCanvas(data, img.width);
+      updateCanvas(data, targetSize);
     };
 
     img.src = URL.createObjectURL(file);
-  }, [updateCanvas]);
+  }, [updateCanvas, engine]);
 
   const applyToTerrain = useCallback(() => {
     if (!heightData || !engine) return;

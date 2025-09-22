@@ -1,8 +1,9 @@
 import { Fields, createFields, DENSITIES } from './fields_optimized';
-import { HandState, BrushOp, handRemainingFixed_pickup, handRemainingFixed_deposit, materialKindToIndex } from './hand';
+import { HandState, BrushOp, SmoothOp, handRemainingFixed_pickup, handRemainingFixed_deposit, materialKindToIndex } from './hand';
 import { createBrushPipeline, createBrushBindGroupLayout } from '../gpu/pipelines/brush';
 import { createApplyPipeline, createApplyBindGroupLayout } from '../gpu/pipelines/apply';
 import { createReposePipeline, createReposeBindGroupLayout } from '../gpu/pipelines/repose';
+import { createSmoothPipeline, createSmoothBindGroupLayout } from '../gpu/pipelines/smooth';
 
 export interface BrushSystemOptions {
   gridSize: [number, number];  // [width, height] in cells
@@ -20,14 +21,17 @@ export class BrushSystem {
   private brushPipeline!: GPUComputePipeline;
   private applyPipeline!: GPUComputePipeline;
   private reposePipeline!: GPUComputePipeline;
+  private smoothPipeline!: GPUComputePipeline;
 
   // Bind group layouts
   private brushLayout!: GPUBindGroupLayout;
   private applyLayout!: GPUBindGroupLayout;
   private reposeLayout!: GPUBindGroupLayout;
+  private smoothLayout!: GPUBindGroupLayout;
 
   // Buffers
   private opsBuffer!: GPUBuffer;
+  private smoothOpsBuffer!: GPUBuffer;
   private handBuffer!: GPUBuffer;
   private gridSizeBuffer!: GPUBuffer;
   private cellSizeBuffer!: GPUBuffer;
@@ -37,6 +41,7 @@ export class BrushSystem {
   // State
   private hand: HandState;
   private pendingOps: BrushOp[] = [];
+  private pendingSmoothOps: SmoothOp[] = [];
 
   constructor(device: GPUDevice, options: BrushSystemOptions) {
     this.device = device;
@@ -61,12 +66,21 @@ export class BrushSystem {
 
     this.reposeLayout = createReposeBindGroupLayout(this.device);
     this.reposePipeline = createReposePipeline(this.device, this.reposeLayout);
+
+    this.smoothLayout = createSmoothBindGroupLayout(this.device);
+    this.smoothPipeline = createSmoothPipeline(this.device, this.smoothLayout);
   }
 
   private initializeBuffers(): void {
     // Brush ops buffer (dynamic, for up to 16 simultaneous ops)
     this.opsBuffer = this.device.createBuffer({
       size: 16 * 32, // 16 ops * 32 bytes per op
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+
+    // Smooth ops buffer (dynamic, for up to 16 simultaneous smooth ops)
+    this.smoothOpsBuffer = this.device.createBuffer({
+      size: 16 * 20, // 16 ops * 20 bytes per smooth op (center, radius, strength, dt)
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 
@@ -116,7 +130,7 @@ export class BrushSystem {
   }
 
   public addBrushOp(
-    mode: 'pickup' | 'deposit',
+    mode: 'pickup' | 'deposit' | 'smooth',
     material: 'soil' | 'rock' | 'lava',
     worldX: number,
     worldZ: number,
@@ -124,6 +138,18 @@ export class BrushSystem {
     strength: number,
     dt: number
   ): void {
+    if (mode === 'smooth') {
+      // Handle smoothing operations separately
+      this.pendingSmoothOps.push({
+        center: [worldX, worldZ],
+        radius,
+        strength: Math.min(strength / 1000, 1.0), // Convert strength to 0-1 range
+        dt,
+      });
+      console.log('Added smooth op:', { worldX, worldZ, radius, strength });
+      return;
+    }
+
     // For pickup mode with empty hand, set material to what we're picking up
     if (mode === 'pickup' && this.hand.kind === null) {
       this.hand.kind = material;
@@ -164,12 +190,17 @@ export class BrushSystem {
   }
 
   public execute(commandEncoder: GPUCommandEncoder): void {
-    if (this.pendingOps.length === 0) return;
+    const hasRegularOps = this.pendingOps.length > 0;
+    const hasSmoothOps = this.pendingSmoothOps.length > 0;
 
-    console.log('BrushSystem executing', this.pendingOps.length, 'operations');
+    if (!hasRegularOps && !hasSmoothOps) return;
 
-    // Update ops buffer
-    const opsData = new Float32Array(this.pendingOps.length * 8);
+    console.log('BrushSystem executing', this.pendingOps.length, 'brush operations and', this.pendingSmoothOps.length, 'smooth operations');
+
+    // Handle regular brush operations
+    if (hasRegularOps) {
+      // Update ops buffer
+      const opsData = new Float32Array(this.pendingOps.length * 8);
     this.pendingOps.forEach((op, i) => {
       const offset = i * 8;
       opsData[offset] = op.mode;
@@ -238,16 +269,62 @@ export class BrushSystem {
       pass.end();
     }
 
-    // Copy fieldsOut back to fields
-    commandEncoder.copyTextureToTexture(
-      { texture: this.fields.fieldsOut },
-      { texture: this.fields.fields },
-      { width: this.options.gridSize[0], height: this.options.gridSize[1] }
-    );
+      // Copy fieldsOut back to fields
+      commandEncoder.copyTextureToTexture(
+        { texture: this.fields.fieldsOut },
+        { texture: this.fields.fields },
+        { width: this.options.gridSize[0], height: this.options.gridSize[1] }
+      );
 
-    // Clear deltas texture for next frame
-    // Note: We need a clear pass or reset the texture somehow
-    // For now, this is handled by writing zeros in the next brush pass
+      // Clear deltas texture for next frame
+      // Note: We need a clear pass or reset the texture somehow
+      // For now, this is handled by writing zeros in the next brush pass
+    }
+
+    // Handle smoothing operations
+    if (hasSmoothOps) {
+      // Update smooth ops buffer
+      const smoothOpsData = new Float32Array(this.pendingSmoothOps.length * 5); // 5 floats per op
+      this.pendingSmoothOps.forEach((op, i) => {
+        const offset = i * 5;
+        smoothOpsData[offset] = op.center[0];     // x
+        smoothOpsData[offset + 1] = op.center[1]; // z
+        smoothOpsData[offset + 2] = op.radius;
+        smoothOpsData[offset + 3] = op.strength;
+        smoothOpsData[offset + 4] = op.dt;
+      });
+      this.device.queue.writeBuffer(this.smoothOpsBuffer, 0, smoothOpsData);
+
+      const smoothBindGroup = this.device.createBindGroup({
+        layout: this.smoothLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.smoothOpsBuffer } },
+          { binding: 1, resource: this.fields.fields.createView() },    // Input
+          { binding: 2, resource: this.fields.fieldsOut.createView() }, // Output
+          { binding: 3, resource: { buffer: this.gridSizeBuffer } },
+          { binding: 4, resource: { buffer: this.cellSizeBuffer } },
+        ],
+      });
+
+      // Smoothing pass
+      {
+        const pass = commandEncoder.beginComputePass();
+        pass.setPipeline(this.smoothPipeline);
+        pass.setBindGroup(0, smoothBindGroup);
+        pass.dispatchWorkgroups(
+          Math.ceil(this.options.gridSize[0] / 8),
+          Math.ceil(this.options.gridSize[1] / 8)
+        );
+        pass.end();
+      }
+
+      // Copy smoothed result back to fields
+      commandEncoder.copyTextureToTexture(
+        { texture: this.fields.fieldsOut },
+        { texture: this.fields.fields },
+        { width: this.options.gridSize[0], height: this.options.gridSize[1] }
+      );
+    }
 
     // Thermal repose (3 iterations)
     for (let iter = 0; iter < 3; iter++) {
@@ -293,6 +370,7 @@ export class BrushSystem {
 
     // Clear pending ops
     this.pendingOps = [];
+    this.pendingSmoothOps = [];
   }
 
   public getFields(): Fields {
@@ -305,6 +383,7 @@ export class BrushSystem {
 
     // Destroy buffers
     this.opsBuffer.destroy();
+    this.smoothOpsBuffer.destroy();
     this.handBuffer.destroy();
     this.gridSizeBuffer.destroy();
     this.cellSizeBuffer.destroy();
