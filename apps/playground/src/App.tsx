@@ -24,6 +24,8 @@ export function App() {
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<InteractionTool>('brush-raise');
+  const [waterSourceFlowRate, setWaterSourceFlowRate] = useState(10); // L/s
+  const [lavaSourceFlowRate, setLavaSourceFlowRate] = useState(5); // L/s
   // Initialize mouse position to center of screen for proper cursor display on load
   const [mousePosition, setMousePosition] = useState(() => {
     if (typeof window !== 'undefined') {
@@ -157,31 +159,53 @@ export function App() {
     }
   }, [engine, state]); // Only depend on engine and state, not activeTool to avoid loops
 
-  const addWaterSource = useCallback((position: [number, number], rate: number = 1.0) => {
-    const newSource: Source = {
-      id: `water-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      position,
-      rate
-    };
-    setWaterSources(prev => [...prev, newSource]);
-  }, []);
+  const addWaterSource = useCallback((position: [number, number], rate?: number) => {
+    const flowRate = rate ?? waterSourceFlowRate;
+    if (engine) {
+      // Place the source in the engine - returns the ID if successful
+      const sourceId = engine.addWaterSource(position[0], position[1], flowRate);
+      if (sourceId) {
+        const newSource: Source = {
+          id: sourceId,
+          position,
+          rate: flowRate
+        };
+        setWaterSources(prev => [...prev, newSource]);
+        console.log('Added water source:', sourceId, 'at', position, 'flow:', flowRate, 'L/s');
+      }
+    }
+  }, [engine, waterSourceFlowRate]);
 
-  const addLavaSource = useCallback((position: [number, number], rate: number = 0.5) => {
-    const newSource: Source = {
-      id: `lava-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-      position,
-      rate
-    };
-    setLavaSources(prev => [...prev, newSource]);
-  }, []);
+  const addLavaSource = useCallback((position: [number, number], rate?: number) => {
+    const flowRate = rate ?? lavaSourceFlowRate;
+    if (engine) {
+      // Place the source in the engine - returns the ID if successful
+      const sourceId = engine.addLavaSource(position[0], position[1], flowRate);
+      if (sourceId) {
+        const newSource: Source = {
+          id: sourceId,
+          position,
+          rate: flowRate
+        };
+        setLavaSources(prev => [...prev, newSource]);
+        console.log('Added lava source:', sourceId, 'at', position, 'flow:', flowRate, 'L/s');
+      }
+    }
+  }, [engine, lavaSourceFlowRate]);
 
   const removeWaterSource = useCallback((id: string) => {
+    if (engine) {
+      engine.removeSource(id);
+    }
     setWaterSources(prev => prev.filter(source => source.id !== id));
-  }, []);
+  }, [engine]);
 
   const removeLavaSource = useCallback((id: string) => {
+    if (engine) {
+      engine.removeSource(id);
+    }
     setLavaSources(prev => prev.filter(source => source.id !== id));
-  }, []);
+  }, [engine]);
 
   // Update engine sources when sources change
   useEffect(() => {
@@ -397,9 +421,9 @@ export function App() {
         console.log('Placing source at:', position, 'Active tool:', activeTool);
 
         if (activeTool === 'add-water-source') {
-          addWaterSource(position, 1.0); // Default rate
+          addWaterSource(position); // Uses current waterSourceFlowRate
         } else if (activeTool === 'add-lava-source') {
-          addLavaSource(position, 0.5); // Default rate
+          addLavaSource(position); // Uses current lavaSourceFlowRate
         }
         return true;
       }
@@ -629,6 +653,9 @@ export function App() {
         engine={engine}
         className="shadow-2xl shadow-black/70 ring-1 ring-white/10"
         onSnapshot={handleSnapshot}
+        activeTool={activeTool}
+        onWaterFlowRateChange={setWaterSourceFlowRate}
+        onLavaFlowRateChange={setLavaSourceFlowRate}
       />
 
       <InteractionToolbar
@@ -652,7 +679,7 @@ export function App() {
       <TerrainCursor
         activeTool={activeTool}
         brushSize={brushSize}
-        isVisible={(activeTool === 'brush-raise' || activeTool === 'brush-smooth') || isAdjustingBrush}
+        isVisible={(activeTool === 'brush-raise' || activeTool === 'brush-smooth' || activeTool === 'add-water-source' || activeTool === 'add-lava-source') || isAdjustingBrush}
         engine={engine}
         mousePosition={mousePosition}
         canvasElement={canvasRef.current}

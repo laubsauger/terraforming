@@ -83,10 +83,13 @@ export function raycastToTerrain(
   const rayDirection = sharedRaycaster.ray.direction.clone();
 
   // Start ray marching from camera position
-  const maxDistance = 300;
+  const maxDistance = 500; // Increased for high mountains
   let stepSize = 2.0; // Start with larger steps for efficiency
-  let lastAboveGround = true;
+  let lastHeight: number | null = null;
   let foundHit = false;
+  let lastAboveGround = true;
+  let closestPoint: THREE.Vector3 | null = null;
+  let closestDistance = Infinity;
 
   for (let distance = 0; distance < maxDistance && !foundHit; distance += stepSize) {
     const testPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(distance));
@@ -99,9 +102,16 @@ export function raycastToTerrain(
     const terrainHeight = engine.getTerrainHeightAt(testPoint.x, testPoint.z);
     if (terrainHeight === null) continue;
 
-    const isAboveGround = testPoint.y > terrainHeight;
+    const heightDiff = testPoint.y - terrainHeight;
+    const isAboveGround = heightDiff > 0;
 
-    // Check if we crossed the terrain surface
+    // Track closest point to terrain as fallback
+    if (Math.abs(heightDiff) < closestDistance) {
+      closestDistance = Math.abs(heightDiff);
+      closestPoint = new THREE.Vector3(testPoint.x, terrainHeight, testPoint.z);
+    }
+
+    // Check if we crossed from above to below terrain
     if (lastAboveGround && !isAboveGround) {
       // We've crossed the surface - refine with binary search
       let low = Math.max(0, distance - stepSize);
@@ -153,15 +163,26 @@ export function raycastToTerrain(
       }
     }
 
-    lastAboveGround = isAboveGround;
-
     // Adaptive step size - smaller steps when close to terrain
-    const distToSurface = Math.abs(testPoint.y - terrainHeight);
-    if (distToSurface < 5) {
+    if (Math.abs(heightDiff) < 5) {
       stepSize = Math.min(stepSize, 0.5);
-    } else if (distToSurface < 10) {
+    } else if (Math.abs(heightDiff) < 10) {
       stepSize = Math.min(stepSize, 1.0);
     }
+
+    lastHeight = terrainHeight;
+    lastAboveGround = isAboveGround;
+  }
+
+  // If we didn't find an exact intersection but have a closest point, use it
+  if (!foundHit && closestPoint && closestDistance < 2.0) {
+    const normal = getTerrainNormal(engine, closestPoint.x, closestPoint.z);
+    result = {
+      point: closestPoint,
+      terrainHeight: closestPoint.y,
+      normal,
+      distance: closestPoint.distanceTo(rayOrigin)
+    };
   }
 
   // Update cache

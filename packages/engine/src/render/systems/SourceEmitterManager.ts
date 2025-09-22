@@ -63,7 +63,7 @@ export class SourceEmitterManager {
     // Create a geyser/fountain-like visualization
     const group = new THREE.Group() as any;
 
-    // Base marker - a glowing sphere
+    // Base marker - a glowing sphere (keeping this unique part)
     const baseGeometry = new THREE.SphereGeometry(0.5, 16, 16);
     const baseMaterial = new THREE.MeshPhysicalMaterial({
       color: type === 'water' ? 0x0099cc : 0xff4500,
@@ -77,7 +77,7 @@ export class SourceEmitterManager {
     const baseMesh = new THREE.Mesh(baseGeometry, baseMaterial);
     group.add(baseMesh);
 
-    // Fountain effect - animated particle system simulation
+    // Fountain effect - animated particle system simulation (keeping this unique part)
     const fountainGeometry = new THREE.ConeGeometry(0.3, 2, 8);
     const fountainMaterial = new THREE.MeshPhysicalMaterial({
       color: type === 'water' ? 0x4db8ff : 0xffa500,
@@ -91,7 +91,7 @@ export class SourceEmitterManager {
     fountain.position.y = 1;
     group.add(fountain);
 
-    // Add pulsing rings for visual effect
+    // Add pulsing rings for visual effect - consistent with hover overlay
     for (let i = 0; i < 3; i++) {
       const ringRadius = 0.8 + i * 0.4;
       const ringGeometry = new THREE.RingGeometry(ringRadius, ringRadius + 0.1, 32);
@@ -104,11 +104,15 @@ export class SourceEmitterManager {
       const ring = new THREE.Mesh(ringGeometry, ringMaterial);
       ring.rotation.x = -Math.PI / 2;
       ring.position.y = 0.05;
-      // Store ring index for animation
+      // Store ring index and base values for animation
       ring.userData.ringIndex = i;
+      ring.userData.baseRadius = ringRadius;
+      ring.userData.baseOpacity = 0.3 - i * 0.1;
       group.add(ring);
     }
 
+    // Store rings array for animation
+    group.userData.rings = group.children.slice(2); // Rings start at index 2
     group.userData.sourceType = type;
     return group as any;
   }
@@ -197,19 +201,22 @@ export class SourceEmitterManager {
         fountain.rotation.y = time * 0.5;
       }
 
-      // Animate rings - expanding ripples
-      for (let i = 2; i < group.children.length; i++) {
-        const ring = group.children[i] as THREE.Mesh;
-        if (ring && ring.userData.ringIndex !== undefined) {
-          const phase = ring.userData.ringIndex * 0.3;
-          const scale = 1 + ((time + phase) % 2) * 0.5;
+      // Animate rings - expanding ripples (consistent with hover animation)
+      const rings = group.userData.rings as THREE.Mesh[];
+      if (rings) {
+        rings.forEach((ring, index) => {
+          const phase = index * 0.3;
+          const animTime = (time + phase) % 2; // 2 second cycle
+
+          // Expand and fade out
+          const scale = 1 + animTime * 0.5;
           ring.scale.setScalar(scale);
 
-          const material = ring.material as THREE.MeshBasicMaterial;
-          if (material) {
-            material.opacity = Math.max(0, 0.3 - ((time + phase) % 2) * 0.15);
-          }
-        }
+          // Fade opacity
+          const baseOpacity = ring.userData.baseOpacity || 0.3;
+          const opacity = Math.max(0, baseOpacity * (1 - animTime / 2));
+          (ring.material as THREE.MeshBasicMaterial).opacity = opacity;
+        });
       }
     });
   }

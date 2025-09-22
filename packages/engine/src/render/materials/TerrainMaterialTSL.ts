@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { positionLocal, texture, uv, vec3, vec2, float, normalLocal, mix, smoothstep, clamp, fract, step, normalize, normalWorld, sin, cos, mul, add, sub, div, abs, pow, dot, length } from 'three/tsl';
 import type { Texture } from 'three';
+import { TerrainConfig } from '../../config/TerrainConfig';
 
 export interface TerrainMaterialTSLOptions {
   heightMap: Texture;
@@ -32,7 +33,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     sedimentMap,
     showContours = false,
     contourInterval = 0.05, // Contour every 5% of height (0.75m with scale 15)
-    waterLevel = 0.153, // Default normalized water level
+    waterLevel = TerrainConfig.SEA_LEVEL_NORMALIZED, // Default from config
   } = options;
 
   // === PROCEDURAL NOISE FUNCTIONS ===
@@ -148,13 +149,13 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const mediumNoise = mediumNoise1.mul(0.7).add(mediumNoise2.mul(0.3));
 
   // === BIOME DEFINITIONS ===
-  // Define height thresholds for different terrain types
-  const wetLevel = waterLevelNode.sub(float(0.012));   // Wet sand/mudflats
-  const beachLevel = waterLevelNode.add(float(0.005)); // Beach zone
-  const sandLevel = waterLevelNode.add(float(0.025));  // Dry sand dunes
-  const grassLevel = waterLevelNode.add(float(0.055)); // Grass and vegetation
-  const rockLevel = float(0.45);                      // Rocky cliffs and peaks
-  const snowLevel = float(0.8);                       // Snow-capped peaks
+  // Define height thresholds for different terrain types from config
+  const wetLevel = float(TerrainConfig.BEACH_WET);
+  const beachLevel = float(TerrainConfig.BEACH_DRY);
+  const sandLevel = float(TerrainConfig.BEACH_HIGH);
+  const grassLevel = float(TerrainConfig.GRASSLANDS);
+  const rockLevel = float(TerrainConfig.MOUNTAINS_LOW);
+  const snowLevel = float(TerrainConfig.MOUNTAINS_HIGH);
 
   // === SAND BIOMES (Beach & Coastal) ===
   // Create varied sand colors using multiple noise layers
@@ -258,20 +259,20 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const mediumUnderwaterTint = vec3(0.7, 0.85, 0.95);       // Light blue-green
   const deepUnderwaterTint = vec3(0.5, 0.75, 0.9);          // Medium blue-green
 
-  // Smooth depth-based underwater color transitions
-  const shallowToMedium = smoothstep(float(0), float(0.03), underwaterDepth);
-  const mediumToDeep = smoothstep(float(0.03), float(0.08), underwaterDepth);
-  const veryDeepEffect = smoothstep(float(0.08), float(0.15), underwaterDepth);
+  // Smooth depth-based underwater color transitions (adjusted for 0.15 water level)
+  const shallowToMedium = smoothstep(float(0), float(0.04), underwaterDepth);
+  const mediumToDeep = smoothstep(float(0.04), float(0.09), underwaterDepth);
+  const veryDeepEffect = smoothstep(float(0.09), float(0.15), underwaterDepth);
 
   // Progressive underwater tinting based on depth
   const underwaterTint1 = mix(shallowUnderwaterTint, mediumUnderwaterTint, shallowToMedium);
   const underwaterTint2 = mix(underwaterTint1, deepUnderwaterTint, mediumToDeep);
   const finalUnderwaterTint = mix(underwaterTint2, deepUnderwaterTint.mul(0.8), veryDeepEffect);
 
-  // Apply underwater effects with progressive intensity
-  const baseUnderwaterStrength = smoothstep(float(0), float(0.01), underwaterDepth).mul(0.4);
-  const mediumUnderwaterStrength = smoothstep(float(0.01), float(0.05), underwaterDepth).mul(0.3);
-  const deepUnderwaterStrength = smoothstep(float(0.05), float(0.12), underwaterDepth).mul(0.4);
+  // Apply underwater effects with progressive intensity (adjusted for 0.15 water level)
+  const baseUnderwaterStrength = smoothstep(float(0), float(0.015), underwaterDepth).mul(0.4);
+  const mediumUnderwaterStrength = smoothstep(float(0.015), float(0.07), underwaterDepth).mul(0.3);
+  const deepUnderwaterStrength = smoothstep(float(0.07), float(0.14), underwaterDepth).mul(0.4);
 
   const totalUnderwaterStrength = clamp(
     baseUnderwaterStrength.add(mediumUnderwaterStrength).add(deepUnderwaterStrength),

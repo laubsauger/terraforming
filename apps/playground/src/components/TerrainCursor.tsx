@@ -4,6 +4,7 @@ import type { InteractionTool } from './InteractionToolbar';
 import { TOOL_COLORS } from './ToolCursor';
 import type { Engine } from '@terraforming/engine';
 import { raycastToTerrain } from '@playground/utils/raycasting';
+import { createSourceRipples, animateSourceRipples } from '@playground/utils/sourceVisualization';
 
 interface TerrainCursorProps {
   activeTool: InteractionTool;
@@ -105,47 +106,19 @@ export function TerrainCursor({
     group.add(fillMesh);
 
     // Add source indicator for water/lava tools (child[3])
-    const sourceIndicatorGroup = new THREE.Group();
+    let sourceIndicatorGroup: THREE.Group | null = null;
 
     if (isSourceTool) {
-      // Create a droplet/fountain visualization
-      const dropletGeometry = new THREE.SphereGeometry(brushSize * 0.3, 16, 16);
-      const dropletMaterial = new THREE.MeshBasicMaterial({
-        color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
-        transparent: true,
-        opacity: 0.8,
-        depthTest: false,
-        depthWrite: false,
+      // Use centralized source visualization (without center sphere for hover)
+      const sourceType = activeTool === 'add-water-source' ? 'water' : 'lava';
+      sourceIndicatorGroup = createSourceRipples({
+        type: sourceType,
+        showCenter: false, // No center for hover, just ripples
+        baseRadius: brushSize
       });
-
-      // Main droplet
-      const droplet = new THREE.Mesh(dropletGeometry, dropletMaterial);
-      droplet.position.y = brushSize * 0.5;
-      droplet.renderOrder = 1002;
-      sourceIndicatorGroup.add(droplet);
-
-      // Create fountain rings for visual effect
-      for (let i = 0; i < 3; i++) {
-        const ringRadius = brushSize * (0.3 + i * 0.2);
-        const ringGeometry = new THREE.RingGeometry(ringRadius, ringRadius + 0.2, 32);
-        const ringMaterial = new THREE.MeshBasicMaterial({
-          color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
-          transparent: true,
-          opacity: 0.3 - i * 0.1,
-          side: THREE.DoubleSide,
-          depthTest: false,
-          depthWrite: false,
-        });
-        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
-        ring.rotation.x = -Math.PI / 2;
-        ring.position.y = 0.1;
-        ring.renderOrder = 999;
-        sourceIndicatorGroup.add(ring);
-      }
+      sourceIndicatorGroup.visible = true;
+      group.add(sourceIndicatorGroup);
     }
-
-    sourceIndicatorGroup.visible = isSourceTool;
-    group.add(sourceIndicatorGroup);
 
     // Add blocked indicator (red X) for when at capacity (child[4])
     const blockedGroup = new THREE.Group();
@@ -373,29 +346,9 @@ export function TerrainCursor({
       if (sourceIndicator) {
         sourceIndicator.visible = isSourceTool;
 
-        // Animate the source indicator
+        // Animate the source indicator using centralized animation
         if (isSourceTool) {
-          const time = Date.now() * 0.001;
-
-          // Animate droplet bouncing
-          const droplet = sourceIndicator.children[0] as THREE.Mesh;
-          if (droplet) {
-            droplet.position.y = brushSize * 0.5 + Math.sin(time * 3) * brushSize * 0.1;
-            droplet.scale.setScalar(1 + Math.sin(time * 4) * 0.1);
-          }
-
-          // Animate rings expanding
-          for (let i = 1; i < sourceIndicator.children.length; i++) {
-            const ring = sourceIndicator.children[i] as THREE.Mesh;
-            if (ring) {
-              const baseScale = 1 + ((time * 0.5) % 1) * 0.3;
-              ring.scale.setScalar(baseScale);
-              const ringMat = ring.material as THREE.MeshBasicMaterial;
-              if (ringMat) {
-                ringMat.opacity = Math.max(0, 0.3 - ((time * 0.5) % 1) * 0.3);
-              }
-            }
-          }
+          animateSourceRipples(sourceIndicator, 0.016); // ~60fps
         }
       }
 
@@ -410,11 +363,11 @@ export function TerrainCursor({
         const trailLength = 20;
 
         // Add current position to trail history
-        // Use the raw terrain position for trail (centerPosition already has +0.2 offset)
-        const currentPos = centerPosition.clone();
-        // Don't add extra offset - centerPosition is already offset by 0.2
+        // The trail is part of the group, so we need to store world positions
+        // but then convert them to local coordinates relative to the current group position
+        const worldPos = centerPosition.clone();
 
-        trailPositionsRef.current.unshift(currentPos);
+        trailPositionsRef.current.unshift(worldPos);
         trailOpacitiesRef.current.unshift(1.0);
 
         // Limit trail length
@@ -432,13 +385,17 @@ export function TerrainCursor({
 
         for (let i = 0; i < trailLength; i++) {
           if (i < trailPositionsRef.current.length) {
-            const pos = trailPositionsRef.current[i];
+            const worldPos = trailPositionsRef.current[i];
             const age = i / trailLength;
             const opacity = (1 - age) * 0.8;
 
-            positions[i * 3] = pos.x;
-            positions[i * 3 + 1] = pos.y;
-            positions[i * 3 + 2] = pos.z;
+            // Convert world position to local position relative to the group
+            // Since the group is positioned at centerPosition, we need to subtract it
+            const localPos = worldPos.clone().sub(centerPosition);
+
+            positions[i * 3] = localPos.x;
+            positions[i * 3 + 1] = localPos.y;
+            positions[i * 3 + 2] = localPos.z;
 
             // Fade color over time
             colors[i * 3] = toolColor.r * opacity;

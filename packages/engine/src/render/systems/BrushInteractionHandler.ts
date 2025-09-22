@@ -83,6 +83,14 @@ export class BrushInteractionHandler {
       this.brushStrength = brushState.strength;
       this.brushHandMass = brushState.handMass;
       this.brushHandCapacity = brushState.handCapacity;
+
+      // Update brush decal material if it exists
+      if (this.brushDecalMaterial?.brushUniforms) {
+        this.brushDecalMaterial.brushUniforms.radius.value = this.brushRadius;
+        this.brushDecalMaterial.brushUniforms.mode.value = this.brushMode === 'pickup' ? 0 : 1;
+        const matValue = this.brushMaterial === 'soil' ? 0 : this.brushMaterial === 'rock' ? 1 : 2;
+        this.brushDecalMaterial.brushUniforms.material.value = matValue;
+      }
     }
   }
 
@@ -314,8 +322,13 @@ export class BrushInteractionHandler {
 
     const performBrushOperation = () => {
       if (this.brushActive && this.brushSystem && lastWorldPos) {
+        // Apply temporary mode invert if Meta key is pressed
+        const actualMode = this.temporaryModeInvert ?
+          (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
+          this.brushMode;
+
         this.brushSystem.addBrushOp(
-          this.brushMode,
+          actualMode,
           this.brushMaterial,
           lastWorldPos.x,
           lastWorldPos.z,
@@ -471,6 +484,39 @@ export class BrushInteractionHandler {
   private updateBrushCursor(worldPos?: THREE.Vector3): void {
     if (!this.brushModeIndicator) return;
 
+    // Update brush decal overlay
+    if (this.brushDecalMesh && this.brushDecalMaterial?.brushUniforms) {
+      if (worldPos && (this.brushHovering || this.brushReady || this.brushActive)) {
+        // Update decal uniforms
+        this.brushDecalMaterial.brushUniforms.position.value.set(worldPos.x, worldPos.z);
+        this.brushDecalMaterial.brushUniforms.radius.value = this.brushRadius;
+
+        // Determine actual mode with temporary invert
+        const actualMode = this.temporaryModeInvert ?
+          (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
+          this.brushMode;
+        this.brushDecalMaterial.brushUniforms.mode.value = actualMode === 'pickup' ? 0 : 1;
+
+        // Update material type
+        const matValue = this.brushMaterial === 'soil' ? 0 : this.brushMaterial === 'rock' ? 1 : 2;
+        this.brushDecalMaterial.brushUniforms.material.value = matValue;
+
+        // Update state (0=hidden, 1=hovering, 2=ready, 3=active)
+        let state = 0;
+        if (this.brushActive) state = 3;
+        else if (this.brushReady) state = 2;
+        else if (this.brushHovering) state = 1;
+        this.brushDecalMaterial.brushUniforms.state.value = state;
+
+        // Update time for animation
+        this.brushDecalMaterial.brushUniforms.time.value = performance.now() * 0.001;
+
+        this.brushDecalMesh.visible = true;
+      } else {
+        this.brushDecalMesh.visible = false;
+      }
+    }
+
     // Hide everything when not in brush mode
     if (!worldPos || (!this.brushHovering && !this.brushReady && !this.brushActive)) {
       this.brushModeIndicator.visible = false;
@@ -480,7 +526,7 @@ export class BrushInteractionHandler {
     // Show mode indicator when brush is ready or active
     if (this.brushReady || this.brushActive) {
       this.brushModeIndicator.visible = true;
-      this.brushModeIndicator.position.set(worldPos.x, worldPos.y + 0.5, worldPos.z);
+      this.brushModeIndicator.position.set(worldPos.x, worldPos.y, worldPos.z);
 
       // Determine actual mode (considering temporary invert)
       const actualMode = this.temporaryModeInvert ?
@@ -491,40 +537,51 @@ export class BrushInteractionHandler {
       const pickupArrows = this.brushModeIndicator.children.filter(c => c.name === 'pickup-arrow');
       const depositArrows = this.brushModeIndicator.children.filter(c => c.name === 'deposit-arrow');
 
-      pickupArrows.forEach((arrow: any) => {
+      // Scale arrows radius to match brush radius
+      const arrowRadius = this.brushRadius * 0.7; // Position arrows at 70% of brush radius
+
+      pickupArrows.forEach((arrow: any, index: number) => {
         arrow.visible = actualMode === 'pickup';
+
+        // Position arrow around the brush radius
+        const angle = (index / 3) * Math.PI * 2;
+        arrow.position.x = Math.cos(angle) * arrowRadius;
+        arrow.position.z = Math.sin(angle) * arrowRadius;
+
         if (arrow.visible && this.brushActive) {
           // Animate pickup arrows moving up
-          const userData = arrow.userData as { baseX: number, baseZ: number };
           const time = Date.now() * 0.001;
-          arrow.position.y = 0.5 + Math.sin(time * 3) * 0.5 + 1.0;
+          arrow.position.y = 0.2 + Math.sin(time * 3 + index) * 0.5 + 1.0;
           if (arrow.material) {
             arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
           }
         } else if (arrow.visible) {
           // Reset position when ready but not active
-          const userData = arrow.userData as { baseX: number, baseZ: number };
-          arrow.position.y = 1;
+          arrow.position.y = 0.5;
           if (arrow.material) {
             arrow.material.opacity = 0.8;
           }
         }
       });
 
-      depositArrows.forEach((arrow: any) => {
+      depositArrows.forEach((arrow: any, index: number) => {
         arrow.visible = actualMode === 'deposit';
+
+        // Position arrow around the brush radius
+        const angle = (index / 3) * Math.PI * 2 + Math.PI / 6;
+        arrow.position.x = Math.cos(angle) * arrowRadius;
+        arrow.position.z = Math.sin(angle) * arrowRadius;
+
         if (arrow.visible && this.brushActive) {
           // Animate deposit arrows moving down
-          const userData = arrow.userData as { baseX: number, baseZ: number };
           const time = Date.now() * 0.001;
-          arrow.position.y = 3.5 - Math.sin(time * 3) * 0.5;
+          arrow.position.y = 1.5 - Math.sin(time * 3 + index) * 0.5;
           if (arrow.material) {
             arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
           }
         } else if (arrow.visible) {
           // Reset position when ready but not active
-          const userData = arrow.userData as { baseX: number, baseZ: number };
-          arrow.position.y = 3.5;
+          arrow.position.y = 1.0;
           if (arrow.material) {
             arrow.material.opacity = 0.8;
           }

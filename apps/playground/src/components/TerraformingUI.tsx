@@ -16,6 +16,8 @@ import { PerfHudSection } from '@playground/components/sections/PerfHudSection';
 import { QualitySection } from '@playground/components/sections/QualitySection';
 import { TimeScaleSection } from '@playground/components/sections/TimeScaleSection';
 import { BrushSection } from '@playground/components/sections/BrushSection';
+import { SourceSection } from '@playground/components/sections/SourceSection';
+import type { InteractionTool } from '@playground/components/toolbar/types';
 import { NoiseTextureGenerator } from '@playground/components/NoiseTextureGenerator';
 import { cn } from '@playground/lib/utils';
 
@@ -32,6 +34,9 @@ export interface TerraformingUIProps {
   store?: StoreApi<UiStore>;
   className?: string;
   onSnapshot?: (sample: PerfSample | null) => void;
+  activeTool?: InteractionTool;
+  onWaterFlowRateChange?: (rate: number) => void;
+  onLavaFlowRateChange?: (rate: number) => void;
 }
 
 const PANEL_CLASS = [
@@ -55,11 +60,14 @@ const OVERLAY_OPTIONS: OverlayOption[] = [
   'temperature',
 ];
 
-export function TerraformingUI({ engine, store, className, onSnapshot }: TerraformingUIProps) {
+export function TerraformingUI({ engine, store, className, onSnapshot, activeTool = 'select', onWaterFlowRateChange, onLavaFlowRateChange }: TerraformingUIProps) {
   const storeRef = useRef<StoreApi<UiStore>>();
   const [showPerfHud, setShowPerfHud] = useState(false);
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [showNoiseGenerator, setShowNoiseGenerator] = useState(false);
+  const [showSourceIndicators, setShowSourceIndicators] = useState(true);
+  const [waterFlowRate, setWaterFlowRate] = useState(10); // Default 10 L/s
+  const [lavaFlowRate, setLavaFlowRate] = useState(5); // Default 5 L/s
 
   if (!storeRef.current) {
     storeRef.current = store ?? createUiStore();
@@ -124,6 +132,11 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
     if (!engine) return;
     engine.setTimeScale(timeScale);
   }, [engine, timeScale]);
+
+  useEffect(() => {
+    if (!engine) return;
+    engine.setSourceIndicatorsVisible(showSourceIndicators);
+  }, [engine, showSourceIndicators]);
 
   useEffect(() => {
     if (!engine) return;
@@ -197,19 +210,36 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
             </button>
           </div>
 
-          <BrushSection
-            mode={brush.mode}
-            material={brush.material}
-            radius={brush.radius}
-            strength={brush.strength}
-            isActive={brush.isActive}
-            handMass={brush.handMass}
-            handCapacity={brush.handCapacity}
-            setMode={brush.setMode}
-            setMaterial={brush.setMaterial}
-            setRadius={brush.setRadius}
-            setStrength={brush.setStrength}
-          />
+          {/* Show contextual tool configuration */}
+          {(activeTool === 'add-water-source' || activeTool === 'add-lava-source') ? (
+            <SourceSection
+              activeTool={activeTool}
+              flowRate={activeTool === 'add-water-source' ? waterFlowRate : lavaFlowRate}
+              setFlowRate={(rate) => {
+                if (activeTool === 'add-water-source') {
+                  setWaterFlowRate(rate);
+                  onWaterFlowRateChange?.(rate);
+                } else {
+                  setLavaFlowRate(rate);
+                  onLavaFlowRateChange?.(rate);
+                }
+              }}
+            />
+          ) : (
+            <BrushSection
+              mode={brush.mode}
+              material={brush.material}
+              radius={brush.radius}
+              strength={brush.strength}
+              isActive={brush.isActive}
+              handMass={brush.handMass}
+              handCapacity={brush.handCapacity}
+              setMode={brush.setMode}
+              setMaterial={brush.setMaterial}
+              setRadius={brush.setRadius}
+              setStrength={brush.setStrength}
+            />
+          )}
 
           <QualitySection quality={quality} updateQuality={updateQuality} />
           <DebugOverlaySection
@@ -218,8 +248,24 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
             options={OVERLAY_OPTIONS}
           />
 
-          {/* PerfHud Toggle */}
+          {/* Visual Toggles */}
           <div className="space-y-2">
+            {/* Source Indicators Toggle */}
+            <button
+              onClick={() => {
+                const newValue = !showSourceIndicators;
+                setShowSourceIndicators(newValue);
+                if (engine) {
+                  engine.setSourceIndicatorsVisible(newValue);
+                }
+              }}
+              className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors flex items-center justify-between"
+            >
+              <span>Source Indicators</span>
+              <span className="text-xs text-gray-400">{showSourceIndicators ? 'Hide' : 'Show'}</span>
+            </button>
+
+            {/* PerfHud Toggle */}
             <button
               onClick={() => setShowPerfHud(!showPerfHud)}
               className="w-full px-3 py-2 text-left text-sm font-medium text-white hover:bg-white/10 rounded-lg transition-colors flex items-center justify-between"

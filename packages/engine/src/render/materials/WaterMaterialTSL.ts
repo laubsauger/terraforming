@@ -1,5 +1,6 @@
 import * as THREE from 'three/webgpu';
 import { vec3, float, mix, uv, vec2, time, texture, smoothstep, length, abs, sin, cos, normalize, positionLocal, atan, step } from 'three/tsl';
+import { TerrainConfig } from '../../config/TerrainConfig';
 
 export interface WaterMaterialTSLOptions {
   color?: THREE.Color;
@@ -17,7 +18,7 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     opacity = 0.92,
     depthTexture,
     heightTexture,
-    waterLevel = 0.14
+    waterLevel = TerrainConfig.SEA_LEVEL_NORMALIZED
   } = options;
 
   const material = new THREE.MeshPhysicalNodeMaterial({
@@ -61,8 +62,8 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     // Check if we're above water
     const isAboveWater = terrainHeight.greaterThan(float(waterLevel - 0.001)); // Small threshold
 
-    // Normalize depth with better scaling for visual appeal
-    const normalizedDepth = smoothstep(float(0), float(0.08), waterDepth); // Smooth transition over 8% height range
+    // Normalize depth with better scaling for visual appeal (adjusted for 0.175 water level)
+    const normalizedDepth = smoothstep(float(0), float(0.12), waterDepth); // Smooth transition over 12% height range
 
     // Distance from center for additional color variation
     const uvCentered = uv().sub(vec2(0.5, 0.5));
@@ -71,25 +72,27 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     // Add wet sand color for areas just at/above waterline
     const wetSandColor = vec3(0.15, 0.4, 0.6); // More blue-turquoise for wet sand
 
-    // Smooth gradient transitions from shore to deep ocean
-    const wetSand = mix(wetSandColor, veryShallowColor, smoothstep(float(-0.002), float(0.002), waterDepth));
-    const foam = mix(wetSand, veryShallowColor, smoothstep(float(0.002), float(0.006), waterDepth));
-    const veryShallow = mix(foam, shallowWaterColor, smoothstep(float(0.006), float(0.02), waterDepth));
-    const shallow = mix(veryShallow, mediumWaterColor, smoothstep(float(0.02), float(0.04), waterDepth));
-    const mediumShallow = mix(shallow, mediumDeepColor, smoothstep(float(0.04), float(0.07), waterDepth));
-    const medium = mix(mediumShallow, deepWaterColor, smoothstep(float(0.07), float(0.12), waterDepth));
-    const deep = mix(medium, veryDeepWaterColor, smoothstep(float(0.12), float(0.25), waterDepth)); // Very deep areas
+    // Clamp water depth to reasonable range to prevent weird behavior at extreme depths
+    const clampedWaterDepth = waterDepth.clamp(float(0), float(TerrainConfig.SEA_LEVEL_NORMALIZED)); // Max depth at 15% of height scale
 
-    // Add distance-based darkening - more aggressive for open ocean effect
-    // Combine depth and distance for realistic deep ocean appearance
-    const distanceFactor = smoothstep(float(0.2), float(0.8), distFromCenter);
-    const depthDistanceColor = mix(deep, deepWaterColor, distanceFactor.mul(0.6));
+    // Smooth gradient transitions from shore to deep ocean (adjusted for max 15% depth)
+    const wetSand = mix(wetSandColor, veryShallowColor, smoothstep(float(-0.001), float(0.002), clampedWaterDepth));
+    const foam = mix(wetSand, veryShallowColor, smoothstep(float(0.002), float(0.005), clampedWaterDepth));
+    const veryShallow = mix(foam, shallowWaterColor, smoothstep(float(0.005), float(0.02), clampedWaterDepth));
+    const shallow = mix(veryShallow, mediumWaterColor, smoothstep(float(0.02), float(0.04), clampedWaterDepth));
+    const mediumShallow = mix(shallow, mediumDeepColor, smoothstep(float(0.04), float(0.07), clampedWaterDepth));
+    const medium = mix(mediumShallow, deepWaterColor, smoothstep(float(0.07), float(0.11), clampedWaterDepth));
+    const deep = mix(medium, veryDeepWaterColor, smoothstep(float(0.11), float(0.15), clampedWaterDepth)); // Max at 15% depth
 
-    // Also darken based on terrain slope for more variation
-    const terrainSlope = abs(texture(heightTexture, uv().add(vec2(0.01, 0))).r.sub(terrainHeight)).mul(50);
-    const slopeColor = mix(depthDistanceColor, depthDistanceColor.mul(0.8), terrainSlope);
+    // Add distance-based darkening - but ensure deep water stays dark
+    const distanceFactor = smoothstep(float(0.3), float(0.7), distFromCenter);
 
-    waterColorNode = slopeColor;
+    // Make sure very deep water stays very dark regardless of distance
+    const depthDarkening = smoothstep(float(0.10), float(0.15), clampedWaterDepth);
+    const finalColor = mix(deep, veryDeepWaterColor, depthDarkening);
+
+    // Apply subtle distance variation without making deep areas bright
+    waterColorNode = mix(finalColor, finalColor.mul(0.9), distanceFactor.mul(0.3));
 
     // Create SOFT, GRADUAL shore break like tropical beaches
     const shoreTransition = smoothstep(float(-0.01), float(0.05), waterDepth); // Much wider, softer transition
@@ -99,11 +102,11 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const mediumOpacity = float(0.92); // Higher for medium depth
     const deepOpacity = float(0.98); // Nearly opaque for deep ocean
 
-    // Smooth depth-based opacity transitions
+    // Smooth depth-based opacity transitions using clamped depth (adjusted for max 15% depth)
     const depthOpacity = mix(
-      mix(shallowOpacity, mediumOpacity, smoothstep(float(0), float(0.06), waterDepth)),
+      mix(shallowOpacity, mediumOpacity, smoothstep(float(0), float(0.05), clampedWaterDepth)),
       deepOpacity,
-      smoothstep(float(0.06), float(0.15), waterDepth)
+      smoothstep(float(0.05), float(0.15), clampedWaterDepth)
     );
 
     // Gentle shore foam opacity - soft transition
@@ -183,8 +186,9 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   if (heightTexture && waterLevel !== undefined) {
     const terrainHeight = texture(heightTexture, uv()).r;
     const waterDepth = float(waterLevel).sub(terrainHeight);
+    const clampedWaterDepth = waterDepth.clamp(float(0), float(TerrainConfig.SEA_LEVEL_NORMALIZED));
     // Shore is rougher (more scattered), deep water slightly smoother
-    const depthRoughness = mix(float(0.35), float(0.2), smoothstep(float(0), float(0.1), waterDepth));
+    const depthRoughness = mix(float(0.35), float(0.2), smoothstep(float(0), float(0.10), clampedWaterDepth));
     roughnessNode = roughnessNode.mul(depthRoughness.div(float(0.25))); // Scale relative to base
   }
 
@@ -197,7 +201,7 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const waterDepth = float(waterLevel).sub(terrainHeight);
 
     // Very narrow shore zone for wave displacement - only affects beach area
-    const deepFalloff = smoothstep(float(0.03), float(0.01), waterDepth);  // Waves only at shore
+    const deepFalloff = smoothstep(float(0.02), float(0.005), waterDepth);  // Waves only at shore
 
     // Calculate radial direction for waves moving toward center
     const uvCentered = uv().sub(vec2(0.5, 0.5));
@@ -250,9 +254,9 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const waterDepth = float(waterLevel).sub(terrainHeight);
 
     // Different zones for different wave behaviors - bring ripples closer to shore
-    const veryShallowZone = smoothstep(float(0), float(0.015), waterDepth);  // Right at waterline
-    const nearShoreZone = smoothstep(float(0.025), float(0.06), waterDepth);  // Near shore area
-    const deepOceanFade = smoothstep(float(0.06), float(0.12), waterDepth);   // Fade in deep water
+    const veryShallowZone = smoothstep(float(0), float(0.01), waterDepth);   // Right at waterline
+    const nearShoreZone = smoothstep(float(0.015), float(0.04), waterDepth);  // Near shore area
+    const deepOceanFade = smoothstep(float(0.04), float(0.10), waterDepth);  // Fade in deep water
 
     // SHORE WAVES - Multi-layered beach break effects
     const shoreScale1 = float(25);   // Primary beach ripples

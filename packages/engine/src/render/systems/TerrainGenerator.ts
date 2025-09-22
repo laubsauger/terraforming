@@ -1,4 +1,5 @@
 import * as THREE from 'three/webgpu';
+import { TerrainConfig } from '../../config/TerrainConfig';
 
 export interface TerrainGeneratorOptions {
   gridSize: number;
@@ -145,42 +146,59 @@ export class TerrainGenerator {
         const distY = ny * 0.9;
         const dist = Math.sqrt(distX * distX + distY * distY);
 
-        // Start with zero height
-        let height = 0;
-
         // Create main island shape with very smooth variation
         const shapeNoise = this.noise2D(nx * 0.5, ny * 0.5, 1.5, 2);
         const islandShape = Math.max(0, 1 - dist * (0.9 + shapeNoise * 0.2));
         const islandNoise = this.noise2D(nx, ny, 2, 2);
         const islandMask = Math.pow(islandShape, 0.8) * (0.7 + islandNoise * 0.3);
 
+        // Initialize height based on whether we're in island or ocean
+        let height = 0;
+
+        // For ocean areas (no island), create varied ocean floor
+        if (islandMask < 0.01) {
+          const oceanNoise = this.noise2D(nx * 3, ny * 3, 6, 3);
+          const deepNoise = this.noise2D(nx * 1.5, ny * 1.5, 3, 2);
+
+          // Ocean depth varies from floor to just below sea level
+          // Use full range from 0 to SEA_LEVEL_NORMALIZED
+          const baseOceanDepth = TerrainConfig.OCEAN_FLOOR +
+            (deepNoise * 0.6 + 0.4) * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.8;
+
+          // Add some variation
+          height = baseOceanDepth + oceanNoise * TerrainConfig.SEA_LEVEL_NORMALIZED * 0.1;
+
+          // Ensure we don't go above sea level in pure ocean areas
+          height = Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.9);
+        }
+
         if (islandMask > 0.01) {
-          // Base elevation with much more dramatic height variation
+          // Base elevation derived from config
           if (islandMask < 0.08) {
             // Deep to medium underwater - very gradual
             const progress = islandMask / 0.08;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = 0.05 + smoothProgress * 0.08;
+            height = TerrainConfig.OCEAN_DEEP + smoothProgress * (TerrainConfig.OCEAN_SHALLOW - TerrainConfig.OCEAN_DEEP);
           } else if (islandMask < 0.18) {
             // Shallow water to beach - critical smooth transition
             const progress = (islandMask - 0.08) / 0.10;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = 0.13 + smoothProgress * 0.022;
+            height = TerrainConfig.OCEAN_SHALLOW + smoothProgress * (TerrainConfig.BEACH_DRY - TerrainConfig.OCEAN_SHALLOW);
           } else if (islandMask < 0.3) {
-            // Beach to foothills - gentle rise
+            // Beach to foothills - gentle rise above water
             const progress = (islandMask - 0.18) / 0.12;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = 0.152 + smoothProgress * 0.05;
+            height = TerrainConfig.BEACH_DRY + smoothProgress * (TerrainConfig.GRASSLANDS - TerrainConfig.BEACH_DRY);
           } else if (islandMask < 0.6) {
-            // Foothills to mid elevation - more dramatic
+            // Foothills to mid elevation - significant height gain
             const progress = (islandMask - 0.3) / 0.3;
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = 0.202 + smoothProgress * 0.15;
+            height = TerrainConfig.GRASSLANDS + smoothProgress * (TerrainConfig.MOUNTAINS_MID - TerrainConfig.GRASSLANDS);
           } else {
-            // High terrain - mountains and peaks
+            // High terrain - mountains and peaks using remaining height
             const progress = Math.min(1, (islandMask - 0.6) / 0.4);
             const smoothProgress = this.smootherstep(0, 1, progress);
-            height = 0.352 + smoothProgress * 0.25;
+            height = TerrainConfig.MOUNTAINS_MID + smoothProgress * (TerrainConfig.PEAKS - TerrainConfig.MOUNTAINS_MID);
           }
 
           // Add terrain features based on zones
@@ -211,14 +229,15 @@ export class TerrainGenerator {
             const peakFactor = this.noise2D(nx * 2, ny * 2, 3, 2) * 0.3 + 0.7;
             const allPeaks = (peak1 + peak2 * 0.8 + peak3 * 0.6 + peak4 * 0.7) * peakFactor;
 
-            // Combine mountains with very smooth transitions
-            const mountainHeight = (combinedRidges * 0.25 + allPeaks * 0.35) * mountainZone;
+            // Combine mountains with very smooth transitions - scale up to use full range
+            // Increase multipliers to ensure we can reach close to 1.0
+            const mountainHeight = (combinedRidges * 0.5 + allPeaks * 0.7) * mountainZone;
 
             // Apply ultra-smooth transition based on distance from center
             const centerDist = Math.sqrt(nx * nx + ny * ny);
             const falloffFactor = this.smootherstep(0.8, 0.4, centerDist);
 
-            height += mountainHeight * falloffFactor;
+            height += mountainHeight * falloffFactor;  // Full mountain height in 85% range
 
             // Add subtle rocky texture only on steep areas
             const steepness = mountainHeight * falloffFactor;
@@ -235,9 +254,9 @@ export class TerrainGenerator {
 
           if (meadowZone1 || meadowZone2) {
             // Flatten these areas for meadows with slight undulation
-            const meadowBase = meadowZone1 ? 0.21 : 0.24;
+            const meadowBase = meadowZone1 ? TerrainConfig.GRASSLANDS : TerrainConfig.FOOTHILLS;
             const gentleNoise = this.noise2D(nx * 8, ny * 8, 15, 1);
-            height = meadowBase + gentleNoise * 0.008;
+            height = meadowBase + gentleNoise * 0.015;
           }
 
           // Create organic lagoon with varied depth
@@ -253,8 +272,8 @@ export class TerrainGenerator {
             height -= lagoonDepth * (0.06 + depthVariation * 0.02);
 
             // Ensure lagoon stays slightly below water but not too deep
-            height = Math.max(height, 0.10);
-            height = Math.min(height, 0.135);  // Keep it as a shallow lagoon
+            height = Math.max(height, TerrainConfig.OCEAN_MID);
+            height = Math.min(height, TerrainConfig.UNDERWATER_BEACH);  // Keep it as a shallow lagoon
           }
 
           // Gentler elevated areas instead of harsh cliffs
@@ -278,10 +297,10 @@ export class TerrainGenerator {
           const valley1 = Math.exp(-Math.pow((nx - ny * 0.3 + 0.1), 2) * 30) * islandMask;
           const valley2 = Math.exp(-Math.pow((nx * 0.5 + ny - 0.2), 2) * 25) * islandMask;
 
-          if ((valley1 > 0.1 || valley2 > 0.1) && height > 0.16) {
+          if ((valley1 > 0.1 || valley2 > 0.1) && height > TerrainConfig.COASTAL_PLAINS) {
             const valleyDepth = Math.max(valley1, valley2);
-            height -= valleyDepth * 0.03;
-            height = Math.max(height, 0.145);  // Don't go below beach level
+            height -= valleyDepth * 0.04;
+            height = Math.max(height, TerrainConfig.BEACH_HIGH);  // Don't go below beach level
           }
         }
 
@@ -292,7 +311,7 @@ export class TerrainGenerator {
         if (frontIslandDist < 0.12) {
           const islandFactor = Math.pow(1 - frontIslandDist / 0.12, 1.5);
           const islandNoise = this.noise2D((nx - frontIslandX) * 8, (ny - frontIslandY) * 8, 6, 2);
-          const islandHeight = 0.148 + islandFactor * (0.08 + islandNoise * 0.04);
+          const islandHeight = TerrainConfig.BEACH_DRY + islandFactor * (0.10 + islandNoise * 0.05);
           // Smooth transition to avoid harsh edges
           const smoothFactor = this.smootherstep(0.1, 0.12, frontIslandDist);
           const finalHeight = islandHeight * (1 - smoothFactor);
@@ -311,31 +330,32 @@ export class TerrainGenerator {
         if (atoll1Dist < 0.06) {
           const atollFactor = this.smoothstep(0.06, 0, atoll1Dist);
           const sandNoise = this.noise2D(nx * 15, ny * 15, 30, 1);
-          height = Math.max(height, 0.141 + atollFactor * 0.02 + sandNoise * 0.003);
+          height = Math.max(height, TerrainConfig.BEACH_WATER_LINE - 0.005 + atollFactor * 0.025 + sandNoise * 0.005);
         }
 
         if (atoll2Dist < 0.05) {
           const atollFactor = this.smoothstep(0.05, 0, atoll2Dist);
-          height = Math.max(height, 0.142 + atollFactor * 0.018);
+          height = Math.max(height, TerrainConfig.BEACH_WATER_LINE - 0.002 + atollFactor * 0.022);
         }
 
-        // Ocean floor with underwater features
-        if (height < 0.1) {
-          const oceanNoise = this.noise2D(nx * 3, ny * 3, 6, 3);
+        // Add ocean features like ridges and trenches
+        if (islandMask < 0.01 && height < TerrainConfig.SEA_LEVEL_NORMALIZED) {
           const underwaterRidge = this.ridgeNoise(nx * 2, ny * 2, 5, 2);
 
-          // Create underwater channels and ridges
-          const baseDepth = 0.02 + oceanNoise * 0.04;
-          const ridgeHeight = underwaterRidge * 0.03 * (1 - islandMask);
-
-          height = Math.max(height, baseDepth + ridgeHeight);
+          // Add underwater ridges
+          if (underwaterRidge > 0.6) {
+            height += underwaterRidge * 0.2 * TerrainConfig.SEA_LEVEL_NORMALIZED;
+          }
 
           // Deep ocean trenches
           const trenchX = Math.sin(ny * 3) * 0.1;
           const trenchDist = Math.abs(nx - 0.7 - trenchX);
           if (trenchDist < 0.05 && dist > 0.6) {
-            height *= 0.3;
+            height = TerrainConfig.OCEAN_FLOOR + Math.random() * 0.01;  // Very deep trenches
           }
+
+          // Clamp to valid ocean range
+          height = Math.max(TerrainConfig.OCEAN_FLOOR, Math.min(height, TerrainConfig.SEA_LEVEL_NORMALIZED * 0.95));
         }
 
         // Final clamping
@@ -393,7 +413,7 @@ export class TerrainGenerator {
         }
 
         // Only smooth areas with significant height differences (harsh edges)
-        if (maxDiff > 0.02 && center > 0.1 && center < 0.5 && dist < 1.0) {
+        if (maxDiff > 0.02 && center > TerrainConfig.OCEAN_SHALLOW && center < TerrainConfig.MOUNTAINS_HIGH && dist < 1.0) {
           // Smooth more aggressively where harsh edges are detected
           const smoothingFactor = Math.min(maxDiff * 10, 0.8); // 0 to 0.8
           smoothedHeight = center * (1 - smoothingFactor) + smoothedHeight * smoothingFactor;

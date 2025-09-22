@@ -2,6 +2,7 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { BrushSystem } from '../sim/BrushSystem';
+import { TerrainConfig } from '../config/TerrainConfig';
 
 // Import subsystems
 import { BrushInteractionHandler } from './systems/BrushInteractionHandler';
@@ -27,10 +28,10 @@ export class TerrainRenderer extends BaseRenderer {
   private gridSize: number;
   private terrainSize: number;
 
-  // Configuration
-  private readonly WATER_LEVEL = 2.3;
-  private readonly HEIGHT_SCALE = 25;
-  private readonly WATER_LEVEL_NORMALIZED = 2.3 / 25;
+  // Configuration from centralized config
+  private readonly WATER_LEVEL = TerrainConfig.WATER_LEVEL_ABSOLUTE;
+  private readonly HEIGHT_SCALE = TerrainConfig.HEIGHT_SCALE;
+  private readonly WATER_LEVEL_NORMALIZED = TerrainConfig.SEA_LEVEL_NORMALIZED;
 
   // Subsystems
   private brushInteractionHandler: BrushInteractionHandler;
@@ -52,7 +53,7 @@ export class TerrainRenderer extends BaseRenderer {
     super({ canvas, antialias: true, alpha: false });
 
     this.gridSize = gridSize;
-    this.terrainSize = terrainSize;
+    this.terrainSize = TerrainConfig.TERRAIN_SIZE; // Use config value
 
     // Setup scene
     const fogColor = 0x000000;
