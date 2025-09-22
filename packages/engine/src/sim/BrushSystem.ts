@@ -4,6 +4,8 @@ import { createBrushPipeline, createBrushBindGroupLayout } from '../gpu/pipeline
 import { createApplyPipeline, createApplyBindGroupLayout } from '../gpu/pipelines/apply';
 import { createReposePipeline, createReposeBindGroupLayout } from '../gpu/pipelines/repose';
 import { createSmoothPipeline, createSmoothBindGroupLayout } from '../gpu/pipelines/smooth';
+import { createSmoothDirectionalPipeline, SmoothDirectionalPipeline, SmoothDirectionalOp } from '../gpu/pipelines/smoothDirectional';
+import { createFlattenPipeline, FlattenPipeline, FlattenOp } from '../gpu/pipelines/flatten';
 
 export interface BrushSystemOptions {
   gridSize: [number, number];  // [width, height] in cells

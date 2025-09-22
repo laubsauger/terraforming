@@ -14,7 +14,7 @@ export interface QualityOpts {
 }
 
 export interface BrushOp {
-  mode: 'pickup' | 'deposit' | 'smooth';
+  mode: 'pickup' | 'deposit' | 'smooth' | 'smooth_raise' | 'smooth_lower' | 'flatten';
   material: 'soil' | 'rock' | 'lava';
   worldX: number;
   worldZ: number;
