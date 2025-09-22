@@ -29,6 +29,16 @@ struct HandBuf {
 var<workgroup> wg_sum_fixed : atomic<u32>; // desired mass for this tile (fixed-point)
 var<workgroup> wg_scale : f32;
 
+// Auto-generated terrain constants - DO NOT EDIT MANUALLY
+const SEA_LEVEL_NORMALIZED: f32 = 0.15;
+const HEIGHT_SCALE: f32 = 64.0;
+const WATER_LEVEL_ABSOLUTE: f32 = 9.6;
+const MAX_HEIGHT_ABSOLUTE: f32 = 64.0;
+const OCEAN_DEPTH_RANGE: f32 = 9.6;
+
+// Ocean floor is the absolute minimum (0 meters)
+const OCEAN_FLOOR: f32 = 0.0;
+
 fn kg_to_fixed(kg:f32)->u32 { return u32(max(kg, 0.0) * 1000.0 + 0.5); }
 fn fixed_to_kg(x:u32)->f32 { return f32(x) * 0.001; }
 
@@ -81,8 +91,15 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>, @builtin(local_invocation_
         let availKg = max(fields.r, 0.0) * cellArea * densities.x;
         desiredKg += min(wantKg, availKg);
       } else if (op.kind == 1u) { // rock
-        if (fields.r <= 0.0) { // only erode rock if no soil
-          let availKg = min(wantKg, ROCK_PICK_RATE_KG_PER_S * op.dt * k);
+        // Calculate current total height in meters (sum of all materials)
+        let totalHeight = fields.r + fields.g + fields.b;
+        // Only erode rock if no soil on top AND above ocean floor
+        // CRITICAL: Ocean floor (0m) is the absolute minimum - no digging below
+        if (fields.r <= 0.0 && totalHeight > OCEAN_FLOOR) {
+          // Maximum erosion cannot go below ocean floor
+          let maxErosion = max(0.0, totalHeight - OCEAN_FLOOR);
+          let maxKg = maxErosion * cellArea * densities.y;
+          let availKg = min(min(wantKg, ROCK_PICK_RATE_KG_PER_S * op.dt * k), maxKg);
           desiredKg += availKg;
         }
       } else { // lava
@@ -150,9 +167,18 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>, @builtin(local_invocation_
     } else if (k == 1u) { // rock
       let s1 = fields.r;
       let r1 = fields.g;
-      if (s1 <= 0.0) {
+
+      // Calculate current total height
+      let totalHeight = fields.r + fields.g + fields.b;
+
+      // Only allow rock erosion if:
+      // 1. No soil on top AND
+      // 2. Total height is above ocean floor (absolute minimum)
+      if (s1 <= 0.0 && totalHeight > OCEAN_FLOOR) {
         let want_m = actualKg / (cellArea * density);
-        let actual_m = min(want_m, 0.01);
+        // CRITICAL: Cannot erode below ocean floor (0 meters)
+        let maxErosion = max(0.0, totalHeight - OCEAN_FLOOR);
+        let actual_m = min(min(want_m, 0.01), maxErosion);
         delta_kg = -actual_m * cellArea * density;
       } else {
         delta_kg = 0.0;

@@ -181,16 +181,20 @@ export class TerrainRenderer extends BaseRenderer {
     const soilData = new Float32Array(size * size);
 
     for (let i = 0; i < size * size; i++) {
-      const height = heightData[i * 4]; // R channel
+      const heightNormalized = heightData[i * 4]; // R channel (0-1)
 
-      // Split height into rock base and soil layer
-      const waterLevel = TerrainConfig.SEA_LEVEL_NORMALIZED;
+      // Convert normalized height to meters
+      const heightMeters = heightNormalized * TerrainConfig.HEIGHT_SCALE;
+      const waterLevelMeters = TerrainConfig.WATER_LEVEL_ABSOLUTE;
 
-      if (height > waterLevel) {
-        rockData[i] = Math.max(0, waterLevel - 0.01);
-        soilData[i] = Math.max(0, height - waterLevel + 0.01);
+      // Split height into rock base and soil layer IN METERS
+      if (heightMeters > waterLevelMeters) {
+        // Above water: rock goes up to water level, rest is soil
+        rockData[i] = Math.max(0, waterLevelMeters - 0.5); // Rock up to just below water
+        soilData[i] = Math.max(0, heightMeters - waterLevelMeters); // Soil is everything above water
       } else {
-        rockData[i] = height;
+        // Below water: all rock, no soil
+        rockData[i] = heightMeters;
         soilData[i] = 0;
       }
     }

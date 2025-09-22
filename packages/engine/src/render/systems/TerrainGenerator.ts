@@ -152,19 +152,19 @@ export class TerrainGenerator {
         const distY = ny * 0.9;
         const dist = Math.sqrt(distX * distX + distY * distY);
 
-        // Create main island shape - smaller to show more ocean
+        // Create main island shape - adjusted for more land above water
         const shapeNoise = this.noise2D(nx * 0.5, ny * 0.5, 1.5, 2);
-        // Make island smaller by increasing the distance falloff
-        const islandShape = Math.max(0, 1 - dist * (1.5 + shapeNoise * 0.3));
+        // Larger island to ensure more terrain above water
+        const islandShape = Math.max(0, 1 - dist * (0.8 + shapeNoise * 0.15));
         const islandNoise = this.noise2D(nx, ny, 2, 2);
-        // Reduce island influence to create more ocean area
-        const islandMask = Math.pow(islandShape, 1.2) * (0.5 + islandNoise * 0.2);
+        // Boost island mask to push more terrain above water threshold
+        const islandMask = Math.pow(islandShape, 0.7) * (0.8 + islandNoise * 0.2);
 
         // Initialize height based on whether we're in island or ocean
         let height = 0;
 
         // For ocean areas (no island), create varied ocean floor
-        if (islandMask < 0.05) {  // Increased threshold for more ocean
+        if (islandMask < 0.01) {  // Only true ocean far from island
           const oceanNoise = this.noise2D(nx * 3, ny * 3, 6, 3);
           const deepNoise = this.noise2D(nx * 1.5, ny * 1.5, 3, 2);
 
@@ -241,13 +241,14 @@ export class TerrainGenerator {
 
             // Combine mountains with very smooth transitions - scale up to use full range
             // Increase multipliers to ensure we can reach close to 1.0
-            const mountainHeight = (combinedRidges * 0.5 + allPeaks * 0.7) * mountainZone;
+            const mountainHeight = (combinedRidges * 0.6 + allPeaks * 0.8) * mountainZone * 1.5;
 
             // Apply ultra-smooth transition based on distance from center
             const centerDist = Math.sqrt(nx * nx + ny * ny);
-            const falloffFactor = this.smootherstep(0.8, 0.4, centerDist);
+            const falloffFactor = this.smootherstep(0.8, 0.3, centerDist);
 
-            height += mountainHeight * falloffFactor;  // Full mountain height in 85% range
+            // Add mountain height, potentially pushing terrain to full height (1.0)
+            height = Math.min(1.0, height + mountainHeight * falloffFactor);
 
             // Add subtle rocky texture only on steep areas
             const steepness = mountainHeight * falloffFactor;

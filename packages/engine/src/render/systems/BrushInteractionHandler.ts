@@ -327,6 +327,21 @@ export class BrushInteractionHandler {
           (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
           this.brushMode;
 
+        // Get height at brush position for debugging
+        const heightMeters = this.getHeightAtWorldPos?.(lastWorldPos.x, lastWorldPos.z) ?? 0;
+        const heightNormalized = heightMeters / 64.0; // Convert to normalized
+        const waterLevelNormalized = 0.15;
+        const isUnderwater = heightNormalized < waterLevelNormalized;
+
+        console.log(`Brush op at (${lastWorldPos.x.toFixed(1)}, ${lastWorldPos.z.toFixed(1)}):`, {
+          mode: actualMode,
+          material: this.brushMaterial,
+          heightNormalized: heightNormalized.toFixed(3),
+          heightMeters: heightMeters.toFixed(1) + 'm',
+          isUnderwater,
+          waterLevel: '9.6m (0.15 normalized)'
+        });
+
         this.brushSystem.addBrushOp(
           actualMode,
           this.brushMaterial,

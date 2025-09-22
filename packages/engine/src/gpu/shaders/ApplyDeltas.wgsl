@@ -51,21 +51,38 @@ fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
   let fields = textureLoad(fieldsInTex, coord);
   let deltas = textureLoad(deltasTex, coord);
 
-  // Apply deltas with individual clamping
+  // Apply deltas
   var newFields = fields;
-  newFields.r = max(0.0, fields.r + deltas.r);  // soil
-  newFields.g = max(ROCK_MIN_HEIGHT, fields.g + deltas.g);  // rock
-  newFields.b = max(0.0, fields.b + deltas.b);  // lava
+  newFields.r = fields.r + deltas.r;  // soil (meters)
+  newFields.g = fields.g + deltas.g;  // rock (meters)
+  newFields.b = fields.b + deltas.b;  // lava (meters)
 
-  // Enforce maximum total height constraint
+  // CRITICAL: The total terrain height represents the actual world height in meters
+  // This must stay within world bounds: 0 meters (ocean floor) to 64 meters (peak)
   let totalHeight = newFields.r + newFields.g + newFields.b;
-  if (totalHeight > MAX_TOTAL_HEIGHT) {
-    // Scale all components proportionally to maintain ratios
-    let scale = MAX_TOTAL_HEIGHT / totalHeight;
+
+  // Enforce absolute world minimum (ocean floor at 0 meters)
+  if (totalHeight < OCEAN_FLOOR) {
+    // Don't allow digging below ocean floor
+    // Scale back the deltas proportionally to maintain at minimum height
+    let deficit = OCEAN_FLOOR - totalHeight;
+    // Add the deficit back to rock (bedrock can't be eroded below ocean floor)
+    newFields.g += deficit;
+  }
+
+  // Enforce absolute world maximum (peak at 64 meters)
+  if (totalHeight > MAX_HEIGHT_ABSOLUTE) {
+    // Scale all components proportionally to stay within max height
+    let scale = MAX_HEIGHT_ABSOLUTE / totalHeight;
     newFields.r *= scale;
     newFields.g *= scale;
     newFields.b *= scale;
   }
+
+  // Ensure individual components are non-negative
+  newFields.r = max(0.0, newFields.r);
+  newFields.g = max(0.0, newFields.g);
+  newFields.b = max(0.0, newFields.b);
 
   // Write updated fields to output texture
   textureStore(fieldsOutTex, coord, newFields);
