@@ -24,7 +24,13 @@ export function App() {
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<InteractionTool>('brush-raise');
-  const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
+  // Initialize mouse position to center of screen for proper cursor display on load
+  const [mousePosition, setMousePosition] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+    }
+    return { x: 0, y: 0 };
+  });
   const [showCursor, setShowCursor] = useState(false);
   const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
@@ -128,14 +134,28 @@ export function App() {
     };
   }, []);
 
+
   const handleSnapshot = (sample: PerfSample | null) => {
     console.log('snapshot requested', sample);
   };
 
   const handleToolChange = useCallback((tool: InteractionTool) => {
     setActiveTool(tool);
-    // TODO: wire tool selection into engine brush/tool system
+    // Note: brushState.setActive() is reserved for actual brush operations
+    // The cursor visibility and tool state are handled by the UI components
   }, []);
+
+  // Trigger initial tool setup when component mounts and engine is ready
+  useEffect(() => {
+    if (engine && state === 'ready') {
+      // Force a re-initialization by temporarily changing the tool
+      // This ensures the TerrainCursor is properly recreated with the engine ready
+      setActiveTool('select');
+      setTimeout(() => {
+        setActiveTool('brush-raise');
+      }, 50);
+    }
+  }, [engine, state]); // Only depend on engine and state, not activeTool to avoid loops
 
   const addWaterSource = useCallback((position: [number, number], rate: number = 1.0) => {
     const newSource: Source = {
@@ -524,6 +544,18 @@ export function App() {
 
     const canvas = canvasRef.current;
     if (canvas) {
+      // Initialize mouse position to canvas center if not yet moved
+      const rect = canvas.getBoundingClientRect();
+      setMousePosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2
+      });
+
+      // For terrain tools, immediately show cursor
+      if (activeTool === 'brush-raise' || activeTool === 'brush-smooth') {
+        setShowCursor(true);
+      }
+
       // Use pointermove for consistent tracking during drag operations
       canvas.addEventListener('pointermove', handlePointerMove);
       canvas.addEventListener('mouseenter', handleMouseEnter);
@@ -537,7 +569,7 @@ export function App() {
     }
 
     return () => {}; // No cleanup needed if canvas is not available
-  }, []);
+  }, [activeTool]);
 
   useEffect(() => {
     let brushAdjustTimeout: number | null = null;
@@ -620,7 +652,7 @@ export function App() {
       <TerrainCursor
         activeTool={activeTool}
         brushSize={brushSize}
-        isVisible={showCursor || isAdjustingBrush}
+        isVisible={(activeTool === 'brush-raise' || activeTool === 'brush-smooth') || isAdjustingBrush}
         engine={engine}
         mousePosition={mousePosition}
         canvasElement={canvasRef.current}

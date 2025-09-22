@@ -40,7 +40,9 @@ export function TerrainCursor({
   // Initialize cursor group when engine is ready
   useEffect(() => {
     const scene = engine?.getScene();
-    if (!scene) return;
+    if (!scene) {
+      return;
+    }
 
     // Create a group to hold cursor elements
     const group = new THREE.Group();
@@ -223,9 +225,54 @@ export function TerrainCursor({
     };
   }, [engine, activeTool]);
 
+  // Update cursor materials when tool changes
+  useEffect(() => {
+    if (!cursorGroupRef.current) return;
+
+    const toolColor = parseInt(TOOL_COLORS[activeTool].replace('#', '0x'));
+
+    // Update line material (child[1])
+    const line = cursorGroupRef.current.children[1] as THREE.Line;
+    if (line && line.material) {
+      const lineMaterial = line.material as THREE.LineBasicMaterial;
+      lineMaterial.color.setHex(toolColor);
+      lineMaterial.opacity = activeTool === 'select' ? 0.8 : 0.6;
+      lineMaterial.linewidth = activeTool === 'select' ? 3 : 8;
+      lineMaterial.needsUpdate = true;
+    }
+
+    // Update fill material (child[2])
+    const fillMesh = cursorGroupRef.current.children[2] as THREE.Mesh;
+    if (fillMesh && fillMesh.material) {
+      const fillMaterial = fillMesh.material as THREE.MeshBasicMaterial;
+      fillMaterial.color.setHex(toolColor);
+      fillMaterial.opacity = activeTool === 'select' ? 0.02 : 0.05; // More visible for brush tools
+      fillMaterial.needsUpdate = true;
+    }
+
+    // Update trail colors if needed
+    if (trailRef.current) {
+      const trail = trailRef.current;
+      const trailMaterial = trail.material as THREE.PointsMaterial;
+      const colors = trail.geometry.attributes.color.array as Float32Array;
+      const toolColorObj = new THREE.Color(toolColor);
+
+      const trailLength = 20;
+      for (let i = 0; i < trailLength; i++) {
+        const opacity = (1 - i / trailLength) * 0.8;
+        colors[i * 3] = toolColorObj.r * opacity;
+        colors[i * 3 + 1] = toolColorObj.g * opacity;
+        colors[i * 3 + 2] = toolColorObj.b * opacity;
+      }
+      trail.geometry.attributes.color.needsUpdate = true;
+    }
+  }, [activeTool]);
+
   // Update cursor position and shape to conform to terrain
   useEffect(() => {
-    if (!cursorGroupRef.current || !engine || !canvasElement) return;
+    if (!cursorGroupRef.current || !engine || !canvasElement) {
+      return;
+    }
 
     const camera = engine.getCamera();
     if (!camera) {

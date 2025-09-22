@@ -22,14 +22,14 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
 
   const material = new THREE.MeshPhysicalNodeMaterial({
     transparent: true,
-    roughness: 0.15, // Smoother for better reflections
+    roughness: 0.175, // Smoother for better reflections
     metalness: 0.02,   // Very low metalness - water is not metallic
-    transmission: 0.7, // More transmission for water transparency
+    transmission: 0.6, // More transmission for water transparency
     thickness: 1.5,
     ior: 1.33, // Water's index of refraction
     side: THREE.DoubleSide,
     clearcoat: 0.8,  // Higher clearcoat for better reflections
-    clearcoatRoughness: 0.1,  // Smoother clearcoat for sharper reflections
+    clearcoatRoughness: 0.2,  // Smoother clearcoat for sharper reflections
     depthWrite: false, // Allow transparency to work properly
     depthTest: true,
     envMapIntensity: 0.8, // Reduced back to more reasonable level
@@ -40,12 +40,13 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   // Animated UV for flowing water effect
   const animatedUV = uv().add(vec2(time.mul(0.015), time.mul(0.008)));
 
-  // Water colors - VIVID tropical turquoise
-  const deepWaterColor = vec3(0.0, 0.3, 0.6);         // Deep tropical blue
-  const mediumDeepColor = vec3(0.0, 0.5, 0.8);        // Rich turquoise
-  const mediumWaterColor = vec3(0.0, 0.7, 0.9);       // Vibrant turquoise
-  const shallowWaterColor = vec3(0.2, 0.85, 1.0);     // Brilliant shallow turquoise
-  const veryShallowColor = vec3(0.4, 0.9, 1.0);       // Crystal clear shallow
+  // Water colors - VIVID tropical turquoise with darker deep ocean
+  const veryDeepWaterColor = vec3(0.0, 0.15, 0.4);    // Very dark saturated blue
+  const deepWaterColor = vec3(0.0, 0.25, 0.55);       // Dark saturated ocean blue
+  const mediumDeepColor = vec3(0.0, 0.45, 0.75);      // Rich deep turquoise
+  const mediumWaterColor = vec3(0.0, 0.65, 0.85);     // Medium turquoise
+  const shallowWaterColor = vec3(0.15, 0.8, 0.95);    // Brilliant shallow turquoise
+  const veryShallowColor = vec3(0.3, 0.85, 1.0);      // Crystal clear shallow
   const foamColor = vec3(0.98, 0.99, 1.0);            // Pure white foam
 
   // Calculate water depth and create depth-based color
@@ -70,14 +71,14 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     // Add wet sand color for areas just at/above waterline
     const wetSandColor = vec3(0.15, 0.4, 0.6); // More blue-turquoise for wet sand
 
-    // Extended shallow water zones with wet sand transition - MORE BLUE retained
+    // Smooth gradient transitions from shore to deep ocean
     const wetSand = mix(wetSandColor, veryShallowColor, smoothstep(float(-0.002), float(0.002), waterDepth));
-    const foam = mix(wetSand, shallowWaterColor, smoothstep(float(0.002), float(0.006), waterDepth)); // Keep more blue
+    const foam = mix(wetSand, veryShallowColor, smoothstep(float(0.002), float(0.006), waterDepth));
     const veryShallow = mix(foam, shallowWaterColor, smoothstep(float(0.006), float(0.02), waterDepth));
-    const shallow = mix(veryShallow, mediumWaterColor, smoothstep(float(0.02), float(0.05), waterDepth));
-    const mediumShallow = mix(shallow, mediumDeepColor, smoothstep(float(0.05), float(0.08), waterDepth));
-    const medium = mix(mediumShallow, mediumDeepColor, smoothstep(float(0.08), float(0.12), waterDepth));
-    const deep = mix(medium, deepWaterColor, smoothstep(float(0.12), float(0.20), waterDepth));
+    const shallow = mix(veryShallow, mediumWaterColor, smoothstep(float(0.02), float(0.04), waterDepth));
+    const mediumShallow = mix(shallow, mediumDeepColor, smoothstep(float(0.04), float(0.07), waterDepth));
+    const medium = mix(mediumShallow, deepWaterColor, smoothstep(float(0.07), float(0.12), waterDepth));
+    const deep = mix(medium, veryDeepWaterColor, smoothstep(float(0.12), float(0.25), waterDepth)); // Very deep areas
 
     // Add distance-based darkening - more aggressive for open ocean effect
     // Combine depth and distance for realistic deep ocean appearance
@@ -93,12 +94,17 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     // Create SOFT, GRADUAL shore break like tropical beaches
     const shoreTransition = smoothstep(float(-0.01), float(0.05), waterDepth); // Much wider, softer transition
 
-    // VERY HIGH BASE OPACITY - water should be mostly opaque like the reference
-    const baseWaterOpacity = float(0.85); // High base opacity for tropical look
-    const deepWaterOpacity = float(0.92); // Even higher for deeper areas
+    // Progressive opacity - more opaque in deeper water to hide seafloor
+    const shallowOpacity = float(0.85); // High base opacity for shallow
+    const mediumOpacity = float(0.92); // Higher for medium depth
+    const deepOpacity = float(0.98); // Nearly opaque for deep ocean
 
-    // Soft gradual opacity transition - NO sharp edges
-    const depthOpacity = mix(baseWaterOpacity, deepWaterOpacity, smoothstep(float(0), float(0.08), waterDepth));
+    // Smooth depth-based opacity transitions
+    const depthOpacity = mix(
+      mix(shallowOpacity, mediumOpacity, smoothstep(float(0), float(0.06), waterDepth)),
+      deepOpacity,
+      smoothstep(float(0.06), float(0.15), waterDepth)
+    );
 
     // Gentle shore foam opacity - soft transition
     const shoreWhiteIntensity = smoothstep(float(0), float(0.02), waterDepth); // Very gentle foam zone

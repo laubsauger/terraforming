@@ -23,7 +23,7 @@ export interface TerrainMaterialTSLOptions {
 export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): THREE.MeshStandardNodeMaterial {
   const {
     heightMap,
-    heightScale = 15,
+    heightScale = 25, // Increased from 15 for more dramatic terrain
     terrainSize = 100,
     gridSize = 256, // Default to 256x256
     normalMap,
@@ -253,10 +253,10 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const isUnderwater = step(normalizedHeight, waterLevelNode);
   const underwaterDepth = clamp(waterLevelNode.sub(normalizedHeight), float(0), float(1));
 
-  // Create smooth underwater color progression from shallow to deep
-  const shallowUnderwaterTint = vec3(0.75, 0.88, 0.95);     // Light blue-green for shallow
-  const mediumUnderwaterTint = vec3(0.6, 0.8, 0.9);        // Medium blue-green
-  const deepUnderwaterTint = vec3(0.4, 0.7, 0.85);         // Deeper blue-green
+  // Create smooth underwater color progression from shallow to deep - more saturated
+  const shallowUnderwaterTint = vec3(0.85, 0.92, 0.98);     // Very light blue tint for shallow
+  const mediumUnderwaterTint = vec3(0.7, 0.85, 0.95);       // Light blue-green
+  const deepUnderwaterTint = vec3(0.5, 0.75, 0.9);          // Medium blue-green
 
   // Smooth depth-based underwater color transitions
   const shallowToMedium = smoothstep(float(0), float(0.03), underwaterDepth);
@@ -322,35 +322,42 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     // Use provided normal map
     material.normalNode = texture(normalMap, uv()).xyz;
   } else {
-    // Simple central difference for normals - use actual grid size
+    // Enhanced normal calculation with better sampling
     const texelSize = float(1.0 / gridSize);
 
-    // Sample heights at neighboring points
-    const hL = texture(heightMap, uv().sub(vec2(texelSize, float(0)))).r;
-    const hR = texture(heightMap, uv().add(vec2(texelSize, float(0)))).r;
-    const hD = texture(heightMap, uv().sub(vec2(float(0), texelSize))).r;
-    const hU = texture(heightMap, uv().add(vec2(float(0), texelSize))).r;
+    // Sample heights at neighboring points for Sobel filter
+    const h00 = texture(heightMap, uv().add(vec2(texelSize.mul(-1), texelSize.mul(-1)))).r.mul(float(heightScale));
+    const h10 = texture(heightMap, uv().add(vec2(texelSize.mul(0), texelSize.mul(-1)))).r.mul(float(heightScale));
+    const h20 = texture(heightMap, uv().add(vec2(texelSize, texelSize.mul(-1)))).r.mul(float(heightScale));
+    const h01 = texture(heightMap, uv().add(vec2(texelSize.mul(-1), texelSize.mul(0)))).r.mul(float(heightScale));
+    const h11 = texture(heightMap, uv()).r.mul(float(heightScale)); // Center
+    const h21 = texture(heightMap, uv().add(vec2(texelSize, texelSize.mul(0)))).r.mul(float(heightScale));
+    const h02 = texture(heightMap, uv().add(vec2(texelSize.mul(-1), texelSize))).r.mul(float(heightScale));
+    const h12 = texture(heightMap, uv().add(vec2(texelSize.mul(0), texelSize))).r.mul(float(heightScale));
+    const h22 = texture(heightMap, uv().add(vec2(texelSize, texelSize))).r.mul(float(heightScale));
 
-    // Calculate height differences
-    const dX = hR.sub(hL);
-    const dY = hU.sub(hD);
+    // Sobel filter for better gradient estimation
+    const sobelX = h00.mul(-1).add(h20).add(h01.mul(-2)).add(h21.mul(2)).add(h02.mul(-1)).add(h22);
+    const sobelY = h00.mul(-1).add(h02).add(h10.mul(-2)).add(h12.mul(2)).add(h20.mul(-1)).add(h22);
 
-    // Scale by world size to get proper gradients
-    // The factor should be 2 * texelSize because we're using central differences
-    const worldScale = float(terrainSize).mul(2.0).mul(texelSize);
+    // Calculate the normal vector
+    const worldStep = float(terrainSize).mul(texelSize);
 
-    // The plane geometry is initially in XY plane with Z pointing up (in object space)
-    // Height displacement happens along Z axis in object space
-    // After rotation, object Z becomes world Y
-    const nx = dX.mul(float(heightScale)).div(worldScale).mul(-1);
-    const ny = dY.mul(float(heightScale)).div(worldScale).mul(-1);
-    const nz = float(1);  // Normal points along Z in object space
+    // Cross product of tangent vectors
+    const tangentX = vec3(worldStep.mul(2), float(0), sobelX);
+    const tangentY = vec3(float(0), worldStep.mul(2), sobelY);
 
-    // Build the normal in object space (pre-rotation)
+    // For a plane in XY with Z up (before rotation), the normal calculation is:
+    const nx = sobelX.div(worldStep.mul(2)).mul(-1);
+    const ny = sobelY.div(worldStep.mul(2)).mul(-1);
+    const nz = float(1);
+
+    // Build and normalize the normal
     const normalRaw = vec3(nx, ny, nz);
+    const normalizedNormal = normalize(normalRaw);
 
-    // Normalize the result
-    material.normalNode = normalize(normalRaw);
+    // Apply normal to material
+    material.normalNode = normalizedNormal;
   }
 
   // Store additional maps for potential use in fragment shader

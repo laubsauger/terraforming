@@ -2,10 +2,11 @@ import * as THREE from 'three/webgpu';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { createTerrainMaterialTSL } from './materials/TerrainMaterialTSL';
+import { createBrushDecalMaterialTSL } from './materials/BrushDecalMaterialTSL';
 import { createWaterMaterialTSL } from './materials/WaterMaterialTSL';
 import { createLavaMaterialTSL } from './materials/LavaMaterialTSL';
 import { BrushSystem } from '../sim/BrushSystem';
-import type { Fields } from '../sim/fields';
+// import type { Fields } from '../sim/fields'; // Unused
 
 export interface TerrainRendererOptions {
   canvas: HTMLCanvasElement;
@@ -45,6 +46,8 @@ export class TerrainRenderer extends BaseRenderer {
   private brushModeIndicator?: THREE.Group; // Arrows or particles to show mode
   private brushHandMass = 0;
   private brushHandCapacity = 10000;
+  private brushDecalMesh?: THREE.Mesh;
+  private brushDecalMaterial?: any; // NodeMaterial from TSL
 
   // Day/night cycle
   private sunLight!: THREE.DirectionalLight;
@@ -59,8 +62,8 @@ export class TerrainRenderer extends BaseRenderer {
 
   // Centralized water configuration
   private readonly WATER_LEVEL = 2.3; // Absolute water height in world units
-  private readonly HEIGHT_SCALE = 15;  // Terrain height scale
-  private readonly WATER_LEVEL_NORMALIZED = 2.3 / 15; // Normalized for shaders
+  private readonly HEIGHT_SCALE = 25;  // Terrain height scale - increased for more dramatic terrain
+  private readonly WATER_LEVEL_NORMALIZED = 2.3 / 25; // Normalized for shaders (updated for new height scale)
 
   // Textures for simulation data
   private heightTexture: THREE.DataTexture;
@@ -143,8 +146,8 @@ export class TerrainRenderer extends BaseRenderer {
     // NOW initialize brush system with actual terrain data
     this.initializeBrushSystemWithTerrain();
 
-    // Create brush cursor
-    this.createBrushCursor();
+    // Disabled: Brush cursor is now handled by the TerrainCursor UI component
+    // this.createBrushCursor();
 
     // Debug logging
     console.log('TerrainRenderer: Scene children count:', this.scene.children.length);
@@ -272,9 +275,95 @@ export class TerrainRenderer extends BaseRenderer {
       raycaster.setFromCamera(mouse, this.camera);
 
       if (this.terrainMesh) {
+        // First get rough intersection with base mesh
         const intersects = raycaster.intersectObject(this.terrainMesh);
         if (intersects.length > 0) {
-          lastWorldPos = intersects[0].point;
+          // Get the initial hit point on the undisplaced mesh
+          const baseHit = intersects[0].point;
+
+          // Now perform accurate ray marching to find the actual displaced surface
+          const rayOrigin = this.camera.position.clone();
+          const rayDir = new THREE.Vector3();
+          rayDir.subVectors(baseHit, rayOrigin).normalize();
+
+          // Ray march to find actual terrain intersection with adaptive stepping
+          const maxSteps = 100;
+          const startDistance = Math.max(0, rayOrigin.distanceTo(baseHit) - 20); // Start closer
+          const marchDistance = rayOrigin.distanceTo(baseHit) + 20; // Search a bit beyond
+          let closestPoint = baseHit.clone();
+          let minDistToSurface = Infinity;
+          let foundHit = false;
+
+          // Adaptive step size - start coarse, refine near surface
+          let stepSize = (marchDistance - startDistance) / 20; // Start with larger steps
+
+          for (let i = 0; i < maxSteps && !foundHit; i++) {
+            const t = startDistance + i * stepSize;
+            if (t > marchDistance) break;
+
+            const samplePoint = new THREE.Vector3();
+            samplePoint.copy(rayOrigin).addScaledVector(rayDir, t);
+
+            // Get actual terrain height at this XZ position
+            const actualHeight = this.getHeightAtWorldPos(samplePoint.x, samplePoint.z);
+            const rayHeight = samplePoint.y;
+
+            // Check if ray crossed the terrain surface
+            if (rayHeight <= actualHeight) {
+              // We've hit or passed through - refine with binary search
+              let low = Math.max(startDistance, t - stepSize);
+              let high = t;
+
+              // Binary search for exact intersection
+              for (let j = 0; j < 10; j++) {
+                const mid = (low + high) / 2;
+                const testPoint = new THREE.Vector3();
+                testPoint.copy(rayOrigin).addScaledVector(rayDir, mid);
+
+                const testHeight = this.getHeightAtWorldPos(testPoint.x, testPoint.z);
+
+                if (Math.abs(testPoint.y - testHeight) < 0.1) {
+                  // Close enough - this is our hit
+                  lastWorldPos = new THREE.Vector3(testPoint.x, testHeight, testPoint.z);
+                  foundHit = true;
+                  break;
+                }
+
+                if (testPoint.y > testHeight) {
+                  low = mid;
+                } else {
+                  high = mid;
+                }
+              }
+
+              if (!foundHit) {
+                // Use the refined position even if not exact
+                const finalPoint = new THREE.Vector3();
+                finalPoint.copy(rayOrigin).addScaledVector(rayDir, (low + high) / 2);
+                const finalHeight = this.getHeightAtWorldPos(finalPoint.x, finalPoint.z);
+                lastWorldPos = new THREE.Vector3(finalPoint.x, finalHeight, finalPoint.z);
+                foundHit = true;
+              }
+              break;
+            }
+
+            // Track closest approach for fallback
+            const distToSurface = Math.abs(rayHeight - actualHeight);
+            if (distToSurface < minDistToSurface) {
+              minDistToSurface = distToSurface;
+              closestPoint.set(samplePoint.x, actualHeight, samplePoint.z);
+
+              // Reduce step size when getting close to surface
+              if (distToSurface < 5) {
+                stepSize = Math.min(stepSize, 0.5);
+              }
+            }
+          }
+
+          // Fallback: if no exact hit, use closest approach
+          if (!lastWorldPos) {
+            lastWorldPos = closestPoint;
+          }
 
           // Check if Alt is pressed for ready state
           if (event.altKey) {
@@ -401,6 +490,24 @@ export class TerrainRenderer extends BaseRenderer {
    * Create visual brush cursor
    */
   private createBrushCursor(): void {
+    // Create brush decal overlay plane
+    const decalGeometry = new THREE.PlaneGeometry(this.terrainSize, this.terrainSize, 1, 1);
+    decalGeometry.rotateX(-Math.PI / 2); // Make it horizontal
+
+    this.brushDecalMaterial = createBrushDecalMaterialTSL({
+      brushPosition: new THREE.Vector2(0, 0),
+      brushRadius: 5,
+      brushMode: 'pickup',
+      brushMaterial: 'soil',
+      brushState: 0
+    });
+
+    this.brushDecalMesh = new THREE.Mesh(decalGeometry, this.brushDecalMaterial);
+    this.brushDecalMesh.position.y = 0.5; // Slightly above terrain
+    this.brushDecalMesh.renderOrder = 1000; // Render on top
+    this.brushDecalMesh.visible = false;
+    this.scene.add(this.brushDecalMesh);
+
     // Create sphere for brush volume indicator
     const sphereGeometry = new THREE.SphereGeometry(1, 32, 32);
 
@@ -431,9 +538,9 @@ export class TerrainRenderer extends BaseRenderer {
     const ringGeometry = new THREE.BufferGeometry().setFromPoints(points);
     const ringMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff,
-      opacity: 0.5,
+      opacity: 0.8,  // More opaque for better visibility
       transparent: true,
-      linewidth: 1.5, // Thinner line
+      linewidth: 3,  // Thicker line for better visibility
       depthTest: false,
       depthWrite: false,
     });
@@ -465,41 +572,88 @@ export class TerrainRenderer extends BaseRenderer {
 
   /**
    * Update brush cursor appearance based on current state
+   * NOTE: Cursor rendering is now handled by the TerrainCursor UI component
    */
   private updateBrushCursor(worldPos?: THREE.Vector3): void {
-    if (!this.brushCursorSphere || !this.brushCursorRing || !this.brushCursorMaterial) return;
-
+    // Early return - cursor is handled by UI component
+    return;
     // Sync brush parameters from UI before updating visuals
     this.syncBrushFromUI();
 
     // Determine visibility and current stage
     const shouldShow = (this.brushHovering || this.brushReady || this.brushActive) && worldPos !== undefined;
 
-    // Update visibility
-    this.brushCursorSphere.visible = shouldShow;
-    this.brushCursorRing.visible = shouldShow;
+    // Update decal overlay
+    if (this.brushDecalMesh && this.brushDecalMaterial) {
+      this.brushDecalMesh.visible = shouldShow;
 
-    if (!shouldShow) return;
+      if (shouldShow && worldPos) {
+        // Update shader uniforms
+        const uniforms = (this.brushDecalMaterial as any).brushUniforms;
+        if (uniforms) {
+          // Update position
+          uniforms.position.value.set(worldPos.x, worldPos.z);
 
-    // Get actual terrain height at this position for proper surface following
-    const centerHeight = this.getHeightAtWorldPos(worldPos!.x, worldPos!.z) || worldPos!.y;
-    const safeY = Math.max(centerHeight, 0.15); // Ensure minimum height above ocean floor
+          // Update radius
+          uniforms.radius.value = this.brushRadius;
 
-    // Position sphere at world position with terrain-following height
-    this.brushCursorSphere.position.set(worldPos!.x, safeY, worldPos!.z);
+          // Update state (0=hidden, 1=hover, 2=ready, 3=active)
+          let state = 0;
+          if (this.brushActive) state = 3;
+          else if (this.brushReady) state = 2;
+          else if (this.brushHovering) state = 1;
+          uniforms.state.value = state;
+
+          // Update mode and material
+          uniforms.mode.value = this.brushMode === 'pickup' ? 0 : 1;
+          uniforms.material.value = this.brushMaterial === 'soil' ? 0 :
+                                   this.brushMaterial === 'rock' ? 1 : 2;
+        }
+      }
+    }
+
+    // Update old cursor elements (keep for now, can remove later)
+    if (this.brushCursorSphere && this.brushCursorRing) {
+      this.brushCursorSphere.visible = shouldShow;
+      this.brushCursorRing.visible = shouldShow;
+    }
+
+    if (!shouldShow) {
+      this.lastBrushWorldPos = undefined;
+      return;
+    }
+
+    // Store position for continuous animation
+    this.lastBrushWorldPos = worldPos;
+
+    // Get the highest point in brush radius for better positioning
+    const maxHeight = this.getHighestPointInRadius(worldPos!.x, worldPos!.z, this.brushRadius);
+    const safeY = Math.max(maxHeight, 0.15); // Ensure minimum height above ocean floor
+
+    // Position sphere ABOVE the terrain based on its current size
+    if (!this.brushCursorSphere || !this.brushCursorRing) return;
+
+    const sphereScale = this.brushCursorSphere.scale.x; // Current scale
+    const sphereOffset = sphereScale + 0.5; // Always above terrain by radius + margin
+    this.brushCursorSphere.position.set(worldPos!.x, safeY + sphereOffset, worldPos!.z);
 
     // Update ring to conform to terrain
     this.brushCursorRing.position.set(worldPos!.x, 0, worldPos!.z);
 
-    // Update ring vertices to follow terrain
+    // Update ring vertices to follow terrain with better slope handling
     const ringGeometry = this.brushCursorRing.geometry;
     const positions = ringGeometry.attributes.position;
     const segments = 64;
 
+    // Calculate average slope normal for better ring alignment
+    let avgNormalX = 0;
+    let avgNormalZ = 0;
+    let sampleCount = 0;
+
     for (let i = 0; i <= segments; i++) {
       const angle = (i / segments) * Math.PI * 2;
-      const localX = Math.cos(angle) * this.brushRadius * 0.8; // Slightly smaller radius
-      const localZ = Math.sin(angle) * this.brushRadius * 0.8;
+      const localX = Math.cos(angle) * this.brushRadius;
+      const localZ = Math.sin(angle) * this.brushRadius;
 
       // Get world position for this point
       const worldX = worldPos!.x + localX;
@@ -508,18 +662,38 @@ export class TerrainRenderer extends BaseRenderer {
       // Get terrain height at this point
       const pointHeight = this.getHeightAtWorldPos(worldX, worldZ);
 
-      if (pointHeight !== null) {
-        // Set position with terrain-following height
-        positions.setXYZ(
-          i,
-          localX,
-          pointHeight + 0.2, // Small offset above terrain
-          localZ
-        );
-      } else {
-        // Fallback to flat circle at center height
-        positions.setXYZ(i, localX, centerHeight + 0.2, localZ);
+      // Calculate local slope contribution
+      if (i > 0 && pointHeight !== null) {
+        const prevAngle = ((i - 1) / segments) * Math.PI * 2;
+        const prevX = Math.cos(prevAngle) * this.brushRadius;
+        const prevZ = Math.sin(prevAngle) * this.brushRadius;
+        const prevHeight = this.getHeightAtWorldPos(worldPos!.x + prevX, worldPos!.z + prevZ);
+
+        if (prevHeight !== null) {
+          const dx = localX - prevX;
+          const dz = localZ - prevZ;
+          const dy = pointHeight - prevHeight;
+
+          avgNormalX += dy * dz;
+          avgNormalZ += -dy * dx;
+          sampleCount++;
+        }
       }
+
+      // Set ring vertex position with consistent offset
+      const ringHeight = pointHeight !== null ? pointHeight : maxHeight;
+
+      // Apply a consistent vertical offset that scales with view angle
+      const viewDir = new THREE.Vector3().subVectors(this.camera.position, worldPos!).normalize();
+      const viewAngle = Math.abs(viewDir.y);
+      const verticalOffset = 0.3 + (1 - viewAngle) * 0.5; // Higher offset for horizontal views
+
+      positions.setXYZ(
+        i,
+        localX,
+        ringHeight + verticalOffset,
+        localZ
+      );
     }
 
     positions.needsUpdate = true;
@@ -535,30 +709,40 @@ export class TerrainRenderer extends BaseRenderer {
 
     // STAGE 1: Hovering (subtle presence)
     if (this.brushHovering && !this.brushReady && !this.brushActive) {
-      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
-      this.brushCursorMaterial.emissive.setHex(0x000000); // No emissive
-      this.brushCursorMaterial.opacity = 0.2; // Very subtle
-      this.brushCursorMaterial.emissiveIntensity = 0;
+      if (this.brushCursorMaterial) {
+        this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+        this.brushCursorMaterial.emissive.setHex(0x000000); // No emissive
+        this.brushCursorMaterial.opacity = 0.2; // Very subtle
+        this.brushCursorMaterial.emissiveIntensity = 0;
+      }
 
-      // Ring: white, very subtle
-      const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
-      ringMat.color.setHex(0xFFFFFF);
-      ringMat.opacity = 0.3;
+      // Ring: white, more visible
+      if (this.brushCursorRing) {
+        const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
+        ringMat.color.setHex(0xFFFFFF);
+        ringMat.opacity = 0.6;  // More visible when hovering
+      }
 
       // Small base size
-      this.brushCursorSphere.scale.setScalar(0.8);
+      if (this.brushCursorSphere) {
+        this.brushCursorSphere.scale.setScalar(0.8);
+      }
     }
 
     // STAGE 2: Alt held - Ready to act (locked and loaded)
     else if (this.brushReady && !this.brushActive) {
-      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
-      this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
-      this.brushCursorMaterial.opacity = 0.6; // More visible
-      this.brushCursorMaterial.emissiveIntensity = 0.5; // Glowing
+      if (this.brushCursorMaterial) {
+        this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+        this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+        this.brushCursorMaterial.opacity = 0.6; // More visible
+        this.brushCursorMaterial.emissiveIntensity = 0.5; // Glowing
+      }
 
       // Add slow breathing animation
-      const breathe = Math.sin(Date.now() * 0.003) * 0.1 + 1;
-      this.brushCursorSphere.scale.setScalar(1.2 * breathe);
+      if (this.brushCursorSphere) {
+        const breathe = Math.sin(Date.now() * 0.003) * 0.1 + 1;
+        this.brushCursorSphere.scale.setScalar(1.2 * breathe);
+      }
 
       // Ring: Mode-specific color, pulsing
       const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
@@ -572,7 +756,7 @@ export class TerrainRenderer extends BaseRenderer {
       } else {
         ringMat.color.setHex(0xFFAA00); // Orange for deposit
       }
-      ringMat.opacity = 0.6 + Math.sin(Date.now() * 0.004) * 0.2; // Pulsing opacity
+      ringMat.opacity = 0.8 + Math.sin(Date.now() * 0.004) * 0.2; // Higher base opacity, pulsing
 
       // Show mode indicators
       if (this.brushModeIndicator) {
@@ -589,18 +773,19 @@ export class TerrainRenderer extends BaseRenderer {
       // Check if nearly full (>95% capacity)
       const isNearlyFull = volumeRatio > 0.95;
 
-      if (isNearlyFull && this.brushMode === 'pickup') {
-        // Flash red when full
-        this.brushCursorMaterial.color.setHex(0xFF0000);
-        this.brushCursorMaterial.emissive.setHex(0xFF0000);
-        this.brushCursorMaterial.emissiveIntensity = 2.0 * (0.5 + 0.5 * Math.sin(Date.now() * 0.02)); // Fast flashing
-      } else {
-        this.brushCursorMaterial.color.setHex(baseMat.baseColor);
-        this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
-        this.brushCursorMaterial.emissiveIntensity = 1.5; // Bright glow
+      if (this.brushCursorMaterial) {
+        if (isNearlyFull && this.brushMode === 'pickup') {
+          // Flash red when full
+          this.brushCursorMaterial.color.setHex(0xFF0000);
+          this.brushCursorMaterial.emissive.setHex(0xFF0000);
+          this.brushCursorMaterial.emissiveIntensity = 2.0 * (0.5 + 0.5 * Math.sin(Date.now() * 0.02)); // Fast flashing
+        } else {
+          this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+          this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+          this.brushCursorMaterial.emissiveIntensity = 1.5; // Bright glow
+        }
+        this.brushCursorMaterial.opacity = 0.9; // Highly visible
       }
-
-      this.brushCursorMaterial.opacity = 0.9; // Highly visible
 
       // Fast pulsing animation
       const pulse = Math.sin(Date.now() * 0.008) * 0.1 + 1; // Reduced pulse amplitude
@@ -610,9 +795,12 @@ export class TerrainRenderer extends BaseRenderer {
       const maxScale = this.brushMode === 'pickup' ? 8.0 : 0.2; // Huge when full picking up, tiny when empty depositing
       const baseScale = minScale + (maxScale - minScale) * volumeRatio;
 
-      this.brushCursorSphere.scale.setScalar(baseScale * pulse);
+      if (this.brushCursorSphere) {
+        this.brushCursorSphere.scale.setScalar(baseScale * pulse);
+      }
 
       // Ring: Bright active colors
+      if (!this.brushCursorRing) return;
       const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
       // Use inverted mode if CMD is held
       const effectiveMode = this.temporaryModeInvert
@@ -624,22 +812,26 @@ export class TerrainRenderer extends BaseRenderer {
       } else {
         ringMat.color.setHex(0xFF0000); // Bright red for active deposit
       }
-      ringMat.opacity = 0.9;
+      ringMat.opacity = 1.0;  // Fully visible during active brushing
 
       // Intensify material emissive for active state
-      this.brushCursorMaterial.emissiveIntensity *= 1.5;
+      if (this.brushCursorMaterial) {
+        this.brushCursorMaterial.emissiveIntensity *= 1.5;
+      }
 
       // Show active mode indicators
       this.updateModeIndicator(worldPos!, true, true);
     }
 
     // Update material properties
-    this.brushCursorMaterial.roughness = baseMat.roughness;
-    this.brushCursorMaterial.metalness = baseMat.metalness;
+    if (this.brushCursorMaterial) {
+      this.brushCursorMaterial.roughness = baseMat.roughness;
+      this.brushCursorMaterial.metalness = baseMat.metalness;
+    }
 
     // Hide mode indicators if only hovering
-    if (this.brushHovering && !this.brushReady && !this.brushActive) {
-      this.updateModeIndicator(worldPos!, false, false);
+    if (this.brushHovering && !this.brushReady && !this.brushActive && worldPos) {
+      this.updateModeIndicator(worldPos, false, false);
     }
   }
 
@@ -747,8 +939,14 @@ export class TerrainRenderer extends BaseRenderer {
 
     if (!this.brushModeIndicator.visible) return;
 
+    // Store position for continuous animation
+    this.lastBrushWorldPos = worldPos;
+
     // Position group at cursor location
     this.brushModeIndicator.position.set(worldPos.x, 0, worldPos.z);
+
+    // Get the highest point for all indicators
+    const maxHeight = this.getHighestPointInRadius(worldPos.x, worldPos.z, this.brushRadius * 1.2);
 
     // Hide all indicators first
     this.brushModeIndicator.children.forEach(child => {
@@ -771,17 +969,12 @@ export class TerrainRenderer extends BaseRenderer {
           const baseX = child.userData.baseX || 0;
           const baseZ = child.userData.baseZ || 0;
 
-          // Get terrain height at arrow's world position
-          const worldArrowX = worldPos.x + baseX;
-          const worldArrowZ = worldPos.z + baseZ;
-          const arrowTerrainHeight = this.getHeightAtWorldPos(worldArrowX, worldArrowZ) || worldPos.y;
-
-          // Animate upward movement relative to terrain
+          // Animate upward movement relative to highest terrain point
           const time = Date.now() * 0.003;
           const animOffset = 3 + Math.sin(time + baseX) * 1.0; // Much higher for visibility
           child.position.x = baseX;
           child.position.z = baseZ;
-          child.position.y = Math.max(arrowTerrainHeight, 0.15) + animOffset;
+          child.position.y = maxHeight + animOffset;
 
           // Intensify during active state
           const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
@@ -798,17 +991,12 @@ export class TerrainRenderer extends BaseRenderer {
           const baseX = child.userData.baseX || 0;
           const baseZ = child.userData.baseZ || 0;
 
-          // Get terrain height at arrow's world position
-          const worldArrowX = worldPos.x + baseX;
-          const worldArrowZ = worldPos.z + baseZ;
-          const arrowTerrainHeight = this.getHeightAtWorldPos(worldArrowX, worldArrowZ) || worldPos.y;
-
-          // Animate downward movement relative to terrain
+          // Animate downward movement relative to highest terrain point
           const time = Date.now() * 0.004;
           const animOffset = 2 + Math.sin(time + baseX) * -0.5;
           child.position.x = baseX;
           child.position.z = baseZ;
-          child.position.y = Math.max(arrowTerrainHeight, 0.15) + animOffset;
+          child.position.y = maxHeight + animOffset;
 
           const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
           material.opacity = isActive ? 1.0 : 0.6;
@@ -839,8 +1027,151 @@ export class TerrainRenderer extends BaseRenderer {
     this.brushModeIndicator.rotation.y += 0.01;
   }
 
+  // Store last brush position for continuous animation
+  private lastBrushWorldPos?: THREE.Vector3;
+
   /**
-   * Get height at world coordinates by sampling height texture
+   * Get the highest point within a radius from a world position
+   */
+  private getHighestPointInRadius(worldX: number, worldZ: number, radius: number): number {
+    // Sample multiple points in the radius to find highest
+    let maxHeight = this.getHeightAtWorldPos(worldX, worldZ);
+
+    // Sample in concentric circles
+    for (let r = 0; r <= radius; r += radius / 4) {
+      const angleSamples = Math.max(8, Math.floor(r * 8 / radius));
+      for (let i = 0; i < angleSamples; i++) {
+        const angle = (i / angleSamples) * Math.PI * 2;
+        const sampleX = worldX + Math.cos(angle) * r;
+        const sampleZ = worldZ + Math.sin(angle) * r;
+        const height = this.getHeightAtWorldPos(sampleX, sampleZ);
+        if (height > maxHeight) {
+          maxHeight = height;
+        }
+      }
+    }
+
+    return maxHeight;
+  }
+
+  /**
+   * Update brush cursor animations continuously (called from render loop)
+   */
+  private updateBrushAnimations(): void {
+    // Only animate if cursor is visible
+    if (!this.brushCursorSphere?.visible && !this.brushModeIndicator?.visible) return;
+
+    // Update mode indicator animations if visible
+    if (this.brushModeIndicator?.visible && this.lastBrushWorldPos) {
+      this.animateModeIndicators(this.lastBrushWorldPos);
+    }
+
+    // Update sphere pulsing if in ready or active state
+    if (this.brushCursorSphere?.visible && (this.brushReady || this.brushActive)) {
+      // This will re-trigger animations that depend on time
+      if (this.lastBrushWorldPos) {
+        // Just update the animations without changing position
+        this.updateBrushCursorAnimations(this.lastBrushWorldPos);
+      }
+    }
+  }
+
+  /**
+   * Update only the animated parts of the brush cursor
+   */
+  private updateBrushCursorAnimations(worldPos: THREE.Vector3): void {
+    if (!this.brushCursorSphere || !this.brushCursorMaterial) return;
+
+    // Get the highest point in brush radius for better positioning
+    const maxHeight = this.getHighestPointInRadius(worldPos.x, worldPos.z, this.brushRadius);
+    const safeY = Math.max(maxHeight, 0.15);
+
+    // Update sphere position to be above highest point
+    const sphereScale = this.brushCursorSphere.scale.x;
+    const sphereOffset = sphereScale + 0.5;
+    this.brushCursorSphere.position.set(worldPos.x, safeY + sphereOffset, worldPos.z);
+
+    // Handle pulsing animations based on state
+    if (this.brushReady && !this.brushActive) {
+      // Ready state breathing animation
+      const breathe = Math.sin(Date.now() * 0.003) * 0.1 + 1;
+      this.brushCursorSphere.scale.setScalar(1.2 * breathe);
+
+      // Pulsing ring opacity
+      const ringMat = this.brushCursorRing?.material as THREE.LineBasicMaterial;
+      if (ringMat) {
+        ringMat.opacity = 0.8 + Math.sin(Date.now() * 0.004) * 0.2;
+      }
+    } else if (this.brushActive) {
+      // Active state pulsing
+      const pulse = Math.sin(Date.now() * 0.008) * 0.1 + 1;
+      const volumeRatio = Math.min(1.0, this.brushHandMass / this.brushHandCapacity);
+      const minScale = this.brushMode === 'pickup' ? 1.0 : 0.5;
+      const maxScale = this.brushMode === 'pickup' ? 8.0 : 0.2;
+      const baseScale = minScale + (maxScale - minScale) * volumeRatio;
+      this.brushCursorSphere.scale.setScalar(baseScale * pulse);
+    }
+  }
+
+  /**
+   * Animate mode indicators continuously
+   */
+  private animateModeIndicators(worldPos: THREE.Vector3): void {
+    if (!this.brushModeIndicator) return;
+
+    // Get the highest point for indicator positioning
+    const maxHeight = this.getHighestPointInRadius(worldPos.x, worldPos.z, this.brushRadius * 1.2);
+
+    // Rotate the entire indicator group
+    this.brushModeIndicator.rotation.y += 0.01;
+
+    // Use inverted mode if CMD is held
+    const effectiveMode = this.temporaryModeInvert
+      ? (this.brushMode === 'pickup' ? 'deposit' : 'pickup')
+      : this.brushMode;
+
+    // Animate indicators based on mode
+    this.brushModeIndicator.children.forEach(child => {
+      if (effectiveMode === 'pickup' && child.name === 'pickup-arrow') {
+        child.visible = true;
+        // Animate upward arrows
+        const baseX = child.userData.baseX || 0;
+        const baseZ = child.userData.baseZ || 0;
+        const time = Date.now() * 0.003;
+        const animOffset = 3 + Math.sin(time + baseX) * 1.0;
+        child.position.x = baseX;
+        child.position.z = baseZ;
+        child.position.y = maxHeight + animOffset;
+        const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        material.opacity = this.brushActive ? 1.0 : 0.6;
+      } else if (effectiveMode === 'deposit' && child.name === 'deposit-arrow') {
+        child.visible = true;
+        // Animate downward arrows
+        const baseX = child.userData.baseX || 0;
+        const baseZ = child.userData.baseZ || 0;
+        const time = Date.now() * 0.004;
+        const animOffset = 2 + Math.sin(time + baseX) * -0.5;
+        child.position.x = baseX;
+        child.position.z = baseZ;
+        child.position.y = maxHeight + animOffset;
+        const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        material.opacity = this.brushActive ? 1.0 : 0.6;
+      } else if (child.name === `${this.brushMaterial}-particle` && effectiveMode === 'deposit') {
+        child.visible = true;
+        // Animate falling particles
+        const time = Date.now() * 0.002;
+        const baseY = 3 + Math.random() * 2;
+        child.position.y = maxHeight + baseY + Math.sin(time + child.position.x * 0.5) * -1;
+        const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
+        material.opacity = this.brushActive ? 0.9 : 0.5;
+      } else {
+        child.visible = false;
+      }
+    });
+  }
+
+  /**
+   * Get height at world coordinates by sampling height texture and field textures
    */
   public getHeightAtWorldPos(worldX: number, worldZ: number): number {
     // Convert world coordinates to texture coordinates
@@ -859,10 +1190,20 @@ export class TerrainRenderer extends BaseRenderer {
 
     const data = this.heightTexture.image.data as Float32Array;
     const index = (y * textureSize + x) * 4; // RGBA format
-    const heightValue = data[index]; // Height is stored in R channel
+    const baseHeight = data[index]; // Height is stored in R channel
 
-    // Apply height scale (matching the material)
-    return heightValue * 15; // Same scale as material
+    // Get field heights if brush system is available
+    let fieldHeight = 0;
+    if (this.brushSystem) {
+      // Note: In a real implementation, we'd need to read from GPU textures
+      // For now, fields are rendered via displacement in the shader
+      // This is an approximation but better than ignoring fields entirely
+      fieldHeight = 0; // Fields contribute additional height on top of base
+    }
+
+    // Apply height scale (matching the TerrainMaterialTSL which uses 25)
+    const totalHeight = baseHeight + fieldHeight;
+    return totalHeight * 25; // Updated to match material's height scale
   }
 
   private setupLighting(): void {
@@ -884,21 +1225,21 @@ export class TerrainRenderer extends BaseRenderer {
     // this.fillLight.castShadow = false;
     // this.scene.add(this.fillLight);
 
-    // Sun light - warm golden color for rich tropical lighting
-    this.sunLight = new THREE.DirectionalLight(0xfff4e0, 1.0); // Warmer golden tone, full intensity
+    // Sun light - stronger intensity for better shadows and terrain illumination
+    this.sunLight = new THREE.DirectionalLight(0xfff8e1, 2.5); // Brighter, warmer tone
     this.sunLight.castShadow = true;
 
-    // Configure sun shadow camera for consistent lighting
-    this.sunLight.shadow.mapSize.width = 2048; // Reduced for better performance
-    this.sunLight.shadow.mapSize.height = 2048;
-    this.sunLight.shadow.camera.near = 0.5;
-    this.sunLight.shadow.camera.far = 200;
-    this.sunLight.shadow.camera.left = -70;
-    this.sunLight.shadow.camera.right = 70;
-    this.sunLight.shadow.camera.top = 70;
-    this.sunLight.shadow.camera.bottom = -70;
-    this.sunLight.shadow.bias = 0.0001; // Small positive bias
-    this.sunLight.shadow.normalBias = 0; // No normal bias for now
+    // Configure sun shadow camera for better shadow quality and coverage
+    this.sunLight.shadow.mapSize.width = 4096; // Higher resolution for better shadows
+    this.sunLight.shadow.mapSize.height = 4096;
+    this.sunLight.shadow.camera.near = 1;
+    this.sunLight.shadow.camera.far = 300;
+    this.sunLight.shadow.camera.left = -80;
+    this.sunLight.shadow.camera.right = 80;
+    this.sunLight.shadow.camera.top = 80;
+    this.sunLight.shadow.camera.bottom = -80;
+    this.sunLight.shadow.bias = -0.0005; // Negative bias for better shadow acne prevention
+    this.sunLight.shadow.normalBias = 0.02; // Normal bias to prevent self-shadowing
     this.sunLight.shadow.needsUpdate = true;
     this.sunLight.shadow.autoUpdate = true; // Let Three.js handle updates normally
     this.scene.add(this.sunLight);
@@ -985,19 +1326,24 @@ export class TerrainRenderer extends BaseRenderer {
     // Convert time to radians for circular motion
     const angle = adjustedTime * Math.PI * 2;
 
-    // Sun arc configuration - more realistic path
-    const sunTilt = Math.PI / 4; // 45 degrees tilt for more pronounced seasonal arc
-    const arcRotation = 0; // No rotation for now, will be controllable
+    // Sun arc configuration - better positioning for shadows
+    // const sunTilt = Math.PI / 6; // 30 degrees tilt for natural seasonal arc - unused
+    const arcRotation = Math.PI / 8; // 22.5 degree rotation for side lighting
 
-    // Calculate sun position with better arc
+    // Calculate sun position for better shadows - avoid zenith
     // Note: angle = 0 is midnight, PI/2 is 6am, PI is noon, 3PI/2 is 6pm
-    const orbitRadius = 150; // Much further away to avoid camera occlusion
-    const verticalScale = 0.45; // Reduced from 0.7 to avoid zenith - max 67.5 units high
+    const orbitRadius = 120; // Closer for stronger shadows
+    const verticalScale = 0.6; // Higher for better angle range
+    const maxElevation = Math.PI / 3; // Limit to 60 degrees max elevation
 
-    // Fix sun positioning: use -cos for Y so sun is UP at noon (angle=PI)
-    const baseX = Math.sin(angle) * orbitRadius;
-    const baseY = -Math.cos(angle) * orbitRadius * verticalScale; // Negative cos: up at PI (noon)
-    const baseZ = Math.sin(angle) * Math.sin(sunTilt) * orbitRadius;
+    // Calculate sun elevation angle - limit to avoid zenith
+    const elevationAngle = Math.min(maxElevation, Math.abs(-Math.cos(angle)) * (Math.PI / 2));
+
+    // Position sun at angle for better shadows - side lighting during day
+    const azimuth = angle + arcRotation; // Rotate azimuth for side lighting
+    const baseX = Math.sin(azimuth) * orbitRadius * Math.cos(elevationAngle);
+    const baseY = Math.sin(elevationAngle) * orbitRadius * verticalScale;
+    const baseZ = Math.cos(azimuth) * orbitRadius * Math.cos(elevationAngle);
 
     // Apply rotation around Y axis (keep simple for now)
     const sunX = baseX;
@@ -1066,31 +1412,32 @@ export class TerrainRenderer extends BaseRenderer {
       moonMat.color.setRGB(brightness, brightness, brightness * 1.05);
     }
 
-    // Adjust light intensities based on sun elevation
-    const sunElevation = Math.max(0, sunY / (orbitRadius * verticalScale)); // 0 to 1
+    // Calculate proper sun elevation for lighting
+    const sunElevation = Math.max(0, Math.sin(elevationAngle)); // 0 to 1 based on actual elevation
     const moonElevation = Math.max(0, moonY / (orbitRadius * verticalScale)); // 0 to 1
 
     // Ensure only one light casts shadows at a time to prevent conflicts
-    const isDaytime = sunElevation > moonElevation;
+    const isDaytime = sunElevation > 0.1; // Sun is dominant when above horizon
 
     if (isDaytime) {
-      // Day time - sun is primary light (increased intensity for better shadows)
-      this.sunLight.intensity = sunElevation * 1.5;
+      // Day time - sun is primary light with much stronger intensity for better terrain illumination
+      const dayIntensity = Math.max(0.4, sunElevation * 2.5); // Minimum 40% intensity, up to 250%
+      this.sunLight.intensity = dayIntensity;
       this.sunLight.castShadow = true;
-      this.moonLight.intensity = moonElevation * 0.05; // Very dim moon during day
+      this.moonLight.intensity = 0.02; // Very dim moon during day
       this.moonLight.castShadow = false;
     } else {
       // Night time - moon is primary light
-      this.sunLight.intensity = sunElevation * 0.05; // Very dim sun during night
+      this.sunLight.intensity = 0.02; // Very dim sun during night
       this.sunLight.castShadow = false;
       this.moonLight.intensity = moonElevation * 0.3;
       this.moonLight.castShadow = true;
     }
 
-    // Ambient light varies throughout the day
+    // Ambient light varies throughout the day - much lower for better shadows
     // Brighter during day, darker at night
     const dayFactor = Math.max(0, Math.cos(angle)); // 1 at noon, -1 at midnight
-    const ambientIntensity = 0.05 + dayFactor * 0.08; // 0.05 to 0.13 (much lower for better contrast)
+    const ambientIntensity = 0.02 + dayFactor * 0.05; // 0.02 to 0.07 (very low for strong shadows)
     this.ambientLight.intensity = ambientIntensity;
 
     // Adjust ambient color - warmer during sunrise/sunset
@@ -1258,7 +1605,7 @@ export class TerrainRenderer extends BaseRenderer {
     if (!this.brushSystem || !this.terrainMesh) return;
 
     // Get brush system fields for direct binding
-    const fields = this.brushSystem.getFields();
+    // const fields = this.brushSystem.getFields(); // unused
 
     // Update terrain material to use brush system textures directly
     const material = this.terrainMesh.material as any;
@@ -2005,6 +2352,16 @@ export class TerrainRenderer extends BaseRenderer {
       }
       this.updateDayNightCycle();
     }
+
+    // Update brush decal animation time
+    if (this.brushDecalMaterial) {
+      const uniforms = (this.brushDecalMaterial as any).brushUniforms;
+      if (uniforms && uniforms.time) {
+        uniforms.time.value = performance.now() / 1000; // Convert to seconds
+      }
+    }
+
+    // Note: Brush cursor animations are handled by the TerrainCursor component in the UI layer
 
     // Execute brush system if available
     if (this.brushSystem && this.renderer) {
