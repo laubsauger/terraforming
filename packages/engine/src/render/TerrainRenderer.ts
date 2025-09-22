@@ -52,7 +52,7 @@ export class TerrainRenderer extends BaseRenderer {
   private ambientLight!: THREE.AmbientLight;
   private sunSphere!: THREE.Mesh;
   private moonSphere!: THREE.Mesh;
-  private timeOfDay = 0.12; // Start at dawn (maps to ~5:30am after adjustment)
+  private timeOfDay = 0.35; // Start at 9:30 AM (nice morning light)
   private dayNightCycleActive = false;
   private cycleSpeed = 0.0001; // Speed of day/night cycle
 
@@ -1765,6 +1765,28 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.brushSystem) {
       this.initializeBrushSystemWithTerrain();
     }
+  }
+
+  /**
+   * Get current heightmap data from the terrain
+   */
+  public getCurrentHeightmap(): Float32Array | null {
+    if (!this.heightTexture || !this.heightTexture.image) return null;
+
+    const size = this.gridSize;
+    const textureData = this.heightTexture.image.data as Float32Array;
+    const heightData = new Float32Array(size * size);
+
+    // Extract height values from RGBA texture (use R channel)
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const idx = y * size + x;
+        const texIdx = idx * 4; // RGBA format
+        heightData[idx] = textureData[texIdx]; // R channel contains height
+      }
+    }
+
+    return heightData;
   }
 
   public updateFlowmap(data: Float32Array): void {

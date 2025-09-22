@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TerraformingUI } from '@playground/components/TerraformingUI';
 import type { Engine } from '@terraforming/engine';
 import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
-import type { PerfSample } from '@terraforming/types';
+import type { PerfSample, Source } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
@@ -33,6 +33,8 @@ export function App() {
   const [brushHandMass, setBrushHandMass] = useState(0);
   const [brushHandCapacity, setBrushHandCapacity] = useState(100000000);
   const [brushMode, setBrushMode] = useState<'pickup' | 'deposit'>('pickup');
+  const [waterSources, setWaterSources] = useState<Source[]>([]);
+  const [lavaSources, setLavaSources] = useState<Source[]>([]);
   const dragIntervalRef = useRef<number | null>(null);
 
   // Detect OS for correct modifier key
@@ -134,6 +136,47 @@ export function App() {
     setActiveTool(tool);
     // TODO: wire tool selection into engine brush/tool system
   }, []);
+
+  const addWaterSource = useCallback((position: [number, number], rate: number = 1.0) => {
+    const newSource: Source = {
+      id: `water-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      position,
+      rate
+    };
+    setWaterSources(prev => [...prev, newSource]);
+  }, []);
+
+  const addLavaSource = useCallback((position: [number, number], rate: number = 0.5) => {
+    const newSource: Source = {
+      id: `lava-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      position,
+      rate
+    };
+    setLavaSources(prev => [...prev, newSource]);
+  }, []);
+
+  const removeWaterSource = useCallback((id: string) => {
+    setWaterSources(prev => prev.filter(source => source.id !== id));
+  }, []);
+
+  const removeLavaSource = useCallback((id: string) => {
+    setLavaSources(prev => prev.filter(source => source.id !== id));
+  }, []);
+
+  // Update engine sources when sources change
+  useEffect(() => {
+    if (engine) {
+      engine.sources.set('water', waterSources);
+      console.log('Updated water sources:', waterSources);
+    }
+  }, [engine, waterSources]);
+
+  useEffect(() => {
+    if (engine) {
+      engine.sources.set('lava', lavaSources);
+      console.log('Updated lava sources:', lavaSources);
+    }
+  }, [engine, lavaSources]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -296,8 +339,42 @@ export function App() {
       return false;
     };
 
+    const performSourcePlacement = (event: MouseEvent) => {
+      // Use shared raycasting utility
+      const raycastResult = raycastToTerrain(engine, canvas, {
+        x: event.clientX,
+        y: event.clientY
+      });
+
+      if (raycastResult) {
+        const point = raycastResult.point;
+        const position: [number, number] = [point.x, point.z];
+
+        console.log('Placing source at:', position, 'Active tool:', activeTool);
+
+        if (activeTool === 'add-water-source') {
+          addWaterSource(position, 1.0); // Default rate
+        } else if (activeTool === 'add-lava-source') {
+          addLavaSource(position, 0.5); // Default rate
+        }
+        return true;
+      }
+      console.log('No terrain intersection found for source placement');
+      return false;
+    };
+
     const handlePointerDown = (event: MouseEvent) => {
-      console.log('Pointer down, alt key held:', event.altKey, 'button:', event.button);
+      console.log('Pointer down, alt key held:', event.altKey, 'button:', event.button, 'active tool:', activeTool);
+
+      // Handle source placement for regular clicks (no alt key) when source tools are active
+      if (!event.altKey && event.button === 0 && (activeTool === 'add-water-source' || activeTool === 'add-lava-source')) {
+        console.log('Placing source');
+        event.preventDefault();
+        event.stopPropagation();
+        performSourcePlacement(event);
+        return;
+      }
+
       if (event.altKey && event.button === 0) { // Left click only
         console.log('Starting brush drag');
         event.preventDefault();
@@ -409,7 +486,7 @@ export function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [engine]); // Remove isAltPressed and isDragging from dependencies
+  }, [engine, activeTool, addWaterSource, addLavaSource]); // Add source management dependencies
 
   // Mouse tracking for tool cursor - always track position
   useEffect(() => {

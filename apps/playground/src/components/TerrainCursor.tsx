@@ -33,6 +33,9 @@ export function TerrainCursor({
   const cursorGroupRef = useRef<THREE.Group | null>(null);
   const lastValidPositionRef = useRef<THREE.Vector3 | null>(null);
   const blockedIndicatorRef = useRef<THREE.Group | null>(null);
+  const trailRef = useRef<THREE.Points | null>(null);
+  const trailPositionsRef = useRef<THREE.Vector3[]>([]);
+  const trailOpacitiesRef = useRef<number[]>([]);
 
   // Initialize cursor group when engine is ready
   useEffect(() => {
@@ -86,7 +89,7 @@ export function TerrainCursor({
     const fillMaterial = new THREE.MeshBasicMaterial({
       color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
       transparent: true,
-      opacity: 0.1, // Very transparent fill
+      opacity: 0.05, // Very subtle fill
       side: THREE.DoubleSide,
       depthTest: false,
       depthWrite: false,
@@ -147,6 +150,55 @@ export function TerrainCursor({
     group.add(blockedGroup);
     blockedIndicatorRef.current = blockedGroup;
 
+    // Create glowing trail effect
+    const trailLength = 20; // Number of trail points
+    const trailGeometry = new THREE.BufferGeometry();
+    const trailPositions = new Float32Array(trailLength * 3);
+    const trailColors = new Float32Array(trailLength * 3);
+    const trailSizes = new Float32Array(trailLength);
+
+    // Initialize trail with current position
+    for (let i = 0; i < trailLength; i++) {
+      trailPositions[i * 3] = 0;
+      trailPositions[i * 3 + 1] = 0;
+      trailPositions[i * 3 + 2] = 0;
+
+      // Color based on tool (with fade)
+      const opacity = (i / trailLength) * 0.8;
+      const toolColor = new THREE.Color(parseInt(TOOL_COLORS[activeTool].replace('#', '0x')));
+      trailColors[i * 3] = toolColor.r;
+      trailColors[i * 3 + 1] = toolColor.g;
+      trailColors[i * 3 + 2] = toolColor.b;
+
+      // Size decreases towards the tail
+      trailSizes[i] = (i / trailLength) * 15 + 2;
+    }
+
+    trailGeometry.setAttribute('position', new THREE.BufferAttribute(trailPositions, 3));
+    trailGeometry.setAttribute('color', new THREE.BufferAttribute(trailColors, 3));
+    trailGeometry.setAttribute('size', new THREE.BufferAttribute(trailSizes, 1));
+
+    const trailMaterial = new THREE.PointsMaterial({
+      size: 8,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.8,
+      sizeAttenuation: true,
+      depthTest: false,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending, // Glowing effect
+    });
+
+    const trail = new THREE.Points(trailGeometry, trailMaterial);
+    trail.renderOrder = 998; // Behind cursor but above terrain
+    trail.visible = false;
+    group.add(trail);
+    trailRef.current = trail;
+
+    // Initialize trail tracking arrays
+    trailPositionsRef.current = [];
+    trailOpacitiesRef.current = [];
+
     cursorGroupRef.current = group;
     group.visible = false;
     scene.add(group);
@@ -155,7 +207,7 @@ export function TerrainCursor({
       if (cursorGroupRef.current && scene) {
         // Dispose of all geometries and materials
         cursorGroupRef.current.traverse((child) => {
-          if (child instanceof THREE.Line || child instanceof THREE.Mesh) {
+          if (child instanceof THREE.Line || child instanceof THREE.Mesh || child instanceof THREE.Points) {
             child.geometry.dispose();
             if (child.material instanceof THREE.Material) {
               child.material.dispose();
@@ -165,6 +217,9 @@ export function TerrainCursor({
         scene.remove(cursorGroupRef.current);
         cursorGroupRef.current = null;
       }
+      trailRef.current = null;
+      trailPositionsRef.current = [];
+      trailOpacitiesRef.current = [];
     };
   }, [engine, activeTool]);
 
@@ -219,6 +274,66 @@ export function TerrainCursor({
       // Show/hide blocked indicator based on capacity
       if (blockedIndicator) {
         blockedIndicator.visible = isAltPressed && isBlocked;
+      }
+
+      // Update trail effect
+      if (trailRef.current) {
+        const trail = trailRef.current;
+        const trailLength = 20;
+
+        // Add current position to trail history
+        const currentPos = centerPosition.clone();
+        currentPos.y += 0.3; // Slightly above terrain
+
+        trailPositionsRef.current.unshift(currentPos);
+        trailOpacitiesRef.current.unshift(1.0);
+
+        // Limit trail length
+        if (trailPositionsRef.current.length > trailLength) {
+          trailPositionsRef.current = trailPositionsRef.current.slice(0, trailLength);
+          trailOpacitiesRef.current = trailOpacitiesRef.current.slice(0, trailLength);
+        }
+
+        // Update trail geometry
+        const positions = trail.geometry.attributes.position.array as Float32Array;
+        const colors = trail.geometry.attributes.color.array as Float32Array;
+        const sizes = trail.geometry.attributes.size.array as Float32Array;
+
+        const toolColor = new THREE.Color(parseInt(TOOL_COLORS[activeTool].replace('#', '0x')));
+
+        for (let i = 0; i < trailLength; i++) {
+          if (i < trailPositionsRef.current.length) {
+            const pos = trailPositionsRef.current[i];
+            const age = i / trailLength;
+            const opacity = (1 - age) * 0.8;
+
+            positions[i * 3] = pos.x;
+            positions[i * 3 + 1] = pos.y;
+            positions[i * 3 + 2] = pos.z;
+
+            // Fade color over time
+            colors[i * 3] = toolColor.r * opacity;
+            colors[i * 3 + 1] = toolColor.g * opacity;
+            colors[i * 3 + 2] = toolColor.b * opacity;
+
+            // Size decreases over time
+            sizes[i] = (1 - age) * 12 + 2;
+          } else {
+            // Hide unused trail points
+            positions[i * 3] = 0;
+            positions[i * 3 + 1] = -1000;
+            positions[i * 3 + 2] = 0;
+            colors[i * 3] = 0;
+            colors[i * 3 + 1] = 0;
+            colors[i * 3 + 2] = 0;
+            sizes[i] = 0;
+          }
+        }
+
+        trail.geometry.attributes.position.needsUpdate = true;
+        trail.geometry.attributes.color.needsUpdate = true;
+        trail.geometry.attributes.size.needsUpdate = true;
+        trail.visible = true;
       }
 
       // Calculate zoom-based scaling
@@ -285,6 +400,14 @@ export function TerrainCursor({
       cursorGroupRef.current.visible = true;
     } else {
       cursorGroupRef.current.visible = false;
+
+      // Hide trail when cursor is not visible
+      if (trailRef.current) {
+        trailRef.current.visible = false;
+        // Clear trail history
+        trailPositionsRef.current = [];
+        trailOpacitiesRef.current = [];
+      }
     }
   }, [isVisible, mousePosition, engine, canvasElement, brushSize, handMass, handCapacity, brushMode, isAltPressed]);
 
@@ -294,7 +417,7 @@ export function TerrainCursor({
 
     // Determine opacity based on Alt key state
     const lineOpacity = isAltPressed ? 1.0 : (activeTool === 'select' ? 0.8 : 0.6); // Saturated when Alt pressed
-    const fillOpacity = isAltPressed ? 0.25 : 0.1; // More visible fill when Alt pressed
+    const fillOpacity = isAltPressed ? 0.15 : 0.05; // More subtle fill, reduced opacity
     const lineWidth = isAltPressed ? 10 : (activeTool === 'select' ? 3 : 8); // Even thicker when Alt pressed
 
     // Update colors and opacity for all children
@@ -372,6 +495,25 @@ export function TerrainCursor({
         const newCircleGeometry = new THREE.RingGeometry(brushSize * 0.6, brushSize * 0.65, 32);
         blockedCircle.geometry = newCircleGeometry;
       }
+    }
+
+    // Update trail colors when tool changes
+    if (trailRef.current) {
+      const trail = trailRef.current;
+      const colors = trail.geometry.attributes.color.array as Float32Array;
+      const toolColor = new THREE.Color(parseInt(TOOL_COLORS[activeTool].replace('#', '0x')));
+      const trailLength = 20;
+
+      for (let i = 0; i < trailLength; i++) {
+        const age = i / trailLength;
+        const opacity = (1 - age) * 0.8;
+
+        colors[i * 3] = toolColor.r * opacity;
+        colors[i * 3 + 1] = toolColor.g * opacity;
+        colors[i * 3 + 2] = toolColor.b * opacity;
+      }
+
+      trail.geometry.attributes.color.needsUpdate = true;
     }
   }, [activeTool, brushSize, isAltPressed]);
 

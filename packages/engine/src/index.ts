@@ -51,6 +51,8 @@ export interface Engine {
   getTerrainMesh(): THREE.Mesh | null;
   getTerrainHeightAt(worldX: number, worldZ: number): number | null;
   updateHeightmap(data: Float32Array): void;
+  getCurrentHeightmap(): Float32Array | null;
+  applyHeightmap(data: Float32Array, size: number): void;
   dispose(): void;
 }
 
@@ -288,6 +290,22 @@ class StubEngine implements Engine {
   }
 
   updateHeightmap(data: Float32Array): void {
+    if (this.renderer) {
+      this.renderer.updateHeightmap(data);
+    }
+  }
+
+  /**
+   * Get current heightmap data from the terrain
+   */
+  getCurrentHeightmap(): Float32Array | null {
+    if (this.renderer) {
+      return this.renderer.getCurrentHeightmap();
+    }
+    return null;
+  }
+
+  applyHeightmap(data: Float32Array, size: number): void {
     if (this.renderer) {
       this.renderer.updateHeightmap(data);
     }

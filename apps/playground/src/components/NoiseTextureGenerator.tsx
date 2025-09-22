@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@playground/components/ui/dialog';
-import { Download, Upload, RotateCcw, Send } from 'lucide-react';
+import { Download, Upload, RotateCcw, Send, RefreshCw } from 'lucide-react';
 import type { Engine } from '@terraforming/engine';
 
 interface NoiseParams {
@@ -53,6 +53,7 @@ interface NoiseTextureGeneratorProps {
 
 export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureGeneratorProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const currentCanvasRef = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [params, setParams] = useState<NoiseParams>({
@@ -79,6 +80,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
   const [isGenerating, setIsGenerating] = useState(false);
   const [heightData, setHeightData] = useState<Float32Array | null>(null);
   const [savedPresets, setSavedPresets] = useState<{ [key: string]: NoiseParams }>({});
+  const [activeTab, setActiveTab] = useState('shape');
 
   // Noise functions
   const hash2 = useCallback((x: number, y: number): number => {
@@ -357,6 +359,92 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     engine.updateHeightmap(heightData);
   }, [heightData, engine]);
 
+  // Load current heightmap from engine
+  const loadCurrentHeightmap = useCallback(() => {
+    if (!engine) return;
+
+    const currentData = engine.getCurrentHeightmap();
+    if (currentData) {
+      const size = Math.sqrt(currentData.length);
+      setHeightData(currentData);
+      updateCanvas(currentData, size);
+      updateCurrentCanvas(currentData, size);
+    }
+  }, [engine, updateCanvas]);
+
+  // Update current heightmap canvas
+  const updateCurrentCanvas = useCallback((data: Float32Array, size: number) => {
+    const canvas = currentCanvasRef.current;
+    if (!canvas) return;
+
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.createImageData(size, size);
+    for (let i = 0; i < data.length; i++) {
+      const value = Math.max(0, Math.min(1, data[i]));
+      const gray = Math.floor(value * 255);
+      const idx = i * 4;
+      imageData.data[idx] = gray;     // R
+      imageData.data[idx + 1] = gray; // G
+      imageData.data[idx + 2] = gray; // B
+      imageData.data[idx + 3] = 255;  // A
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }, []);
+
+  // Save current heightmap to file
+  const saveCurrentHeightmap = useCallback(() => {
+    if (!engine) return;
+
+    const currentData = engine.getCurrentHeightmap();
+    if (!currentData) return;
+
+    const canvas = document.createElement('canvas');
+    const size = Math.sqrt(currentData.length);
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const imageData = ctx.createImageData(size, size);
+    for (let i = 0; i < currentData.length; i++) {
+      const value = Math.max(0, Math.min(1, currentData[i]));
+      const gray = Math.floor(value * 255);
+      const idx = i * 4;
+      imageData.data[idx] = gray;
+      imageData.data[idx + 1] = gray;
+      imageData.data[idx + 2] = gray;
+      imageData.data[idx + 3] = 255;
+    }
+
+    ctx.putImageData(imageData, 0, 0);
+
+    canvas.toBlob((blob) => {
+      if (!blob) return;
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `current-heightmap-${Date.now()}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+  }, [engine]);
+
+  const applyCurrentToTerrain = useCallback(() => {
+    if (!engine) return;
+
+    const currentData = engine.getCurrentHeightmap();
+    if (!currentData) return;
+
+    const size = Math.sqrt(currentData.length);
+    engine.applyHeightmap(currentData, size);
+  }, [engine]);
+
   const resetToDefaults = useCallback(() => {
     setParams({
       islandRadius: 0.7,
@@ -423,6 +511,13 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     return () => clearTimeout(timer);
   }, [params, generateHeightmap]);
 
+  // Auto-load current heightmap when "current" tab is selected
+  useEffect(() => {
+    if (activeTab === 'current') {
+      loadCurrentHeightmap();
+    }
+  }, [activeTab, loadCurrentHeightmap]);
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[95vw] w-full h-[90vh] bg-black/95 backdrop-blur-xl border border-white/10 p-0 overflow-hidden text-white">
@@ -436,12 +531,13 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
         <div className="flex h-[calc(100%-5rem)] overflow-hidden">
           {/* Left side - Controls */}
           <div className="w-1/2 p-6 overflow-y-auto border-r border-white/10 space-y-4">
-              <Tabs defaultValue="shape" className="w-full">
-                <TabsList className="grid w-full grid-cols-5 bg-white/5 text-white">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+                <TabsList className="grid w-full grid-cols-6 bg-white/5 text-white">
                   <TabsTrigger value="shape" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Shape</TabsTrigger>
                   <TabsTrigger value="terrain" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Terrain</TabsTrigger>
                   <TabsTrigger value="mountains" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Mountains</TabsTrigger>
                   <TabsTrigger value="details" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Details</TabsTrigger>
+                  <TabsTrigger value="current" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Current</TabsTrigger>
                   <TabsTrigger value="presets" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Presets</TabsTrigger>
                 </TabsList>
 
@@ -637,6 +733,43 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                       max={0.8}
                       step={0.05}
                     />
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="current" className="space-y-4">
+                  <div className="space-y-4">
+                    <Label className="text-white">Current Terrain Heightmap</Label>
+                    <div className="flex items-center justify-center bg-gray-900 rounded border border-white/20 p-4">
+                      <canvas
+                        ref={currentCanvasRef}
+                        className="max-w-full max-h-full object-contain"
+                        style={{ imageRendering: 'pixelated' }}
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button onClick={loadCurrentHeightmap} variant="outline" size="sm" className="flex-1">
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Load Current
+                      </Button>
+                      <Button onClick={saveCurrentHeightmap} variant="outline" size="sm" className="flex-1">
+                        <Download className="w-4 h-4 mr-2" />
+                        Save Current
+                      </Button>
+                    </div>
+
+                    <div className="pt-2">
+                      <Button onClick={applyCurrentToTerrain} disabled={!engine} size="sm" className="w-full">
+                        <Send className="w-4 h-4 mr-2" />
+                        Apply Current to Terrain
+                      </Button>
+                    </div>
+
+                    <div className="pt-2 border-t border-white/20">
+                      <p className="text-xs text-gray-400">
+                        Display, save, and restore the current terrain heightmap. Use "Load Current" to update the display, "Save Current" to export as PNG, and "Apply Current to Terrain" to restore the current state.
+                      </p>
+                    </div>
                   </div>
                 </TabsContent>
 
