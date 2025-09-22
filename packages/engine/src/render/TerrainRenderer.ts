@@ -52,7 +52,7 @@ export class TerrainRenderer extends BaseRenderer {
   private ambientLight!: THREE.AmbientLight;
   private sunSphere!: THREE.Mesh;
   private moonSphere!: THREE.Mesh;
-  private timeOfDay = 0.85; // 0-1, where 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm, 0.85 = ~8pm
+  private timeOfDay = 0.12; // Start at dawn (maps to ~5:30am after adjustment)
   private dayNightCycleActive = false;
   private cycleSpeed = 0.0001; // Speed of day/night cycle
 
@@ -873,30 +873,32 @@ export class TerrainRenderer extends BaseRenderer {
   private updateDayNightCycle(): void {
 
     // Remap time to favor daytime (0-1 input, but stretched/compressed output)
+    // Input time: 0 = midnight, 0.25 = 6am, 0.5 = noon, 0.75 = 6pm, 1.0 = midnight
+    // We want to spend most time in daylight (6am-6pm = 0.25-0.75)
     let adjustedTime = this.timeOfDay;
 
-    // Create a non-linear mapping that spends more time in day
-    // 0.0-0.15 = night (compressed from 0.0-0.25)
-    // 0.15-0.2 = dawn (compressed transition)
-    // 0.2-0.8 = day (stretched from 0.25-0.75)
-    // 0.8-0.85 = dusk (compressed transition)
-    // 0.85-1.0 = night (compressed from 0.75-1.0)
+    // Mapping:
+    // 0.0-0.1  -> 0.0-0.2   (night, compressed: midnight to 5am)
+    // 0.1-0.15 -> 0.2-0.25  (dawn, quick transition: 5am to 6am)
+    // 0.15-0.85 -> 0.25-0.75 (day, stretched: 6am to 6pm)
+    // 0.85-0.9  -> 0.75-0.8  (dusk, quick transition: 6pm to 7pm)
+    // 0.9-1.0  -> 0.8-1.0   (night, compressed: 7pm to midnight)
 
-    if (adjustedTime < 0.15) {
-      // Night (midnight to 3am) - compress
-      adjustedTime = adjustedTime * (0.25 / 0.15);
-    } else if (adjustedTime < 0.2) {
-      // Dawn (3am to 6am) - quick transition
-      adjustedTime = 0.25 + (adjustedTime - 0.15) * (0.05 / 0.05);
-    } else if (adjustedTime < 0.8) {
-      // Day (6am to 6pm) - stretch this period
-      adjustedTime = 0.3 + (adjustedTime - 0.2) * (0.4 / 0.6);
+    if (adjustedTime < 0.1) {
+      // Night (midnight to early morning) - compress to 0.0-0.2
+      adjustedTime = adjustedTime * 2.0;
+    } else if (adjustedTime < 0.15) {
+      // Dawn (quick transition) - map to 0.2-0.25
+      adjustedTime = 0.2 + (adjustedTime - 0.1) * (0.05 / 0.05);
     } else if (adjustedTime < 0.85) {
-      // Dusk (6pm to 9pm) - quick transition
-      adjustedTime = 0.7 + (adjustedTime - 0.8) * (0.05 / 0.05);
+      // Day (main period) - map to 0.25-0.75
+      adjustedTime = 0.25 + (adjustedTime - 0.15) * (0.5 / 0.7);
+    } else if (adjustedTime < 0.9) {
+      // Dusk (quick transition) - map to 0.75-0.8
+      adjustedTime = 0.75 + (adjustedTime - 0.85) * (0.05 / 0.05);
     } else {
-      // Night (9pm to midnight) - compress
-      adjustedTime = 0.75 + (adjustedTime - 0.85) * (0.25 / 0.15);
+      // Night (evening) - map to 0.8-1.0
+      adjustedTime = 0.8 + (adjustedTime - 0.9) * (0.2 / 0.1);
     }
 
     // Convert time to radians for circular motion
@@ -907,16 +909,19 @@ export class TerrainRenderer extends BaseRenderer {
     const arcRotation = 0; // No rotation for now, will be controllable
 
     // Calculate sun position with better arc
+    // Note: angle = 0 is midnight, PI/2 is 6am, PI is noon, 3PI/2 is 6pm
     const orbitRadius = 150; // Much further away to avoid camera occlusion
     const verticalScale = 0.7; // Higher zenith for more overhead sun at noon
-    const baseX = Math.sin(angle) * orbitRadius;
-    const baseY = Math.cos(angle) * Math.cos(sunTilt) * orbitRadius * verticalScale;
-    const baseZ = Math.cos(angle) * Math.sin(sunTilt) * orbitRadius;
 
-    // Apply rotation around Y axis
-    const sunX = baseX * Math.cos(arcRotation) - baseZ * Math.sin(arcRotation);
+    // Fix sun positioning: use -cos for Y so sun is UP at noon (angle=PI)
+    const baseX = Math.sin(angle) * orbitRadius;
+    const baseY = -Math.cos(angle) * orbitRadius * verticalScale; // Negative cos: up at PI (noon)
+    const baseZ = Math.sin(angle) * Math.sin(sunTilt) * orbitRadius;
+
+    // Apply rotation around Y axis (keep simple for now)
+    const sunX = baseX;
     const sunY = baseY;
-    const sunZ = baseX * Math.sin(arcRotation) + baseZ * Math.cos(arcRotation);
+    const sunZ = baseZ;
 
     // Set sun position and make sphere follow
     this.sunLight.position.set(sunX, Math.max(0, sunY), sunZ);

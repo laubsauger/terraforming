@@ -13,6 +13,9 @@ interface TerrainCursorProps {
   mousePosition: { x: number; y: number };
   canvasElement: HTMLCanvasElement | null;
   isAltPressed: boolean;
+  handMass?: number;
+  handCapacity?: number;
+  brushMode?: 'pickup' | 'deposit';
 }
 
 export function TerrainCursor({
@@ -22,10 +25,14 @@ export function TerrainCursor({
   engine,
   mousePosition,
   canvasElement,
-  isAltPressed
+  isAltPressed,
+  handMass = 0,
+  handCapacity = 100000000,
+  brushMode = 'pickup'
 }: TerrainCursorProps) {
   const cursorGroupRef = useRef<THREE.Group | null>(null);
   const lastValidPositionRef = useRef<THREE.Vector3 | null>(null);
+  const blockedIndicatorRef = useRef<THREE.Group | null>(null);
 
   // Initialize cursor group when engine is ready
   useEffect(() => {
@@ -89,6 +96,57 @@ export function TerrainCursor({
     fillMesh.rotation.x = -Math.PI / 2; // Make it horizontal
     group.add(fillMesh);
 
+    // Add blocked indicator (red X) for when at capacity (child[3])
+    const blockedGroup = new THREE.Group();
+
+    // Create X shape with two crossed lines
+    const lineLength = brushSize * 0.8;
+    const lineMaterial = new THREE.LineBasicMaterial({
+      color: 0xff0000, // Red
+      transparent: true,
+      opacity: 0.8,
+      linewidth: 5,
+      depthTest: false,
+      depthWrite: false,
+    });
+
+    // First diagonal line
+    const line1Geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-lineLength/2, 0.1, -lineLength/2),
+      new THREE.Vector3(lineLength/2, 0.1, lineLength/2)
+    ]);
+    const line1 = new THREE.Line(line1Geometry, lineMaterial);
+    line1.renderOrder = 1002;
+    blockedGroup.add(line1);
+
+    // Second diagonal line
+    const line2Geometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-lineLength/2, 0.1, lineLength/2),
+      new THREE.Vector3(lineLength/2, 0.1, -lineLength/2)
+    ]);
+    const line2 = new THREE.Line(line2Geometry, lineMaterial.clone());
+    line2.renderOrder = 1002;
+    blockedGroup.add(line2);
+
+    // Add a circle around the X
+    const blockedCircleGeometry = new THREE.RingGeometry(brushSize * 0.6, brushSize * 0.65, 32);
+    const blockedCircleMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff0000,
+      transparent: true,
+      opacity: 0.5,
+      side: THREE.DoubleSide,
+      depthTest: false,
+      depthWrite: false,
+    });
+    const blockedCircle = new THREE.Mesh(blockedCircleGeometry, blockedCircleMaterial);
+    blockedCircle.rotation.x = -Math.PI / 2;
+    blockedCircle.renderOrder = 1001;
+    blockedGroup.add(blockedCircle);
+
+    blockedGroup.visible = false;
+    group.add(blockedGroup);
+    blockedIndicatorRef.current = blockedGroup;
+
     cursorGroupRef.current = group;
     group.visible = false;
     scene.add(group);
@@ -126,6 +184,11 @@ export function TerrainCursor({
       return;
     }
 
+    // Check if at capacity limits
+    const isFull = handMass >= handCapacity * 0.99; // 99% full
+    const isEmpty = handMass <= handCapacity * 0.01; // 1% or less
+    const isBlocked = (brushMode === 'pickup' && isFull) || (brushMode === 'deposit' && isEmpty);
+
     // Use shared raycasting utility
     const raycastResult = raycastToTerrain(engine, canvasElement, mousePosition);
 
@@ -151,6 +214,12 @@ export function TerrainCursor({
       const centerDot = cursorGroupRef.current.children[0] as THREE.Mesh; // Center dot is child[0]
       const line = cursorGroupRef.current.children[1] as THREE.Line; // Line is child[1]
       const fillMesh = cursorGroupRef.current.children[2] as THREE.Mesh; // Fill is child[2]
+      const blockedIndicator = cursorGroupRef.current.children[3] as THREE.Group; // Blocked indicator is child[3]
+
+      // Show/hide blocked indicator based on capacity
+      if (blockedIndicator) {
+        blockedIndicator.visible = isAltPressed && isBlocked;
+      }
 
       // Calculate zoom-based scaling
       const cameraDistance = camera.position.distanceTo(centerPosition);
@@ -217,7 +286,7 @@ export function TerrainCursor({
     } else {
       cursorGroupRef.current.visible = false;
     }
-  }, [isVisible, mousePosition, engine, canvasElement, brushSize]);
+  }, [isVisible, mousePosition, engine, canvasElement, brushSize, handMass, handCapacity, brushMode, isAltPressed]);
 
   // Update cursor appearance when tool, size, or Alt key changes
   useEffect(() => {
@@ -273,6 +342,36 @@ export function TerrainCursor({
       fillMesh.geometry.dispose();
       const fillGeometry = new THREE.RingGeometry(0, brushSize, 64);
       fillMesh.geometry = fillGeometry;
+    }
+
+    // Update blocked indicator size
+    if (blockedIndicatorRef.current) {
+      const blockedGroup = blockedIndicatorRef.current;
+      const lineLength = brushSize * 0.8;
+
+      // Update X lines
+      const line1 = blockedGroup.children[0] as THREE.Line;
+      const line2 = blockedGroup.children[1] as THREE.Line;
+      if (line1 && line2) {
+        const line1Points = [
+          new THREE.Vector3(-lineLength/2, 0.1, -lineLength/2),
+          new THREE.Vector3(lineLength/2, 0.1, lineLength/2)
+        ];
+        const line2Points = [
+          new THREE.Vector3(-lineLength/2, 0.1, lineLength/2),
+          new THREE.Vector3(lineLength/2, 0.1, -lineLength/2)
+        ];
+        line1.geometry.setFromPoints(line1Points);
+        line2.geometry.setFromPoints(line2Points);
+      }
+
+      // Update circle size
+      const blockedCircle = blockedGroup.children[2] as THREE.Mesh;
+      if (blockedCircle && blockedCircle.geometry) {
+        blockedCircle.geometry.dispose();
+        const newCircleGeometry = new THREE.RingGeometry(brushSize * 0.6, brushSize * 0.65, 32);
+        blockedCircle.geometry = newCircleGeometry;
+      }
     }
   }, [activeTool, brushSize, isAltPressed]);
 

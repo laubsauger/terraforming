@@ -30,6 +30,9 @@ export function App() {
   const [isAltPressed, setIsAltPressed] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [brushSize, setBrushSize] = useState(5); // Used for visual feedback only
+  const [brushHandMass, setBrushHandMass] = useState(0);
+  const [brushHandCapacity, setBrushHandCapacity] = useState(100000000);
+  const [brushMode, setBrushMode] = useState<'pickup' | 'deposit'>('pickup');
   const dragIntervalRef = useRef<number | null>(null);
 
   // Detect OS for correct modifier key
@@ -193,21 +196,24 @@ export function App() {
     };
   }, [handleToolChange, shortcutMap]);
 
-  // Sync brush size from UI store
+  // Sync brush state from UI store
   useEffect(() => {
-    const syncBrushSize = () => {
+    const syncBrushState = () => {
       const uiStore = (window as any).__uiStore;
       if (uiStore) {
         const brushState = uiStore.getState().brush;
         setBrushSize(brushState.radius);
+        setBrushHandMass(brushState.handMass);
+        setBrushHandCapacity(brushState.handCapacity);
+        setBrushMode(brushState.mode);
       }
     };
 
     // Initial sync
-    syncBrushSize();
+    syncBrushState();
 
     // Set up interval to sync periodically
-    const interval = setInterval(syncBrushSize, 100);
+    const interval = setInterval(syncBrushState, 100);
     return () => clearInterval(interval);
   }, []);
 
@@ -246,6 +252,21 @@ export function App() {
           ? (brushState.mode === 'pickup' ? 'deposit' : 'pickup')
           : brushState.mode;
 
+        // Check capacity limits BEFORE queuing operation
+        const isFull = brushState.handMass >= brushState.handCapacity * 0.99; // 99% full
+        const isEmpty = brushState.handMass <= brushState.handCapacity * 0.01; // 1% or less
+
+        // Block operation if at capacity limits
+        if (actualMode === 'pickup' && isFull) {
+          console.log('Hand is full! Cannot pick up more material.');
+          return false; // Stop picking up when full
+        }
+
+        if (actualMode === 'deposit' && isEmpty) {
+          console.log('Hand is empty! Nothing to deposit.');
+          return false; // Stop depositing when empty
+        }
+
         console.log('Queueing brush operation:', {
           mode: actualMode,
           material: brushState.material,
@@ -253,6 +274,8 @@ export function App() {
           worldZ: point.z,
           radius: brushState.radius,
           strength: brushState.strength,
+          handMass: brushState.handMass,
+          handCapacity: brushState.handCapacity,
           cmdHeld: event.metaKey || localIsCmdPressed
         });
 
@@ -501,6 +524,9 @@ export function App() {
         mousePosition={mousePosition}
         canvasElement={canvasRef.current}
         isAltPressed={isAltPressed}
+        handMass={brushHandMass}
+        handCapacity={brushHandCapacity}
+        brushMode={brushMode}
       />
 
       {state === 'pending' && (
