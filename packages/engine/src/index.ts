@@ -138,7 +138,7 @@ class StubEngine implements Engine {
         gridSize: [256, 256],
         cellSize: 100 / 256, // terrainSize / gridSize
         angleOfRepose: 33,
-        handCapacityKg: 10000,
+        handCapacityKg: 10000000, // 10,000 tons capacity
       });
     } catch (error) {
       console.error('Failed to initialize GPU device:', error);
@@ -293,6 +293,59 @@ class StubEngine implements Engine {
     }
   }
 
+  private applyBrushToTerrain(op: BrushOp): void {
+    if (!this.renderer) return;
+
+    const heightTexture = (this.renderer as any).getHeightTexture?.();
+    if (!heightTexture) return;
+
+    const data = heightTexture.image.data as Float32Array;
+    const gridSize = 256; // Grid size
+    const terrainSize = 100; // World size in meters
+
+    // Convert world coordinates to texture coordinates
+    const centerU = (op.worldX + terrainSize/2) / terrainSize;
+    const centerV = (op.worldZ + terrainSize/2) / terrainSize;
+    const centerX = Math.floor(centerU * gridSize);
+    const centerY = Math.floor(centerV * gridSize);
+
+    // Calculate radius in pixels
+    const radiusPixels = (op.radius / terrainSize) * gridSize;
+
+    // Apply brush effect
+    const strengthScale = op.dt * 0.00001; // Scale strength for reasonable terrain changes
+
+    for (let dy = -Math.ceil(radiusPixels); dy <= Math.ceil(radiusPixels); dy++) {
+      for (let dx = -Math.ceil(radiusPixels); dx <= Math.ceil(radiusPixels); dx++) {
+        const x = centerX + dx;
+        const y = centerY + dy;
+
+        if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) {
+          const distance = Math.sqrt(dx * dx + dy * dy);
+          if (distance <= radiusPixels) {
+            // Falloff from center
+            const falloff = 1.0 - (distance / radiusPixels);
+            const effect = falloff * falloff; // Quadratic falloff
+
+            const index = (y * gridSize + x) * 4; // RGBA format
+
+            if (op.mode === 'pickup') {
+              // Lower terrain
+              data[index] -= op.strength * strengthScale * effect;
+              data[index] = Math.max(-1, data[index]); // Prevent going too deep
+            } else {
+              // Raise terrain
+              data[index] += op.strength * strengthScale * effect;
+              data[index] = Math.min(1, data[index]); // Prevent going too high
+            }
+          }
+        }
+      }
+    }
+
+    heightTexture.needsUpdate = true;
+  }
+
   dispose(): void {
     this.disposed = true;
     this.renderingActive = false;
@@ -394,11 +447,17 @@ class StubEngine implements Engine {
     this.brushSystem.execute(commandEncoder);
     this.gpuDevice.queue.submit([commandEncoder.finish()]);
 
-    // Update renderer with new field textures
+    // Update renderer with new field textures AND modify height
     if (this.renderer) {
       const fields = this.brushSystem.getFields();
       // Pass updated fields to renderer for visualization
       (this.renderer as any).updateFieldTextures?.(fields);
+
+      // TEMPORARY: Directly modify height texture based on brush operations
+      // This simulates the terrain changes until we implement proper GPU readback
+      for (const op of this.brushQueue) {
+        this.applyBrushToTerrain(op);
+      }
     }
 
     // Update hand state in UI after GPU operations
@@ -408,14 +467,15 @@ class StubEngine implements Engine {
     if (uiStore) {
       // For now, simulate mass changes based on operations
       // TODO: Read back actual mass from GPU
+      const handCapacity = this.brushSystem.getHandState().capKg;
       for (const op of this.brushQueue) {
         if (op.mode === 'pickup') {
-          // Simulate picking up material
-          const massChange = op.strength * op.dt * 0.1; // Simplified calculation
-          handState.massKg = Math.min(handState.massKg + massChange, 10000);
+          // Simulate picking up material - full strength, no reduction
+          const massChange = op.strength * op.dt;
+          handState.massKg = Math.min(handState.massKg + massChange, handCapacity);
         } else if (op.mode === 'deposit' && handState.massKg > 0) {
-          // Simulate depositing material
-          const massChange = op.strength * op.dt * 0.1;
+          // Simulate depositing material - full strength
+          const massChange = op.strength * op.dt;
           handState.massKg = Math.max(handState.massKg - massChange, 0);
         }
       }

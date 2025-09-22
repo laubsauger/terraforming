@@ -175,10 +175,10 @@ export function createUiStore(
       mode: (initialState.brush?.mode ?? 'pickup') as BrushMode,
       material: (initialState.brush?.material ?? 'soil') as MaterialKind,
       radius: initialState.brush?.radius ?? 10,
-      strength: initialState.brush?.strength ?? 1000,
+      strength: initialState.brush?.strength ?? 500000, // 500k kg/s default for rapid terraforming
       isActive: initialState.brush?.isActive ?? false,
       handMass: initialState.brush?.handMass ?? 0,
-      handCapacity: initialState.brush?.handCapacity ?? 10000,
+      handCapacity: initialState.brush?.handCapacity ?? 10000000, // 10,000 tons!
       setMode: (mode: BrushMode) =>
         set((state) => ({
           brush: { ...state.brush, mode },
@@ -193,7 +193,7 @@ export function createUiStore(
         })),
       setStrength: (strength: number) =>
         set((state) => ({
-          brush: { ...state.brush, strength: Math.max(100, Math.min(10000, strength)) },
+          brush: { ...state.brush, strength: Math.max(100, Math.min(1000000, strength)) },
         })),
       setActive: (active: boolean) =>
         set((state) => ({

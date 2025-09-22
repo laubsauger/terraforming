@@ -1,5 +1,6 @@
 import { Button } from '@playground/components/ui/button';
 import { Label } from '@playground/components/ui/label';
+import { Slider } from '@playground/components/ui/slider';
 import { ToggleGroup, ToggleGroupItem } from '@playground/components/ui/toggle-group';
 import type { MaterialKind, BrushMode } from '@playground/store/uiStore';
 import { cn } from '@playground/lib/utils';
@@ -7,11 +8,15 @@ import { cn } from '@playground/lib/utils';
 interface BrushSectionProps {
   mode: BrushMode;
   material: MaterialKind;
+  radius: number;
+  strength: number;
   isActive: boolean;
   handMass: number;
   handCapacity: number;
   setMode: (mode: BrushMode) => void;
   setMaterial: (material: MaterialKind) => void;
+  setRadius: (radius: number) => void;
+  setStrength: (strength: number) => void;
 }
 
 const MATERIALS: { value: MaterialKind; label: string; color: string }[] = [
@@ -23,11 +28,15 @@ const MATERIALS: { value: MaterialKind; label: string; color: string }[] = [
 export function BrushSection({
   mode,
   material,
+  radius,
+  strength,
   isActive,
   handMass,
   handCapacity,
   setMode,
   setMaterial,
+  setRadius,
+  setStrength,
 }: BrushSectionProps) {
   const massPercent = (handMass / handCapacity) * 100;
 
@@ -95,11 +104,43 @@ export function BrushSection({
         </div>
       </div>
 
+      {/* Radius Slider */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-xs">
+          <Label className="text-gray-400">Radius</Label>
+          <span className="text-white">{radius.toFixed(1)}m</span>
+        </div>
+        <Slider
+          value={[radius]}
+          onValueChange={(values) => setRadius(values[0])}
+          min={1}
+          max={30}
+          step={0.5}
+          className="w-full"
+        />
+      </div>
+
+      {/* Strength Slider with Exponential Scaling */}
+      <div className="space-y-2">
+        <div className="flex justify-between text-xs">
+          <Label className="text-gray-400">Strength</Label>
+          <span className="text-white">{strength >= 1000000 ? `${(strength/1000000).toFixed(1)}M` : strength >= 1000 ? `${Math.round(strength/1000)}k` : Math.round(strength)} kg/s</span>
+        </div>
+        <Slider
+          value={[Math.log10(strength)]}
+          onValueChange={(values) => setStrength(Math.pow(10, values[0]))}
+          min={2}  // 10^2 = 100
+          max={6}  // 10^6 = 1,000,000
+          step={0.05}
+          className="w-full"
+        />
+      </div>
+
       {/* Hand Mass Indicator */}
       <div className="space-y-1">
         <div className="flex justify-between text-xs">
           <span className="text-gray-400">Carrying</span>
-          <span className="text-white">{Math.round(handMass)} / {handCapacity} kg</span>
+          <span className="text-white">{(handMass/1000).toFixed(1)} / {(handCapacity/1000).toFixed(0)} tons</span>
         </div>
         <div className="h-2 bg-white/10 rounded-full overflow-hidden">
           <div
@@ -115,10 +156,24 @@ export function BrushSection({
       </div>
 
 
-      {/* Active Indicator */}
+      {/* Status Indicators */}
       {isActive && (
         <div className="px-2 py-1 bg-green-500/20 border border-green-500/40 rounded text-xs text-green-400 text-center">
           Brush Active
+        </div>
+      )}
+
+      {/* Full Capacity Warning */}
+      {massPercent >= 95 && mode === 'pickup' && (
+        <div className="px-2 py-1 bg-red-500/20 border border-red-500/40 rounded text-xs text-red-400 text-center animate-pulse">
+          ⚠️ Hand Nearly Full!
+        </div>
+      )}
+
+      {/* Empty Warning */}
+      {massPercent <= 5 && mode === 'deposit' && (
+        <div className="px-2 py-1 bg-yellow-500/20 border border-yellow-500/40 rounded text-xs text-yellow-400 text-center">
+          Hand Nearly Empty
         </div>
       )}
     </div>

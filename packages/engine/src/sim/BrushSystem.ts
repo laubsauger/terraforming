@@ -45,7 +45,7 @@ export class BrushSystem {
     this.hand = {
       kind: null,
       massKg: 0,
-      capKg: options.handCapacityKg,
+      capKg: options.handCapacityKg || 10000000, // Default to 10,000 tons
     };
 
     this.initializePipelines();

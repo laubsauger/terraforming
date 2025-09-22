@@ -4,13 +4,12 @@ import type { Engine } from '@terraforming/engine';
 import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
 import type { PerfSample } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
-import * as THREE from 'three';
 import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
-import { BrushSettings } from '@playground/components/BrushSettings';
 import { ToolCursor, TOOL_COLORS } from '@playground/components/ToolCursor';
 import { TerrainCursor } from '@playground/components/TerrainCursor';
 import { DayNightControls } from '@playground/components/DayNightControls';
+import { raycastToTerrain } from '@playground/utils/raycasting';
 
 type BootstrapState = 'pending' | 'ready' | 'error';
 
@@ -25,13 +24,12 @@ export function App() {
   const [state, setState] = useState<BootstrapState>('pending');
   const [error, setError] = useState<string | null>(null);
   const [activeTool, setActiveTool] = useState<InteractionTool>('select');
-  const [brushSize, setBrushSize] = useState(5); // Reduced from 10 to 5 for better initial size
-  const [brushStrength, setBrushStrength] = useState(0.5);
   const [mousePosition, setMousePosition] = useState({ x: 0, y: 0 });
   const [showCursor, setShowCursor] = useState(false);
   const [isAdjustingBrush, setIsAdjustingBrush] = useState(false);
   const [isAltPressed, setIsAltPressed] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [brushSize, setBrushSize] = useState(5); // Used for visual feedback only
   const dragIntervalRef = useRef<number | null>(null);
 
   // Detect OS for correct modifier key
@@ -176,6 +174,24 @@ export function App() {
     };
   }, [handleToolChange, shortcutMap]);
 
+  // Sync brush size from UI store
+  useEffect(() => {
+    const syncBrushSize = () => {
+      const uiStore = (window as any).__uiStore;
+      if (uiStore) {
+        const brushState = uiStore.getState().brush;
+        setBrushSize(brushState.radius);
+      }
+    };
+
+    // Initial sync
+    syncBrushSize();
+
+    // Set up interval to sync periodically
+    const interval = setInterval(syncBrushSize, 100);
+    return () => clearInterval(interval);
+  }, []);
+
   // Handle brush operations when Alt+Click
   useEffect(() => {
     if (!engine || !canvasRef.current) return;
@@ -185,6 +201,8 @@ export function App() {
     const BRUSH_RATE = 1000 / 30; // 30Hz for smooth painting
     let lastMouseEvent: MouseEvent | null = null;
     let animationFrameId: number | null = null;
+    let localIsDragging = false;
+    let localIsAltPressed = false;
 
     const performBrushOperation = (event: MouseEvent) => {
       const uiStore = (window as any).__uiStore;
@@ -193,26 +211,14 @@ export function App() {
         return false;
       }
 
-      // Get world position from raycasting
-      const camera = engine.getCamera();
-      const scene = engine.getScene();
-      const terrainMesh = engine.getTerrainMesh();
+      // Use shared raycasting utility
+      const raycastResult = raycastToTerrain(engine, canvas, {
+        x: event.clientX,
+        y: event.clientY
+      });
 
-      if (!camera || !scene || !terrainMesh) {
-        console.log('Missing camera, scene, or terrain mesh');
-        return false;
-      }
-
-      const rect = canvas.getBoundingClientRect();
-      const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera(new THREE.Vector2(x, y), camera);
-
-      const intersects = raycaster.intersectObject(terrainMesh);
-      if (intersects.length > 0) {
-        const point = intersects[0].point;
+      if (raycastResult) {
+        const point = raycastResult.point;
         const brushState = uiStore.getState().brush;
 
         console.log('Queueing brush operation:', {
@@ -242,12 +248,15 @@ export function App() {
     };
 
     const handlePointerDown = (event: MouseEvent) => {
-      console.log('Pointer down, isAltPressed:', isAltPressed, 'button:', event.button);
-      if (isAltPressed && event.button === 0) { // Left click only
+      console.log('Pointer down, alt key held:', event.altKey, 'button:', event.button);
+      if (event.altKey && event.button === 0) { // Left click only
         console.log('Starting brush drag');
         event.preventDefault();
         event.stopPropagation();
+        localIsDragging = true;
+        localIsAltPressed = true;
         setIsDragging(true);
+        lastMouseEvent = event; // Store initial event
 
         // Mark brush as active in UI
         const uiStore = (window as any).__uiStore;
@@ -259,31 +268,67 @@ export function App() {
         const success = performBrushOperation(event);
         console.log('Initial brush operation result:', success);
         lastBrushTime = Date.now();
+
+        // Start continuous brush loop
+        animationFrameId = requestAnimationFrame(continuousBrushLoop);
+      }
+    };
+
+    // Continuous brush operation loop
+    const continuousBrushLoop = () => {
+      if (localIsDragging && localIsAltPressed && lastMouseEvent) {
+        const now = Date.now();
+        if (now - lastBrushTime >= BRUSH_RATE) {
+          performBrushOperation(lastMouseEvent);
+          lastBrushTime = now;
+        }
+      }
+      if (localIsDragging) {
+        animationFrameId = requestAnimationFrame(continuousBrushLoop);
       }
     };
 
     const handlePointerMove = (event: MouseEvent) => {
       // Always update mouse position
       setMousePosition({ x: event.clientX, y: event.clientY });
+      lastMouseEvent = event; // Store for continuous operation
 
-      // Perform brush operation if dragging with Alt
-      if (isDragging && isAltPressed) {
-        const now = Date.now();
-        if (now - lastBrushTime >= BRUSH_RATE) {
-          performBrushOperation(event);
-          lastBrushTime = now;
-        }
-      }
+      // Track alt key state
+      localIsAltPressed = event.altKey;
     };
 
     const handlePointerUp = () => {
-      if (isDragging) {
+      if (localIsDragging) {
+        localIsDragging = false;
         setIsDragging(false);
+
+        // Cancel animation frame
+        if (animationFrameId) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
 
         // Mark brush as inactive
         const uiStore = (window as any).__uiStore;
         if (uiStore) {
           uiStore.getState().brush.setActive(false);
+        }
+      }
+    };
+
+    // Track Alt key state
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.altKey) {
+        localIsAltPressed = true;
+      }
+    };
+
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (!event.altKey) {
+        localIsAltPressed = false;
+        // Stop dragging if Alt is released
+        if (localIsDragging) {
+          handlePointerUp();
         }
       }
     };
@@ -294,15 +339,22 @@ export function App() {
     canvas.addEventListener('pointerup', handlePointerUp);
     canvas.addEventListener('pointercancel', handlePointerUp);
     canvas.addEventListener('pointerleave', handlePointerUp);
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keyup', handleKeyUp);
 
     return () => {
+      if (animationFrameId) {
+        cancelAnimationFrame(animationFrameId);
+      }
       canvas.removeEventListener('pointerdown', handlePointerDown, { capture: true });
       canvas.removeEventListener('pointermove', handlePointerMove);
       canvas.removeEventListener('pointerup', handlePointerUp);
       canvas.removeEventListener('pointercancel', handlePointerUp);
       canvas.removeEventListener('pointerleave', handlePointerUp);
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [engine, isAltPressed, isDragging]);
+  }, [engine]); // Remove isAltPressed and isDragging from dependencies
 
   // Mouse tracking for tool cursor
   useEffect(() => {
@@ -361,10 +413,14 @@ export function App() {
       const delta = event.deltaY > 0 ? -1 : 1;
       const step = 0.25; // Much finer step size for shift+scroll (quarter increments)
 
-      setBrushSize(prev => {
-        const newSize = prev + (delta * step);
-        return Math.max(1, Math.min(15, Math.round(newSize * 4) / 4)); // Round to nearest 0.25, max 15
-      });
+      const uiStore = (window as any).__uiStore;
+      if (uiStore) {
+        const brushState = uiStore.getState().brush;
+        const currentRadius = brushState.radius;
+        const newRadius = Math.max(1, Math.min(15, currentRadius + (delta * step)));
+        brushState.setRadius(Math.round(newRadius * 4) / 4); // Round to nearest 0.25
+        setBrushSize(newRadius); // Update local state for visual feedback
+      }
     };
 
     window.addEventListener('wheel', handleWheel, { passive: false });
@@ -393,16 +449,7 @@ export function App() {
         className="absolute top-1/2 right-4 -translate-y-1/2"
       />
 
-      {activeTool !== 'select' && (
-        <BrushSettings
-          brushSize={brushSize}
-          brushStrength={brushStrength}
-          onSizeChange={setBrushSize}
-          onStrengthChange={setBrushStrength}
-          modifierKey={modifierKey}
-          className="absolute top-1/2 right-20 -translate-y-1/2"
-        />
-      )}
+      {/* Brush settings removed - now in left sidebar only */}
 
       <StatsPanel />
 

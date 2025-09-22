@@ -39,7 +39,7 @@ export class TerrainRenderer extends BaseRenderer {
 
   // Visual feedback
   private brushCursorSphere?: THREE.Mesh;
-  private brushCursorRing?: THREE.Mesh;
+  private brushCursorRing?: THREE.Line;
   private brushCursorMaterial?: THREE.MeshPhysicalMaterial;
   private brushModeIndicator?: THREE.Group; // Arrows or particles to show mode
   private brushHandMass = 0;
@@ -334,18 +334,29 @@ export class TerrainRenderer extends BaseRenderer {
     this.brushCursorSphere.renderOrder = 100; // Render on top
     this.scene.add(this.brushCursorSphere);
 
-    // Create ring for brush radius indicator
-    const ringGeometry = new THREE.RingGeometry(0.9, 1, 64);
-    const ringMaterial = new THREE.MeshBasicMaterial({
+    // Create ring as a line that can conform to terrain
+    const segments = 64;
+    const points: THREE.Vector3[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * Math.PI * 2;
+      const x = Math.cos(angle);
+      const z = Math.sin(angle);
+      points.push(new THREE.Vector3(x, 0, z));
+    }
+
+    const ringGeometry = new THREE.BufferGeometry().setFromPoints(points);
+    const ringMaterial = new THREE.LineBasicMaterial({
       color: 0xffffff,
       opacity: 0.5,
       transparent: true,
-      side: THREE.DoubleSide,
+      linewidth: 1.5, // Thinner line
+      depthTest: false,
+      depthWrite: false,
     });
 
-    this.brushCursorRing = new THREE.Mesh(ringGeometry, ringMaterial);
-    this.brushCursorRing.rotation.x = -Math.PI / 2;
+    this.brushCursorRing = new THREE.Line(ringGeometry, ringMaterial);
     this.brushCursorRing.visible = false;
+    this.brushCursorRing.renderOrder = 999; // Render on top
     this.scene.add(this.brushCursorRing);
 
     // Create mode indicator (arrows/particles)
@@ -386,13 +397,48 @@ export class TerrainRenderer extends BaseRenderer {
 
     if (!shouldShow) return;
 
-    // Position cursors at world position with proper height
-    const safeY = Math.max(worldPos!.y, 0.15); // Ensure minimum height above ocean floor
-    this.brushCursorSphere.position.set(worldPos!.x, safeY, worldPos!.z);
-    this.brushCursorRing.position.set(worldPos!.x, safeY + 0.1, worldPos!.z); // Slightly above terrain
+    // Get actual terrain height at this position for proper surface following
+    const centerHeight = this.getHeightAtWorldPos(worldPos!.x, worldPos!.z) || worldPos!.y;
+    const safeY = Math.max(centerHeight, 0.15); // Ensure minimum height above ocean floor
 
-    // Update ring size based on brush radius
-    this.brushCursorRing.scale.setScalar(this.brushRadius);
+    // Position sphere at world position with terrain-following height
+    this.brushCursorSphere.position.set(worldPos!.x, safeY, worldPos!.z);
+
+    // Update ring to conform to terrain
+    this.brushCursorRing.position.set(worldPos!.x, 0, worldPos!.z);
+
+    // Update ring vertices to follow terrain
+    const ringGeometry = this.brushCursorRing.geometry;
+    const positions = ringGeometry.attributes.position;
+    const segments = 64;
+
+    for (let i = 0; i <= segments; i++) {
+      const angle = (i / segments) * Math.PI * 2;
+      const localX = Math.cos(angle) * this.brushRadius * 0.8; // Slightly smaller radius
+      const localZ = Math.sin(angle) * this.brushRadius * 0.8;
+
+      // Get world position for this point
+      const worldX = worldPos!.x + localX;
+      const worldZ = worldPos!.z + localZ;
+
+      // Get terrain height at this point
+      const pointHeight = this.getHeightAtWorldPos(worldX, worldZ);
+
+      if (pointHeight !== null) {
+        // Set position with terrain-following height
+        positions.setXYZ(
+          i,
+          localX,
+          pointHeight + 0.2, // Small offset above terrain
+          localZ
+        );
+      } else {
+        // Fallback to flat circle at center height
+        positions.setXYZ(i, localX, centerHeight + 0.2, localZ);
+      }
+    }
+
+    positions.needsUpdate = true;
 
     // Define material properties for each stage
     const materialProps = {
@@ -411,7 +457,7 @@ export class TerrainRenderer extends BaseRenderer {
       this.brushCursorMaterial.emissiveIntensity = 0;
 
       // Ring: white, very subtle
-      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
       ringMat.color.setHex(0xFFFFFF);
       ringMat.opacity = 0.3;
 
@@ -431,7 +477,7 @@ export class TerrainRenderer extends BaseRenderer {
       this.brushCursorSphere.scale.setScalar(1.2 * breathe);
 
       // Ring: Mode-specific color, pulsing
-      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
       if (this.brushMode === 'pickup') {
         ringMat.color.setHex(0x00AAFF); // Blue for pickup
       } else {
@@ -448,24 +494,37 @@ export class TerrainRenderer extends BaseRenderer {
 
     // STAGE 3: Alt + Click - Active brushing
     else if (this.brushActive) {
-      this.brushCursorMaterial.color.setHex(baseMat.baseColor);
-      this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+      // Volume-based sizing for hand capacity - THIS is the key visual feedback
+      const volumeRatio = Math.min(1.0, this.brushHandMass / this.brushHandCapacity);
+
+      // Check if nearly full (>95% capacity)
+      const isNearlyFull = volumeRatio > 0.95;
+
+      if (isNearlyFull && this.brushMode === 'pickup') {
+        // Flash red when full
+        this.brushCursorMaterial.color.setHex(0xFF0000);
+        this.brushCursorMaterial.emissive.setHex(0xFF0000);
+        this.brushCursorMaterial.emissiveIntensity = 2.0 * (0.5 + 0.5 * Math.sin(Date.now() * 0.02)); // Fast flashing
+      } else {
+        this.brushCursorMaterial.color.setHex(baseMat.baseColor);
+        this.brushCursorMaterial.emissive.setHex(baseMat.emissive);
+        this.brushCursorMaterial.emissiveIntensity = 1.5; // Bright glow
+      }
+
       this.brushCursorMaterial.opacity = 0.9; // Highly visible
-      this.brushCursorMaterial.emissiveIntensity = 1.5; // Bright glow
 
       // Fast pulsing animation
-      const pulse = Math.sin(Date.now() * 0.008) * 0.2 + 1;
+      const pulse = Math.sin(Date.now() * 0.008) * 0.1 + 1; // Reduced pulse amplitude
 
-      // Volume-based sizing for hand capacity
-      const volumeRatio = this.brushHandMass / this.brushHandCapacity;
-      const minScale = this.brushMode === 'pickup' ? 0.8 : 1.2;
-      const maxScale = this.brushMode === 'pickup' ? 2.5 : 4.0;
+      // Much larger scale range for dramatic effect
+      const minScale = this.brushMode === 'pickup' ? 1.0 : 0.5;
+      const maxScale = this.brushMode === 'pickup' ? 8.0 : 0.2; // Huge when full picking up, tiny when empty depositing
       const baseScale = minScale + (maxScale - minScale) * volumeRatio;
 
       this.brushCursorSphere.scale.setScalar(baseScale * pulse);
 
       // Ring: Bright active colors
-      const ringMat = this.brushCursorRing.material as THREE.MeshBasicMaterial;
+      const ringMat = this.brushCursorRing.material as THREE.LineBasicMaterial;
       if (this.brushMode === 'pickup') {
         ringMat.color.setHex(0x00FF00); // Bright green for active pickup
       } else {
@@ -506,11 +565,13 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Create 3 upward arrows in circle formation
     for (let i = 0; i < 3; i++) {
-      const arrow = new THREE.Mesh(arrowGeometry, upArrowMaterial);
+      const arrow = new THREE.Mesh(arrowGeometry, upArrowMaterial.clone());
       const angle = (i / 3) * Math.PI * 2;
-      arrow.position.x = Math.cos(angle) * 3;
-      arrow.position.z = Math.sin(angle) * 3;
-      arrow.position.y = 2;
+      const baseX = Math.cos(angle) * 2.5;
+      const baseZ = Math.sin(angle) * 2.5;
+      // Store base positions in userData for terrain following
+      arrow.userData = { baseX, baseZ };
+      arrow.position.set(baseX, 1, baseZ);
       arrow.name = 'pickup-arrow';
       this.brushModeIndicator.add(arrow);
     }
@@ -523,11 +584,13 @@ export class TerrainRenderer extends BaseRenderer {
     });
 
     for (let i = 0; i < 3; i++) {
-      const arrow = new THREE.Mesh(arrowGeometry, downArrowMaterial);
-      const angle = (i / 3) * Math.PI * 2;
-      arrow.position.x = Math.cos(angle) * 3;
-      arrow.position.z = Math.sin(angle) * 3;
-      arrow.position.y = 1;
+      const arrow = new THREE.Mesh(arrowGeometry, downArrowMaterial.clone());
+      const angle = (i / 3) * Math.PI * 2 + Math.PI / 6; // Offset from upward arrows
+      const baseX = Math.cos(angle) * 2.5;
+      const baseZ = Math.sin(angle) * 2.5;
+      // Store base positions in userData for terrain following
+      arrow.userData = { baseX, baseZ };
+      arrow.position.set(baseX, 0.5, baseZ);
       arrow.rotation.x = Math.PI; // Point downward
       arrow.name = 'deposit-arrow';
       arrow.visible = false; // Start hidden
@@ -590,13 +653,8 @@ export class TerrainRenderer extends BaseRenderer {
 
     if (!this.brushModeIndicator.visible) return;
 
-    // Position at cursor location with proper height
-    // Ensure the indicator is positioned at terrain surface, not below ocean
-    this.brushModeIndicator.position.set(
-      worldPos.x,
-      Math.max(worldPos.y, 0.15) + 0.05, // Ensure minimum height above ocean floor
-      worldPos.z
-    );
+    // Position group at cursor location
+    this.brushModeIndicator.position.set(worldPos.x, 0, worldPos.z);
 
     // Hide all indicators first
     this.brushModeIndicator.children.forEach(child => {
@@ -609,9 +667,22 @@ export class TerrainRenderer extends BaseRenderer {
       this.brushModeIndicator.children.forEach(child => {
         if (child.name === 'pickup-arrow') {
           child.visible = true;
-          // Animate upward movement
+
+          // Get base position from userData
+          const baseX = child.userData.baseX || 0;
+          const baseZ = child.userData.baseZ || 0;
+
+          // Get terrain height at arrow's world position
+          const worldArrowX = worldPos.x + baseX;
+          const worldArrowZ = worldPos.z + baseZ;
+          const arrowTerrainHeight = this.getHeightAtWorldPos(worldArrowX, worldArrowZ) || worldPos.y;
+
+          // Animate upward movement relative to terrain
           const time = Date.now() * 0.003;
-          child.position.y = 2 + Math.sin(time + child.position.x) * 0.5;
+          const animOffset = 3 + Math.sin(time + baseX) * 1.0; // Much higher for visibility
+          child.position.x = baseX;
+          child.position.z = baseZ;
+          child.position.y = Math.max(arrowTerrainHeight, 0.15) + animOffset;
 
           // Intensify during active state
           const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
@@ -623,9 +694,22 @@ export class TerrainRenderer extends BaseRenderer {
       this.brushModeIndicator.children.forEach(child => {
         if (child.name === 'deposit-arrow') {
           child.visible = true;
-          // Animate downward movement
+
+          // Get base position from userData
+          const baseX = child.userData.baseX || 0;
+          const baseZ = child.userData.baseZ || 0;
+
+          // Get terrain height at arrow's world position
+          const worldArrowX = worldPos.x + baseX;
+          const worldArrowZ = worldPos.z + baseZ;
+          const arrowTerrainHeight = this.getHeightAtWorldPos(worldArrowX, worldArrowZ) || worldPos.y;
+
+          // Animate downward movement relative to terrain
           const time = Date.now() * 0.004;
-          child.position.y = 1 + Math.sin(time + child.position.x) * -0.3;
+          const animOffset = 2 + Math.sin(time + baseX) * -0.5;
+          child.position.x = baseX;
+          child.position.z = baseZ;
+          child.position.y = Math.max(arrowTerrainHeight, 0.15) + animOffset;
 
           const material = (child as THREE.Mesh).material as THREE.MeshBasicMaterial;
           material.opacity = isActive ? 1.0 : 0.6;
@@ -1575,6 +1659,21 @@ export class TerrainRenderer extends BaseRenderer {
       }
     }
 
+    this.heightTexture.needsUpdate = true;
+  }
+
+  /**
+   * Update terrain from GPU brush system textures
+   */
+  public updateFieldTextures(fields: any): void {
+    if (!fields || !fields.fields) return;
+
+    // The brush system modifies GPU textures containing soil/rock/lava
+    // We need to read these back and combine them into the height texture
+    // For now, mark that the height texture needs updating
+    // TODO: Implement GPU readback to get actual height changes
+
+    // Signal that terrain needs updating
     this.heightTexture.needsUpdate = true;
   }
 

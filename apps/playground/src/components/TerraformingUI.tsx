@@ -200,11 +200,15 @@ export function TerraformingUI({ engine, store, className, onSnapshot }: Terrafo
           <BrushSection
             mode={brush.mode}
             material={brush.material}
+            radius={brush.radius}
+            strength={brush.strength}
             isActive={brush.isActive}
             handMass={brush.handMass}
             handCapacity={brush.handCapacity}
             setMode={brush.setMode}
             setMaterial={brush.setMaterial}
+            setRadius={brush.setRadius}
+            setStrength={brush.setStrength}
           />
 
           <QualitySection quality={quality} updateQuality={updateQuality} />

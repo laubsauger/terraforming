@@ -3,6 +3,7 @@ import * as THREE from 'three';
 import type { InteractionTool } from './InteractionToolbar';
 import { TOOL_COLORS } from './ToolCursor';
 import type { Engine } from '@terraforming/engine';
+import { raycastToTerrain } from '@playground/utils/raycasting';
 
 interface TerrainCursorProps {
   activeTool: InteractionTool;
@@ -24,30 +25,7 @@ export function TerrainCursor({
   isAltPressed
 }: TerrainCursorProps) {
   const cursorGroupRef = useRef<THREE.Group | null>(null);
-  const raycasterRef = useRef<THREE.Raycaster>(new THREE.Raycaster());
   const lastValidPositionRef = useRef<THREE.Vector3 | null>(null);
-
-  // Calculate terrain normal at a given position
-  const getTerrainNormal = (engine: Engine, x: number, z: number): THREE.Vector3 => {
-    const epsilon = 0.5;
-
-    // Sample heights around the point
-    const h0 = engine.getTerrainHeightAt(x, z) || 0;
-    const hX1 = engine.getTerrainHeightAt(x + epsilon, z) || 0;
-    const hX2 = engine.getTerrainHeightAt(x - epsilon, z) || 0;
-    const hZ1 = engine.getTerrainHeightAt(x, z + epsilon) || 0;
-    const hZ2 = engine.getTerrainHeightAt(x, z - epsilon) || 0;
-
-    // Calculate gradient (slope)
-    const dx = (hX1 - hX2) / (2 * epsilon);
-    const dz = (hZ1 - hZ2) / (2 * epsilon);
-
-    // Create normal vector from gradient
-    const normal = new THREE.Vector3(-dx, 1, -dz);
-    normal.normalize();
-
-    return normal;
-  };
 
   // Initialize cursor group when engine is ready
   useEffect(() => {
@@ -121,11 +99,8 @@ export function TerrainCursor({
   useEffect(() => {
     if (!cursorGroupRef.current || !engine || !canvasElement) return;
 
-    const scene = engine.getScene();
     const camera = engine.getCamera();
-    const terrainMesh = engine.getTerrainMesh();
-
-    if (!scene || !camera || !terrainMesh) {
+    if (!camera) {
       cursorGroupRef.current.visible = false;
       return;
     }
@@ -136,64 +111,23 @@ export function TerrainCursor({
       return;
     }
 
-    // Convert global mouse position to normalized device coordinates
-    const rect = canvasElement.getBoundingClientRect();
-    const ndcX = ((mousePosition.x - rect.left) / rect.width) * 2 - 1;
-    const ndcY = -((mousePosition.y - rect.top) / rect.height) * 2 + 1;
+    // Use shared raycasting utility
+    const raycastResult = raycastToTerrain(engine, canvasElement, mousePosition);
 
-    // Update raycaster
-    const raycaster = raycasterRef.current;
-    raycaster.setFromCamera(new THREE.Vector2(ndcX, ndcY), camera);
-
-    // First try to intersect with the terrain mesh directly
-    const intersects = raycaster.intersectObject(terrainMesh, false);
-
+    // Use last valid position if no current hit
     let centerPosition: THREE.Vector3 | null = null;
+    let normal: THREE.Vector3 = new THREE.Vector3(0, 1, 0);
 
-    if (intersects.length > 0) {
-      // Get the first intersection point
-      const hitPoint = intersects[0].point;
-
-      // Get actual terrain height at this position
-      const terrainHeight = engine.getTerrainHeightAt(hitPoint.x, hitPoint.z);
-
-      if (terrainHeight !== null) {
-        centerPosition = new THREE.Vector3(hitPoint.x, terrainHeight + 0.2, hitPoint.z);
-      }
-    }
-
-    // If no direct intersection, use ray marching as fallback
-    if (!centerPosition) {
-      const rayOrigin = raycaster.ray.origin;
-      const rayDirection = raycaster.ray.direction;
-
-      // Use finer step size for more accuracy
-      const maxDistance = 300;
-      const stepSize = 0.5;
-
-      for (let distance = 0; distance < maxDistance; distance += stepSize) {
-        const testPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(distance));
-
-        // Check bounds
-        if (Math.abs(testPoint.x) > 50 || Math.abs(testPoint.z) > 50) continue;
-
-        const terrainHeight = engine.getTerrainHeightAt(testPoint.x, testPoint.z);
-
-        if (terrainHeight !== null && testPoint.y <= terrainHeight + 1) {
-          centerPosition = new THREE.Vector3(testPoint.x, terrainHeight + 0.2, testPoint.z);
-          break;
-        }
-      }
-    }
-
-    // Use last valid position if available to prevent jumping
-    if (!centerPosition && lastValidPositionRef.current) {
+    if (raycastResult) {
+      centerPosition = raycastResult.point.clone();
+      centerPosition.y += 0.2; // Slight offset above terrain
+      normal = raycastResult.normal;
+      lastValidPositionRef.current = centerPosition.clone();
+    } else if (lastValidPositionRef.current) {
       centerPosition = lastValidPositionRef.current.clone();
     }
 
     if (centerPosition) {
-      // Store as last valid position
-      lastValidPositionRef.current = centerPosition.clone();
 
       // Update cursor position
       cursorGroupRef.current.position.copy(centerPosition);
@@ -250,9 +184,6 @@ export function TerrainCursor({
 
         positions.needsUpdate = true;
       }
-
-      // Calculate and apply terrain normal for proper orientation
-      const normal = getTerrainNormal(engine, centerPosition.x, centerPosition.z);
 
       // Create rotation from normal
       const up = new THREE.Vector3(0, 1, 0);
