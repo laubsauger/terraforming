@@ -73,11 +73,14 @@ export function TerrainCursor({
     // Create line geometry for cursor outline (add this second so it's child[1])
     const geometry = new THREE.BufferGeometry().setFromPoints(points);
 
+    // Special handling for source tools (water/lava)
+    const isSourceTool = activeTool === 'add-water-source' || activeTool === 'add-lava-source';
+
     const material = new THREE.LineBasicMaterial({
       color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
       transparent: true,
-      opacity: activeTool === 'select' ? 0.8 : 0.6, // Muted by default
-      linewidth: activeTool === 'select' ? 3 : 8, // Much thicker lines for better visibility
+      opacity: activeTool === 'select' ? 0.8 : isSourceTool ? 0.9 : 0.6, // Source tools are more visible
+      linewidth: activeTool === 'select' ? 3 : isSourceTool ? 4 : 8,
       depthTest: false,
       depthWrite: false,
     });
@@ -101,7 +104,50 @@ export function TerrainCursor({
     fillMesh.rotation.x = -Math.PI / 2; // Make it horizontal
     group.add(fillMesh);
 
-    // Add blocked indicator (red X) for when at capacity (child[3])
+    // Add source indicator for water/lava tools (child[3])
+    const sourceIndicatorGroup = new THREE.Group();
+
+    if (isSourceTool) {
+      // Create a droplet/fountain visualization
+      const dropletGeometry = new THREE.SphereGeometry(brushSize * 0.3, 16, 16);
+      const dropletMaterial = new THREE.MeshBasicMaterial({
+        color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
+        transparent: true,
+        opacity: 0.8,
+        depthTest: false,
+        depthWrite: false,
+      });
+
+      // Main droplet
+      const droplet = new THREE.Mesh(dropletGeometry, dropletMaterial);
+      droplet.position.y = brushSize * 0.5;
+      droplet.renderOrder = 1002;
+      sourceIndicatorGroup.add(droplet);
+
+      // Create fountain rings for visual effect
+      for (let i = 0; i < 3; i++) {
+        const ringRadius = brushSize * (0.3 + i * 0.2);
+        const ringGeometry = new THREE.RingGeometry(ringRadius, ringRadius + 0.2, 32);
+        const ringMaterial = new THREE.MeshBasicMaterial({
+          color: parseInt(TOOL_COLORS[activeTool].replace('#', '0x')),
+          transparent: true,
+          opacity: 0.3 - i * 0.1,
+          side: THREE.DoubleSide,
+          depthTest: false,
+          depthWrite: false,
+        });
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        ring.rotation.x = -Math.PI / 2;
+        ring.position.y = 0.1;
+        ring.renderOrder = 999;
+        sourceIndicatorGroup.add(ring);
+      }
+    }
+
+    sourceIndicatorGroup.visible = isSourceTool;
+    group.add(sourceIndicatorGroup);
+
+    // Add blocked indicator (red X) for when at capacity (child[4])
     const blockedGroup = new THREE.Group();
 
     // Create X shape with two crossed lines
@@ -300,11 +346,14 @@ export function TerrainCursor({
 
     if (raycastResult) {
       centerPosition = raycastResult.point.clone();
-      centerPosition.y += 0.2; // Slight offset above terrain
       normal = raycastResult.normal;
-      lastValidPositionRef.current = centerPosition.clone();
+      // Store the raw position without offset
+      lastValidPositionRef.current = raycastResult.point.clone();
+      // Add offset for display
+      centerPosition.y += 0.2; // Slight offset above terrain
     } else if (lastValidPositionRef.current) {
       centerPosition = lastValidPositionRef.current.clone();
+      centerPosition.y += 0.2; // Apply the same offset
     }
 
     if (centerPosition) {
@@ -316,11 +365,43 @@ export function TerrainCursor({
       const centerDot = cursorGroupRef.current.children[0] as THREE.Mesh; // Center dot is child[0]
       const line = cursorGroupRef.current.children[1] as THREE.Line; // Line is child[1]
       const fillMesh = cursorGroupRef.current.children[2] as THREE.Mesh; // Fill is child[2]
-      const blockedIndicator = cursorGroupRef.current.children[3] as THREE.Group; // Blocked indicator is child[3]
+      const sourceIndicator = cursorGroupRef.current.children[3] as THREE.Group; // Source indicator is child[3]
+      const blockedIndicator = cursorGroupRef.current.children[4] as THREE.Group; // Blocked indicator is child[4]
 
-      // Show/hide blocked indicator based on capacity
+      // Show/hide source indicator for water/lava tools
+      const isSourceTool = activeTool === 'add-water-source' || activeTool === 'add-lava-source';
+      if (sourceIndicator) {
+        sourceIndicator.visible = isSourceTool;
+
+        // Animate the source indicator
+        if (isSourceTool) {
+          const time = Date.now() * 0.001;
+
+          // Animate droplet bouncing
+          const droplet = sourceIndicator.children[0] as THREE.Mesh;
+          if (droplet) {
+            droplet.position.y = brushSize * 0.5 + Math.sin(time * 3) * brushSize * 0.1;
+            droplet.scale.setScalar(1 + Math.sin(time * 4) * 0.1);
+          }
+
+          // Animate rings expanding
+          for (let i = 1; i < sourceIndicator.children.length; i++) {
+            const ring = sourceIndicator.children[i] as THREE.Mesh;
+            if (ring) {
+              const baseScale = 1 + ((time * 0.5) % 1) * 0.3;
+              ring.scale.setScalar(baseScale);
+              const ringMat = ring.material as THREE.MeshBasicMaterial;
+              if (ringMat) {
+                ringMat.opacity = Math.max(0, 0.3 - ((time * 0.5) % 1) * 0.3);
+              }
+            }
+          }
+        }
+      }
+
+      // Show/hide blocked indicator based on capacity (only for brush tools)
       if (blockedIndicator) {
-        blockedIndicator.visible = isAltPressed && isBlocked;
+        blockedIndicator.visible = isAltPressed && isBlocked && !isSourceTool;
       }
 
       // Update trail effect
@@ -329,8 +410,9 @@ export function TerrainCursor({
         const trailLength = 20;
 
         // Add current position to trail history
+        // Use the raw terrain position for trail (centerPosition already has +0.2 offset)
         const currentPos = centerPosition.clone();
-        currentPos.y += 0.3; // Slightly above terrain
+        // Don't add extra offset - centerPosition is already offset by 0.2
 
         trailPositionsRef.current.unshift(currentPos);
         trailOpacitiesRef.current.unshift(1.0);

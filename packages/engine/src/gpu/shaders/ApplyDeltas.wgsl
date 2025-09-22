@@ -1,36 +1,35 @@
-@group(0) @binding(0) var soilTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(1) var rockTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(2) var lavaTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(3) var deltaSoilTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(4) var deltaRockTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(5) var deltaLavaTex : texture_storage_2d<r32float, read_write>;
-@group(0) @binding(6) var<uniform> gridSize : vec2<u32>;
+// ApplyDeltas_optimized.wgsl - Apply accumulated deltas to fields using combined RGBA textures
 
-@compute @workgroup_size(8,8)
-fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
-  let p = gid.xy;
-  if (p.x >= gridSize.x || p.y >= gridSize.y) { return; }
+// Combined fields input: R=soil, G=rock, B=lava, A=unused (read-only)
+@group(0) @binding(0) var fieldsInTex : texture_storage_2d<rgba32float, read>;
 
-  var s = textureLoad(soilTex, p).r;
-  var r = textureLoad(rockTex, p).r;
-  var l = textureLoad(lavaTex, p).r;
+// Combined fields output: R=soil, G=rock, B=lava, A=unused (write-only)
+@group(0) @binding(1) var fieldsOutTex : texture_storage_2d<rgba32float, write>;
 
-  let ds = textureLoad(deltaSoilTex, p).r;
-  let dr = textureLoad(deltaRockTex, p).r;
-  let dl = textureLoad(deltaLavaTex, p).r;
+// Combined deltas: R=Δsoil, G=Δrock, B=Δlava, A=unused (read-only)
+@group(0) @binding(2) var deltasTex : texture_storage_2d<rgba32float, read>;
 
-  s = max(0.0, s + ds);
-  r = max(ROCK_MIN_HEIGHT, r + dr);
-  l = max(0.0, l + dl);
+@group(0) @binding(3) var<uniform> gridSize : vec2<u32>;
 
-  textureStore(soilTex, p, vec4<f32>(s,0,0,0));
-  textureStore(rockTex, p, vec4<f32>(r,0,0,0));
-  textureStore(lavaTex, p, vec4<f32>(l,0,0,0));
+const ROCK_MIN_HEIGHT = 0.1; // Minimum rock height (meters)
 
-  // clear deltas
-  textureStore(deltaSoilTex, p, vec4<f32>(0,0,0,0));
-  textureStore(deltaRockTex, p, vec4<f32>(0,0,0,0));
-  textureStore(deltaLavaTex, p, vec4<f32>(0,0,0,0));
+@compute @workgroup_size(8,8,1)
+fn main(@builtin(global_invocation_id) gid:vec3<u32>) {
+  let coord = gid.xy;
+  if (coord.x >= gridSize.x || coord.y >= gridSize.y) { return; }
+
+  // Load current values and deltas
+  let fields = textureLoad(fieldsInTex, coord);
+  let deltas = textureLoad(deltasTex, coord);
+
+  // Apply deltas with clamping
+  var newFields = fields;
+  newFields.r = max(0.0, fields.r + deltas.r);  // soil
+  newFields.g = max(ROCK_MIN_HEIGHT, fields.g + deltas.g);  // rock
+  newFields.b = max(0.0, fields.b + deltas.b);  // lava
+
+  // Write updated fields to output texture
+  textureStore(fieldsOutTex, coord, newFields);
+
+  // Note: Delta clearing needs to be done separately since deltasTex is read-only here
 }
-
-const ROCK_MIN_HEIGHT : f32 = -1000.0; // allow deep mines (tweak)

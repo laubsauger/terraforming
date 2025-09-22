@@ -316,6 +316,45 @@ class StubEngine implements Engine {
     return this.renderer ? (this.renderer as any).gridSize || 256 : 256;
   }
 
+  /**
+   * Add a water source at the specified position
+   */
+  addWaterSource(worldX: number, worldZ: number, flowRate: number = 10): string | null {
+    if (this.renderer) {
+      return this.renderer.addWaterSource(worldX, worldZ, flowRate);
+    }
+    return null;
+  }
+
+  /**
+   * Add a lava source at the specified position
+   */
+  addLavaSource(worldX: number, worldZ: number, flowRate: number = 10): string | null {
+    if (this.renderer) {
+      return this.renderer.addLavaSource(worldX, worldZ, flowRate);
+    }
+    return null;
+  }
+
+  /**
+   * Remove a source by ID
+   */
+  removeSource(id: string): boolean {
+    if (this.renderer) {
+      return this.renderer.removeSource(id);
+    }
+    return false;
+  }
+
+  /**
+   * Toggle visibility of source indicators
+   */
+  setSourceIndicatorsVisible(visible: boolean): void {
+    if (this.renderer) {
+      this.renderer.setSourceIndicatorsVisible(visible);
+    }
+  }
+
   private applyBrushToTerrain(op: BrushOp): void {
     if (!this.renderer) return;
 

@@ -390,32 +390,38 @@ export class BrushInteractionHandler {
   }
 
   private performRayMarching(baseHit: THREE.Vector3, raycaster: THREE.Raycaster): THREE.Vector3 {
-    const rayOrigin = this.camera.position.clone();
-    const rayDir = new THREE.Vector3();
-    rayDir.subVectors(baseHit, rayOrigin).normalize();
+    // Use the ray direction from the raycaster for accuracy
+    const rayOrigin = raycaster.ray.origin.clone();
+    const rayDir = raycaster.ray.direction.clone();
 
-    const maxSteps = 100;
-    const startDistance = Math.max(0, rayOrigin.distanceTo(baseHit) - 20);
-    const marchDistance = rayOrigin.distanceTo(baseHit) + 20;
-    let closestPoint = baseHit.clone();
-    let minDistToSurface = Infinity;
+    // Start ray marching from camera position to find FIRST intersection
+    const maxDistance = 300;
+    let stepSize = 2.0; // Start with larger steps for efficiency
+    let lastAboveGround = true;
     let foundHit = false;
-    let stepSize = (marchDistance - startDistance) / 20;
+    let closestPoint = baseHit.clone(); // Fallback to base hit
 
-    for (let i = 0; i < maxSteps && !foundHit; i++) {
-      const t = startDistance + i * stepSize;
-      if (t > marchDistance) break;
-
+    for (let distance = 0; distance < maxDistance && !foundHit; distance += stepSize) {
       const samplePoint = new THREE.Vector3();
-      samplePoint.copy(rayOrigin).addScaledVector(rayDir, t);
+      samplePoint.copy(rayOrigin).addScaledVector(rayDir, distance);
 
-      const actualHeight = this.getHeightAtWorldPos?.(samplePoint.x, samplePoint.z) ?? 0;
-      const rayHeight = samplePoint.y;
+      // Skip if outside reasonable bounds
+      if (Math.abs(samplePoint.x) > 50 || Math.abs(samplePoint.z) > 50) {
+        continue;
+      }
 
-      if (rayHeight <= actualHeight) {
-        let low = Math.max(startDistance, t - stepSize);
-        let high = t;
+      const actualHeight = this.getHeightAtWorldPos?.(samplePoint.x, samplePoint.z);
+      if (actualHeight === undefined || actualHeight === null) continue;
 
+      const isAboveGround = samplePoint.y > actualHeight;
+
+      // Check if we crossed the terrain surface (going from above to below)
+      if (lastAboveGround && !isAboveGround) {
+        // We've crossed the surface - refine with binary search
+        let low = Math.max(0, distance - stepSize);
+        let high = distance;
+
+        // Binary search for exact intersection
         for (let j = 0; j < 10; j++) {
           const mid = (low + high) / 2;
           const testPoint = new THREE.Vector3();
@@ -423,7 +429,8 @@ export class BrushInteractionHandler {
 
           const testHeight = this.getHeightAtWorldPos?.(testPoint.x, testPoint.z) ?? 0;
 
-          if (Math.abs(testPoint.y - testHeight) < 0.1) {
+          if (Math.abs(testPoint.y - testHeight) < 0.05) {
+            // Found accurate intersection
             return new THREE.Vector3(testPoint.x, testHeight, testPoint.z);
           }
 
@@ -434,29 +441,138 @@ export class BrushInteractionHandler {
           }
         }
 
+        // Use the refined position even if not exact
         const finalPoint = new THREE.Vector3();
         finalPoint.copy(rayOrigin).addScaledVector(rayDir, (low + high) / 2);
         const finalHeight = this.getHeightAtWorldPos?.(finalPoint.x, finalPoint.z) ?? 0;
         return new THREE.Vector3(finalPoint.x, finalHeight, finalPoint.z);
       }
 
-      const distToSurface = Math.abs(rayHeight - actualHeight);
-      if (distToSurface < minDistToSurface) {
-        minDistToSurface = distToSurface;
-        closestPoint.set(samplePoint.x, actualHeight, samplePoint.z);
+      lastAboveGround = isAboveGround;
 
-        if (distToSurface < 5) {
-          stepSize = Math.min(stepSize, 0.5);
-        }
+      // Adaptive step size - smaller steps when close to terrain
+      const distToSurface = Math.abs(samplePoint.y - actualHeight);
+      if (distToSurface < 5) {
+        stepSize = Math.min(stepSize, 0.5);
+      } else if (distToSurface < 10) {
+        stepSize = Math.min(stepSize, 1.0);
+      }
+
+      // Track closest point as fallback
+      if (distToSurface < Math.abs(closestPoint.y - actualHeight)) {
+        closestPoint.set(samplePoint.x, actualHeight, samplePoint.z);
       }
     }
 
+    // If no crossing found, return the closest point we found
     return closestPoint;
   }
 
   private updateBrushCursor(worldPos?: THREE.Vector3): void {
-    // Early return - cursor is handled by UI component
-    return;
+    if (!this.brushModeIndicator) return;
+
+    // Hide everything when not in brush mode
+    if (!worldPos || (!this.brushHovering && !this.brushReady && !this.brushActive)) {
+      this.brushModeIndicator.visible = false;
+      return;
+    }
+
+    // Show mode indicator when brush is ready or active
+    if (this.brushReady || this.brushActive) {
+      this.brushModeIndicator.visible = true;
+      this.brushModeIndicator.position.set(worldPos.x, worldPos.y + 0.5, worldPos.z);
+
+      // Determine actual mode (considering temporary invert)
+      const actualMode = this.temporaryModeInvert ?
+        (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
+        this.brushMode;
+
+      // Update arrow visibility and animation
+      const pickupArrows = this.brushModeIndicator.children.filter(c => c.name === 'pickup-arrow');
+      const depositArrows = this.brushModeIndicator.children.filter(c => c.name === 'deposit-arrow');
+
+      pickupArrows.forEach((arrow: any) => {
+        arrow.visible = actualMode === 'pickup';
+        if (arrow.visible && this.brushActive) {
+          // Animate pickup arrows moving up
+          const userData = arrow.userData as { baseX: number, baseZ: number };
+          const time = Date.now() * 0.001;
+          arrow.position.y = 0.5 + Math.sin(time * 3) * 0.5 + 1.0;
+          if (arrow.material) {
+            arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
+          }
+        } else if (arrow.visible) {
+          // Reset position when ready but not active
+          const userData = arrow.userData as { baseX: number, baseZ: number };
+          arrow.position.y = 1;
+          if (arrow.material) {
+            arrow.material.opacity = 0.8;
+          }
+        }
+      });
+
+      depositArrows.forEach((arrow: any) => {
+        arrow.visible = actualMode === 'deposit';
+        if (arrow.visible && this.brushActive) {
+          // Animate deposit arrows moving down
+          const userData = arrow.userData as { baseX: number, baseZ: number };
+          const time = Date.now() * 0.001;
+          arrow.position.y = 3.5 - Math.sin(time * 3) * 0.5;
+          if (arrow.material) {
+            arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
+          }
+        } else if (arrow.visible) {
+          // Reset position when ready but not active
+          const userData = arrow.userData as { baseX: number, baseZ: number };
+          arrow.position.y = 3.5;
+          if (arrow.material) {
+            arrow.material.opacity = 0.8;
+          }
+        }
+      });
+
+      // Show and animate material particles when active
+      if (this.brushActive) {
+        const particles = this.brushModeIndicator.children.filter(c =>
+          c.name?.includes(`${this.brushMaterial}-particle`)
+        );
+
+        particles.forEach((particle, i) => {
+          particle.visible = true;
+          const time = Date.now() * 0.001;
+          const angle = (i / particles.length) * Math.PI * 2 + time * 0.5;
+          const radius = 2 + Math.sin(time * 2 + i) * 1;
+
+          if (actualMode === 'pickup') {
+            // Particles spiral upward for pickup
+            particle.position.x = Math.cos(angle) * radius;
+            particle.position.z = Math.sin(angle) * radius;
+            particle.position.y = 1 + (time * 2 % 4);
+            particle.scale.setScalar(1 - (particle.position.y - 1) / 4);
+          } else {
+            // Particles fall downward for deposit
+            particle.position.x = Math.cos(angle) * radius;
+            particle.position.z = Math.sin(angle) * radius;
+            particle.position.y = 5 - (time * 2 % 4);
+            particle.scale.setScalar((particle.position.y - 1) / 4);
+          }
+        });
+
+        // Hide particles for other materials
+        const otherParticles = this.brushModeIndicator.children.filter(c =>
+          c.name?.includes('-particle') && !c.name?.includes(this.brushMaterial)
+        );
+        otherParticles.forEach(p => p.visible = false);
+      } else {
+        // Hide all particles when not active
+        const allParticles = this.brushModeIndicator.children.filter(c =>
+          c.name?.includes('-particle')
+        );
+        allParticles.forEach(p => p.visible = false);
+      }
+    } else {
+      this.brushModeIndicator.visible = false;
+    }
   }
 
   private getHighestPointInRadius(worldX: number, worldZ: number, radius: number): number {

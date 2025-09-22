@@ -1,5 +1,5 @@
 // @ts-ignore - Vite handles .wgsl imports
-import BrushWGSL from '../shaders/BrushPass_optimized.wgsl?raw';
+import BrushWGSL from '../shaders/BrushPass.wgsl?raw';
 
 export function createBrushPipeline(device: GPUDevice, layout: GPUBindGroupLayout): GPUComputePipeline {
   const module = device.createShaderModule({ code: BrushWGSL });

@@ -4,8 +4,8 @@ import { createBrushPipeline, createBrushBindGroupLayout } from '../gpu/pipeline
 import { createApplyPipeline, createApplyBindGroupLayout } from '../gpu/pipelines/apply';
 import { createReposePipeline, createReposeBindGroupLayout } from '../gpu/pipelines/repose';
 import { createSmoothPipeline, createSmoothBindGroupLayout } from '../gpu/pipelines/smooth';
-import { createSmoothDirectionalPipeline, SmoothDirectionalPipeline, SmoothDirectionalOp } from '../gpu/pipelines/smoothDirectional';
-import { createFlattenPipeline, FlattenPipeline, FlattenOp } from '../gpu/pipelines/flatten';
+import { createSmoothDirectionalPipeline, SmoothDirectionalPipeline, SmoothDirectionalOp, executeSmoothDirectionalPass } from '../gpu/pipelines/smoothDirectional';
+import { createFlattenPipeline, FlattenPipeline, FlattenOp, executeFlattenPass } from '../gpu/pipelines/flatten';
 
 export interface BrushSystemOptions {
   gridSize: [number, number];  // [width, height] in cells
@@ -24,6 +24,8 @@ export class BrushSystem {
   private applyPipeline!: GPUComputePipeline;
   private reposePipeline!: GPUComputePipeline;
   private smoothPipeline!: GPUComputePipeline;
+  private smoothDirectionalPipeline!: SmoothDirectionalPipeline;
+  private flattenPipeline!: FlattenPipeline;
 
   // Bind group layouts
   private brushLayout!: GPUBindGroupLayout;
@@ -44,6 +46,8 @@ export class BrushSystem {
   private hand: HandState;
   private pendingOps: BrushOp[] = [];
   private pendingSmoothOps: SmoothOp[] = [];
+  private pendingSmoothDirectionalOps: SmoothDirectionalOp[] = [];
+  private pendingFlattenOps: FlattenOp[] = [];
 
   constructor(device: GPUDevice, options: BrushSystemOptions) {
     this.device = device;
@@ -71,6 +75,9 @@ export class BrushSystem {
 
     this.smoothLayout = createSmoothBindGroupLayout(this.device);
     this.smoothPipeline = createSmoothPipeline(this.device, this.smoothLayout);
+
+    this.smoothDirectionalPipeline = createSmoothDirectionalPipeline(this.device);
+    this.flattenPipeline = createFlattenPipeline(this.device);
   }
 
   private initializeBuffers(): void {
@@ -132,7 +139,7 @@ export class BrushSystem {
   }
 
   public addBrushOp(
-    mode: 'pickup' | 'deposit' | 'smooth',
+    mode: 'pickup' | 'deposit' | 'smooth' | 'smooth_raise' | 'smooth_lower' | 'flatten',
     material: 'soil' | 'rock' | 'lava',
     worldX: number,
     worldZ: number,
@@ -149,6 +156,31 @@ export class BrushSystem {
         dt,
       });
       console.log('Added smooth op:', { worldX, worldZ, radius, strength });
+      return;
+    }
+
+    if (mode === 'smooth_raise' || mode === 'smooth_lower') {
+      // Handle directional smoothing
+      this.pendingSmoothDirectionalOps.push({
+        center: [worldX, worldZ],
+        radius,
+        strength: Math.min(strength / 1000, 1.0),
+        mode: mode === 'smooth_raise' ? 1 : -1, // 1 = raise only, -1 = lower only
+        dt,
+      });
+      console.log('Added smooth directional op:', { mode, worldX, worldZ, radius, strength });
+      return;
+    }
+
+    if (mode === 'flatten') {
+      // Handle flatten operations
+      this.pendingFlattenOps.push({
+        center: [worldX, worldZ],
+        radius,
+        strength: Math.min(strength / 100, 1.0), // Flatten strength scale
+        dt,
+      });
+      console.log('Added flatten op:', { worldX, worldZ, radius, strength });
       return;
     }
 
@@ -194,10 +226,16 @@ export class BrushSystem {
   public execute(commandEncoder: GPUCommandEncoder): void {
     const hasRegularOps = this.pendingOps.length > 0;
     const hasSmoothOps = this.pendingSmoothOps.length > 0;
+    const hasSmoothDirectionalOps = this.pendingSmoothDirectionalOps.length > 0;
+    const hasFlattenOps = this.pendingFlattenOps.length > 0;
 
-    if (!hasRegularOps && !hasSmoothOps) return;
+    if (!hasRegularOps && !hasSmoothOps && !hasSmoothDirectionalOps && !hasFlattenOps) return;
 
-    console.log('BrushSystem executing', this.pendingOps.length, 'brush operations and', this.pendingSmoothOps.length, 'smooth operations');
+    console.log('BrushSystem executing:',
+      this.pendingOps.length, 'brush ops,',
+      this.pendingSmoothOps.length, 'smooth ops,',
+      this.pendingSmoothDirectionalOps.length, 'directional smooth ops,',
+      this.pendingFlattenOps.length, 'flatten ops');
 
     // Handle regular brush operations
     if (hasRegularOps) {
@@ -370,9 +408,53 @@ export class BrushSystem {
       );
     }
 
+    // Execute directional smoothing operations
+    if (hasSmoothDirectionalOps) {
+      executeSmoothDirectionalPass(
+        this.device,
+        this.smoothDirectionalPipeline,
+        commandEncoder,
+        this.fields.fields,
+        this.fields.fieldsOut,
+        this.pendingSmoothDirectionalOps,
+        this.options.gridSize,
+        this.options.cellSize
+      );
+
+      // Copy result back to fields
+      commandEncoder.copyTextureToTexture(
+        { texture: this.fields.fieldsOut },
+        { texture: this.fields.fields },
+        { width: this.options.gridSize[0], height: this.options.gridSize[1] }
+      );
+    }
+
+    // Execute flatten operations
+    if (hasFlattenOps) {
+      executeFlattenPass(
+        this.device,
+        this.flattenPipeline,
+        commandEncoder,
+        this.fields.fields,
+        this.fields.fieldsOut,
+        this.pendingFlattenOps,
+        this.options.gridSize,
+        this.options.cellSize
+      );
+
+      // Copy result back to fields
+      commandEncoder.copyTextureToTexture(
+        { texture: this.fields.fieldsOut },
+        { texture: this.fields.fields },
+        { width: this.options.gridSize[0], height: this.options.gridSize[1] }
+      );
+    }
+
     // Clear pending ops
     this.pendingOps = [];
     this.pendingSmoothOps = [];
+    this.pendingSmoothDirectionalOps = [];
+    this.pendingFlattenOps = [];
   }
 
   public getFields(): Fields {

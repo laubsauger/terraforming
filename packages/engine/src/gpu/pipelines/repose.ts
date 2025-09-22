@@ -1,5 +1,5 @@
 // @ts-ignore - Vite handles .wgsl imports
-import ReposeWGSL from '../shaders/ThermalRepose_fixed.wgsl?raw';
+import ReposeWGSL from '../shaders/ThermalRepose.wgsl?raw';
 
 export function createReposePipeline(device: GPUDevice, layout: GPUBindGroupLayout): GPUComputePipeline {
   const module = device.createShaderModule({ code: ReposeWGSL });

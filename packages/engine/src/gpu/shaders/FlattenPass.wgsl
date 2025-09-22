@@ -24,8 +24,8 @@ fn world_of(coord:vec2<u32>)->vec2<f32> {
 
 fn coord_of(world_pos:vec2<f32>)->vec2<u32> {
   let texel = world_pos / cellSize;
-  return vec2<u32>(clamp(texel.x, 0.0, f32(gridSize.x - 1u)),
-                   clamp(texel.y, 0.0, f32(gridSize.y - 1u)));
+  return vec2<u32>(u32(clamp(texel.x, 0.0, f32(gridSize.x - 1u))),
+                   u32(clamp(texel.y, 0.0, f32(gridSize.y - 1u))));
 }
 
 fn flatten_kernel(dist:f32, radius:f32)->f32 {

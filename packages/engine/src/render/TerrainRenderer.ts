@@ -10,6 +10,7 @@ import { TerrainGenerator } from './systems/TerrainGenerator';
 import { TextureManager } from './systems/TextureManager';
 import { MeshFactory } from './systems/MeshFactory';
 import { HeightSampler } from './systems/HeightSampler';
+import { SourceEmitterManager } from './systems/SourceEmitterManager';
 
 export interface TerrainRendererOptions {
   canvas: HTMLCanvasElement;
@@ -38,6 +39,7 @@ export class TerrainRenderer extends BaseRenderer {
   private textureManager: TextureManager;
   private meshFactory: MeshFactory;
   private heightSampler: HeightSampler;
+  private sourceEmitterManager: SourceEmitterManager;
   private brushSystem?: BrushSystem;
 
   // State
@@ -96,6 +98,11 @@ export class TerrainRenderer extends BaseRenderer {
     this.dayNightManager = new DayNightCycleManager({
       scene: this.scene,
       renderer: this.renderer as THREE.WebGPURenderer
+    });
+
+    // Initialize source emitter manager
+    this.sourceEmitterManager = new SourceEmitterManager({
+      scene: this.scene
     });
 
     // Initialize brush interaction handler
@@ -364,6 +371,45 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   /**
+   * Add a water source at the specified position
+   */
+  public addWaterSource(worldX: number, worldZ: number, flowRate: number = 10): string {
+    const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
+    const position = new THREE.Vector3(worldX, height, worldZ);
+    return this.sourceEmitterManager.addSource(position, 'water', flowRate);
+  }
+
+  /**
+   * Add a lava source at the specified position
+   */
+  public addLavaSource(worldX: number, worldZ: number, flowRate: number = 10): string {
+    const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
+    const position = new THREE.Vector3(worldX, height, worldZ);
+    return this.sourceEmitterManager.addSource(position, 'lava', flowRate);
+  }
+
+  /**
+   * Remove a source by ID
+   */
+  public removeSource(id: string): boolean {
+    return this.sourceEmitterManager.removeSource(id);
+  }
+
+  /**
+   * Toggle source indicators visibility
+   */
+  public setSourceIndicatorsVisible(visible: boolean): void {
+    this.sourceEmitterManager.setVisualIndicatorsVisible(visible);
+  }
+
+  /**
+   * Get all active sources for simulation
+   */
+  public getActiveSources() {
+    return this.sourceEmitterManager.getSourceDataForSimulation();
+  }
+
+  /**
    * Main render loop
    */
   public override render(): void {
@@ -372,6 +418,9 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Update day/night cycle
     this.dayNightManager.update();
+
+    // Update source emitter animations
+    this.sourceEmitterManager.update(0.016); // ~60fps
 
     // Execute brush system if available
     if (this.brushSystem && this.renderer) {
@@ -394,6 +443,7 @@ export class TerrainRenderer extends BaseRenderer {
     // Dispose subsystems
     this.brushInteractionHandler.dispose();
     this.dayNightManager.dispose();
+    this.sourceEmitterManager.dispose();
     this.textureManager.dispose();
     this.meshFactory.dispose();
 

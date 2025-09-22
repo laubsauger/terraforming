@@ -1,5 +1,5 @@
 // @ts-ignore - Vite handles .wgsl imports
-import ApplyWGSL from '../shaders/ApplyDeltas_optimized.wgsl?raw';
+import ApplyWGSL from '../shaders/ApplyDeltas.wgsl?raw';
 
 export function createApplyPipeline(device: GPUDevice, layout: GPUBindGroupLayout): GPUComputePipeline {
   const module = device.createShaderModule({ code: ApplyWGSL });

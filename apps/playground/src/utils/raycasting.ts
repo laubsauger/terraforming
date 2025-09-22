@@ -77,33 +77,90 @@ export function raycastToTerrain(
     }
   }
 
-  // If no direct hit, try ray marching as fallback
-  if (!result) {
-    const rayOrigin = sharedRaycaster.ray.origin;
-    const rayDirection = sharedRaycaster.ray.direction;
+  // Always use ray marching for accurate displaced terrain intersection
+  // This ensures we find the FIRST intersection with the actual displaced surface
+  const rayOrigin = sharedRaycaster.ray.origin.clone();
+  const rayDirection = sharedRaycaster.ray.direction.clone();
 
-    const maxDistance = 300;
-    const stepSize = 0.5;
+  // Start ray marching from camera position
+  const maxDistance = 300;
+  let stepSize = 2.0; // Start with larger steps for efficiency
+  let lastAboveGround = true;
+  let foundHit = false;
 
-    for (let distance = 0; distance < maxDistance; distance += stepSize) {
-      const testPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(distance));
+  for (let distance = 0; distance < maxDistance && !foundHit; distance += stepSize) {
+    const testPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(distance));
 
-      // Check bounds
-      if (Math.abs(testPoint.x) > 50 || Math.abs(testPoint.z) > 50) continue;
+    // Skip if outside terrain bounds
+    if (Math.abs(testPoint.x) > 50 || Math.abs(testPoint.z) > 50) {
+      continue;
+    }
 
-      const terrainHeight = engine.getTerrainHeightAt(testPoint.x, testPoint.z);
+    const terrainHeight = engine.getTerrainHeightAt(testPoint.x, testPoint.z);
+    if (terrainHeight === null) continue;
 
-      if (terrainHeight !== null && testPoint.y <= terrainHeight + 1) {
-        const normal = getTerrainNormal(engine, testPoint.x, testPoint.z);
+    const isAboveGround = testPoint.y > terrainHeight;
 
-        result = {
-          point: new THREE.Vector3(testPoint.x, terrainHeight, testPoint.z),
-          terrainHeight,
-          normal,
-          distance
-        };
-        break;
+    // Check if we crossed the terrain surface
+    if (lastAboveGround && !isAboveGround) {
+      // We've crossed the surface - refine with binary search
+      let low = Math.max(0, distance - stepSize);
+      let high = distance;
+
+      // Binary search for exact intersection
+      for (let i = 0; i < 10; i++) {
+        const mid = (low + high) / 2;
+        const midPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(mid));
+        const midHeight = engine.getTerrainHeightAt(midPoint.x, midPoint.z);
+
+        if (midHeight !== null) {
+          if (Math.abs(midPoint.y - midHeight) < 0.05) {
+            // Found accurate intersection
+            const normal = getTerrainNormal(engine, midPoint.x, midPoint.z);
+            result = {
+              point: new THREE.Vector3(midPoint.x, midHeight, midPoint.z),
+              terrainHeight: midHeight,
+              normal,
+              distance: mid
+            };
+            foundHit = true;
+            break;
+          }
+
+          if (midPoint.y > midHeight) {
+            low = mid;
+          } else {
+            high = mid;
+          }
+        }
       }
+
+      if (!foundHit) {
+        // Use the refined position even if not exact
+        const finalDist = (low + high) / 2;
+        const finalPoint = rayOrigin.clone().add(rayDirection.clone().multiplyScalar(finalDist));
+        const finalHeight = engine.getTerrainHeightAt(finalPoint.x, finalPoint.z);
+        if (finalHeight !== null) {
+          const normal = getTerrainNormal(engine, finalPoint.x, finalPoint.z);
+          result = {
+            point: new THREE.Vector3(finalPoint.x, finalHeight, finalPoint.z),
+            terrainHeight: finalHeight,
+            normal,
+            distance: finalDist
+          };
+          foundHit = true;
+        }
+      }
+    }
+
+    lastAboveGround = isAboveGround;
+
+    // Adaptive step size - smaller steps when close to terrain
+    const distToSurface = Math.abs(testPoint.y - terrainHeight);
+    if (distToSurface < 5) {
+      stepSize = Math.min(stepSize, 0.5);
+    } else if (distToSurface < 10) {
+      stepSize = Math.min(stepSize, 1.0);
     }
   }
 
