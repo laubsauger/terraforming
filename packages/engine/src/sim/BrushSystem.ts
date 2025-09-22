@@ -117,21 +117,31 @@ export class BrushSystem {
 
   public addBrushOp(
     mode: 'pickup' | 'deposit',
-    kind: 'soil' | 'rock' | 'lava',
+    material: 'soil' | 'rock' | 'lava',
     worldX: number,
     worldZ: number,
     radius: number,
     strength: number,
     dt: number
   ): void {
-    this.pendingOps.push({
-      mode: mode === 'pickup' ? 0 : 1,
-      kind: materialKindToIndex(kind),
-      center: [worldX, worldZ],
-      radius,
-      strengthKgPerS: strength,
-      dt,
-    });
+    // For pickup mode with empty hand, set material to what we're picking up
+    if (mode === 'pickup' && this.hand.kind === null) {
+      this.hand.kind = material;
+      console.log('Setting hand material to:', material);
+    }
+
+    // Only add operations if we have matching material or empty hand for pickup
+    if (mode === 'pickup' || (mode === 'deposit' && this.hand.kind !== null)) {
+      this.pendingOps.push({
+        mode: mode === 'pickup' ? 0 : 1,
+        kind: materialKindToIndex(material),
+        center: [worldX, worldZ],
+        radius,
+        strengthKgPerS: strength,
+        dt,
+      });
+      console.log('Added brush op:', { mode, material, worldX, worldZ, radius, strength });
+    }
   }
 
   public setHandMaterial(kind: 'soil' | 'rock' | 'lava' | null): void {
@@ -155,6 +165,8 @@ export class BrushSystem {
 
   public execute(commandEncoder: GPUCommandEncoder): void {
     if (this.pendingOps.length === 0) return;
+
+    console.log('BrushSystem executing', this.pendingOps.length, 'operations');
 
     // Update ops buffer
     const opsData = new Float32Array(this.pendingOps.length * 8);

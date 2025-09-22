@@ -14,10 +14,13 @@ export interface QualityOpts {
 }
 
 export interface BrushOp {
-  kind: 'raise' | 'lower' | 'smooth' | 'water' | 'lava';
-  position: [number, number];
+  mode: 'pickup' | 'deposit';
+  material: 'soil' | 'rock' | 'lava';
+  worldX: number;
+  worldZ: number;
   radius: number;
   strength: number;
+  dt: number;
 }
 
 export interface Source {

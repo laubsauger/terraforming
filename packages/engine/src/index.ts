@@ -9,6 +9,7 @@ import type {
 } from '@terraforming/types';
 import * as THREE from 'three/webgpu';
 import { TerrainRenderer } from './render/TerrainRenderer';
+import { BrushSystem } from './sim/BrushSystem';
 
 export type {
   BrushOp,
@@ -88,6 +89,8 @@ class StubEngine implements Engine {
   public readonly opts: EngineOpts;
 
   private renderer?: TerrainRenderer;
+  private brushSystem?: BrushSystem;
+  private gpuDevice?: GPUDevice;
   private simulationPaused = true;  // Simulation starts paused
   private renderingActive = true;   // Renderer runs by default
   private timeScale = 1;
@@ -102,6 +105,7 @@ class StubEngine implements Engine {
   private frameId = 0;
   private readonly sampleListeners = new Set<(sample: PerfSample) => void>();
   private disposed = false;
+  private lastFrameTime = 0;
 
   constructor(canvas: HTMLCanvasElement, opts: EngineOpts) {
     this.canvas = canvas;
@@ -114,6 +118,32 @@ class StubEngine implements Engine {
       return;
     }
 
+    // Get GPU device first
+    try {
+      const adapter = await navigator.gpu.requestAdapter({
+        powerPreference: 'high-performance',
+      });
+      if (!adapter) {
+        throw new Error('Failed to get GPU adapter');
+      }
+
+      this.gpuDevice = await adapter.requestDevice({
+        requiredLimits: {
+          maxStorageTexturesPerShaderStage: 8, // Request higher limit for complex shaders
+        },
+      });
+
+      // Initialize BrushSystem
+      this.brushSystem = new BrushSystem(this.gpuDevice, {
+        gridSize: [256, 256],
+        cellSize: 100 / 256, // terrainSize / gridSize
+        angleOfRepose: 33,
+        handCapacityKg: 10000,
+      });
+    } catch (error) {
+      console.error('Failed to initialize GPU device:', error);
+    }
+
     // Initialize the renderer (BaseRenderer will handle sizing)
     try {
       this.renderer = new TerrainRenderer({
@@ -121,7 +151,10 @@ class StubEngine implements Engine {
         gridSize: 256,
         terrainSize: 100,
       });
-      // Renderer initializes itself asynchronously
+      // Pass BrushSystem to renderer if available
+      if (this.brushSystem && this.renderer) {
+        (this.renderer as any).brushSystem = this.brushSystem;
+      }
     } catch (error) {
       console.error('Failed to initialize renderer:', error);
     }
@@ -274,6 +307,16 @@ class StubEngine implements Engine {
       this.renderer = undefined;
     }
 
+    if (this.brushSystem) {
+      this.brushSystem.destroy();
+      this.brushSystem = undefined;
+    }
+
+    if (this.gpuDevice) {
+      this.gpuDevice.destroy();
+      this.gpuDevice = undefined;
+    }
+
     this.sampleListeners.clear();
     this.brushQueue.length = 0;
   }
@@ -294,13 +337,16 @@ class StubEngine implements Engine {
       const now = performance.now();
       const deltaMs = (now - lastTime);
       lastTime = now;
+      this.lastFrameTime = deltaMs;
 
       this.frameId += 1;
+
+      // Always drain brush queue (brush operations should work even when paused)
+      this.drainBrushQueue();
 
       // Run simulation updates only if not paused
       if (!this.simulationPaused) {
         const simDeltaMs = deltaMs * this.timeScale;
-        this.drainBrushQueue();
         // Future: Update simulation here
       }
 
@@ -318,7 +364,70 @@ class StubEngine implements Engine {
   }
 
   private drainBrushQueue() {
-    if (!this.brushQueue.length) return;
+    if (!this.brushQueue.length || !this.brushSystem || !this.gpuDevice) {
+      // Only log if there are operations waiting but missing dependencies
+      if (this.brushQueue.length > 0) {
+        console.log('Cannot process brush queue - missing brushSystem or gpuDevice');
+      }
+      return;
+    }
+
+    console.log('Processing', this.brushQueue.length, 'brush operations');
+    const dt = this.lastFrameTime * 0.001 * this.timeScale; // Convert to seconds and apply time scale
+
+    // Process all queued brush operations
+    for (const op of this.brushQueue) {
+      console.log('Brush op:', op);
+      this.brushSystem.addBrushOp(
+        op.mode,
+        op.material,
+        op.worldX,
+        op.worldZ,
+        op.radius,
+        op.strength,
+        op.dt || dt || 0.016 // Use provided dt first, then calculated dt, then default to 60fps
+      );
+    }
+
+    // Execute brush operations on GPU
+    const commandEncoder = this.gpuDevice.createCommandEncoder();
+    this.brushSystem.execute(commandEncoder);
+    this.gpuDevice.queue.submit([commandEncoder.finish()]);
+
+    // Update renderer with new field textures
+    if (this.renderer) {
+      const fields = this.brushSystem.getFields();
+      // Pass updated fields to renderer for visualization
+      (this.renderer as any).updateFieldTextures?.(fields);
+    }
+
+    // Update hand state in UI after GPU operations
+    // Note: We need to read back from GPU to get actual mass changes
+    const handState = this.brushSystem.getHandState();
+    const uiStore = (window as any).__uiStore;
+    if (uiStore) {
+      // For now, simulate mass changes based on operations
+      // TODO: Read back actual mass from GPU
+      for (const op of this.brushQueue) {
+        if (op.mode === 'pickup') {
+          // Simulate picking up material
+          const massChange = op.strength * op.dt * 0.1; // Simplified calculation
+          handState.massKg = Math.min(handState.massKg + massChange, 10000);
+        } else if (op.mode === 'deposit' && handState.massKg > 0) {
+          // Simulate depositing material
+          const massChange = op.strength * op.dt * 0.1;
+          handState.massKg = Math.max(handState.massKg - massChange, 0);
+        }
+      }
+
+      // Update the brush system's internal state
+      this.brushSystem.updateHandMass(handState.massKg - this.brushSystem.getHandState().massKg);
+
+      // Update UI
+      uiStore.getState().brush.updateHandMass(handState.massKg);
+      console.log('Updated hand mass:', handState.massKg, 'kg');
+    }
+
     this.brushQueue.length = 0;
   }
 

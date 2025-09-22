@@ -77,10 +77,10 @@ export class TerrainRenderer extends BaseRenderer {
     this.gridSize = gridSize;
     this.terrainSize = terrainSize;
 
-    // Setup scene with better fog for distance falloff
-    const fogColor = 0xa0c8e0; // Slightly muted sky blue for better blending
-    this.scene.background = new THREE.Color(fogColor);
-    this.scene.fog = new THREE.Fog(fogColor, 50, 180); // Closer fog for smoother falloff
+    // Setup scene with black fog for maximum contrast
+    const fogColor = 0x000000; // Pure black fog
+    this.scene.background = new THREE.Color(0x000000); // Pure black background
+    this.scene.fog = new THREE.Fog(fogColor, 150, 400); // Extended render distance
 
     // Setup camera - position on the other side of island for better view
     this.camera.position.set(45, 35, 45);
@@ -132,14 +132,14 @@ export class TerrainRenderer extends BaseRenderer {
       handCapacityKg: this.brushHandCapacity,
     });
 
-    // Initialize brush system fields with current terrain data
-    this.initializeBrushSystemWithTerrain();
-
-    // Create terrain after renderer is ready
+    // Create terrain first
     this.createTerrain();
 
-    // Generate improved test terrain
+    // Generate test terrain data
     this.generateTestTerrain();
+
+    // NOW initialize brush system with actual terrain data
+    this.initializeBrushSystemWithTerrain();
 
     // Create brush cursor
     this.createBrushCursor();
@@ -176,33 +176,16 @@ export class TerrainRenderer extends BaseRenderer {
       if (event.key === 'Shift') {
         this.controls.enabled = false;
       }
-      // Alt key - enter ready stage (stage 2)
-      if (event.key === 'Alt') {
-        event.preventDefault();
-        this.brushReady = true;
-        this.controls.enabled = false;
-        // Show cursor in ready state
-        this.updateBrushCursor(lastWorldPos);
-      }
+      // Alt key handling disabled - now handled in App.tsx
+      // Removed to prevent conflicts with playground brush handling
     };
 
     const handleKeyUp = (event: KeyboardEvent) => {
       if (event.key === 'Shift') {
         this.controls.enabled = true;
       }
-      // Alt key release - exit all brush states
-      if (event.key === 'Alt') {
-        this.brushReady = false;
-        this.brushActive = false;
-        this.controls.enabled = true;
-        // Hide cursor
-        this.updateBrushCursor();
-        // Cancel any ongoing brush operation
-        if (animationFrameId !== null) {
-          cancelAnimationFrame(animationFrameId);
-          animationFrameId = null;
-        }
-      }
+      // Alt key handling disabled - now handled in App.tsx
+      // Removed to prevent conflicts with playground brush handling
     };
 
     // Mouse move for hover feedback
@@ -221,21 +204,25 @@ export class TerrainRenderer extends BaseRenderer {
         if (intersects.length > 0) {
           lastWorldPos = intersects[0].point;
 
-          // Stage 1: Simple hover when no keys pressed
-          if (!this.brushReady && !this.brushActive) {
+          // Check if Alt is pressed for ready state
+          if (event.altKey) {
+            this.brushReady = true;
+            this.brushHovering = false;
+          } else {
+            this.brushReady = false;
+            this.brushActive = false;
             this.brushHovering = true;
           }
 
-          // Update cursor for any active stage
-          if (this.brushHovering || this.brushReady || this.brushActive) {
-            this.updateBrushCursor(lastWorldPos);
-          }
+          // Update cursor position and state
+          this.updateBrushCursor(lastWorldPos);
         } else {
-          // Mouse not over terrain - hide hover state
+          // Mouse not over terrain
+          lastWorldPos = undefined;
           this.brushHovering = false;
-          if (!this.brushReady && !this.brushActive) {
-            this.updateBrushCursor();
-          }
+          this.brushReady = false;
+          this.brushActive = false;
+          this.updateBrushCursor();
         }
       }
     };
@@ -262,18 +249,19 @@ export class TerrainRenderer extends BaseRenderer {
       }
     };
 
-    // Mouse down - enter active stage (stage 3)
+    // Mouse down - check if we should show visual feedback
     const handleMouseDown = (event: MouseEvent) => {
-      if (this.brushReady && event.button === 0) { // Left click only when ready
-        event.preventDefault();
+      // Check if Alt is held (from external state)
+      if (event.altKey && event.button === 0) {
         this.brushActive = true;
-
-        // Start continuous brush operation
-        performBrushOperation();
+        // Update cursor to show active state
+        if (lastWorldPos) {
+          this.updateBrushCursor(lastWorldPos);
+        }
       }
     };
 
-    // Mouse up - return to ready stage (stage 2)
+    // Mouse up - clear active state
     const handleMouseUp = (event: MouseEvent) => {
       if (event.button === 0) { // Left click only
         this.brushActive = false;
@@ -284,9 +272,13 @@ export class TerrainRenderer extends BaseRenderer {
           animationFrameId = null;
         }
 
-        // Return to ready state if Alt still held
-        if (this.brushReady && lastWorldPos) {
+        // Update cursor to show ready state if Alt still held
+        if (event.altKey && lastWorldPos) {
+          this.brushReady = true;
           this.updateBrushCursor(lastWorldPos);
+        } else {
+          this.brushReady = false;
+          this.updateBrushCursor();
         }
       }
     };
@@ -361,10 +353,29 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   /**
+   * Sync brush parameters from UI
+   */
+  public syncBrushFromUI(): void {
+    const uiStore = (window as any).__uiStore;
+    if (uiStore) {
+      const brushState = uiStore.getState().brush;
+      this.brushMode = brushState.mode;
+      this.brushMaterial = brushState.material;
+      this.brushRadius = brushState.radius;
+      this.brushStrength = brushState.strength;
+      this.brushHandMass = brushState.handMass;
+      this.brushHandCapacity = brushState.handCapacity;
+    }
+  }
+
+  /**
    * Update brush cursor appearance based on current state
    */
   private updateBrushCursor(worldPos?: THREE.Vector3): void {
     if (!this.brushCursorSphere || !this.brushCursorRing || !this.brushCursorMaterial) return;
+
+    // Sync brush parameters from UI before updating visuals
+    this.syncBrushFromUI();
 
     // Determine visibility and current stage
     const shouldShow = (this.brushHovering || this.brushReady || this.brushActive) && worldPos !== undefined;
@@ -429,6 +440,9 @@ export class TerrainRenderer extends BaseRenderer {
       ringMat.opacity = 0.6 + Math.sin(Date.now() * 0.004) * 0.2; // Pulsing opacity
 
       // Show mode indicators
+      if (this.brushModeIndicator) {
+        this.brushModeIndicator.visible = true;
+      }
       this.updateModeIndicator(worldPos!, true, false);
     }
 
@@ -873,10 +887,10 @@ export class TerrainRenderer extends BaseRenderer {
       this.sunLight.color.setHex(0xfffaed); // Normal sun color
     }
 
-    // Update fog color based on time of day (toned down brightness)
-    const fogDayColor = new THREE.Color(0x708090); // Day fog - muted gray-blue
-    const fogNightColor = new THREE.Color(0x1a2030); // Night fog - very dark blue
-    const fogSunsetColor = new THREE.Color(0x806050); // Sunset fog - muted warm tone
+    // Update fog color - keeping it black/dark gray for contrast
+    const fogDayColor = new THREE.Color(0x0a0a0a); // Day fog - very dark gray
+    const fogNightColor = new THREE.Color(0x000000); // Night fog - pure black
+    const fogSunsetColor = new THREE.Color(0x050505); // Sunset fog - almost black
 
     // Calculate fog color based on sun position
     if (sunElevation > 0.5) {
@@ -1565,10 +1579,33 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   public updateHeightmap(data: Float32Array): void {
+    const size = this.gridSize;
     const textureData = this.heightTexture.image.data as Float32Array;
-    textureData.set(data);
+
+    // Clear existing data first to avoid artifacts
+    textureData.fill(0);
+
+    // Copy the new heightmap data
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const idx = y * size + x;
+        const texIdx = idx * 4; // RGBA format
+        const height = data[idx] || 0;
+
+        // Set all channels to the same height value
+        textureData[texIdx] = height;     // R
+        textureData[texIdx + 1] = height; // G
+        textureData[texIdx + 2] = height; // B
+        textureData[texIdx + 3] = 1.0;    // A
+      }
+    }
+
     this.heightTexture.needsUpdate = true;
-    // GPU will automatically use updated texture for displacement
+
+    // Also update brush system if initialized
+    if (this.brushSystem) {
+      this.initializeBrushSystemWithTerrain();
+    }
   }
 
   public updateFlowmap(data: Float32Array): void {

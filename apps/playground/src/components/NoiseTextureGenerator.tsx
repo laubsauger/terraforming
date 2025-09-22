@@ -2,9 +2,15 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Button } from '@playground/components/ui/button';
 import { Slider } from '@playground/components/ui/slider';
 import { Label } from '@playground/components/ui/label';
-import { Card, CardContent, CardHeader, CardTitle } from '@playground/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@playground/components/ui/tabs';
 import { Input } from '@playground/components/ui/input';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@playground/components/ui/dialog';
 import { Download, Upload, RotateCcw, Send } from 'lucide-react';
 import type { Engine } from '@terraforming/engine';
 
@@ -417,32 +423,31 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     return () => clearTimeout(timer);
   }, [params, generateHeightmap]);
 
-  if (!isOpen) return null;
-
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-      <Card className="w-[90vw] h-[90vh] max-w-6xl bg-black/90 text-white border-white/20">
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle>Noise Texture Generator</CardTitle>
-          <Button variant="ghost" onClick={onClose}>×</Button>
-        </CardHeader>
+    <Dialog open={isOpen} onOpenChange={onClose}>
+      <DialogContent className="max-w-[95vw] w-full h-[90vh] bg-black/95 backdrop-blur-xl border border-white/10 p-0 overflow-hidden text-white">
+        <DialogHeader className="px-6 pt-6 pb-4 border-b border-white/10">
+          <DialogTitle className="text-xl font-semibold text-white">Terrain Generator</DialogTitle>
+          <DialogDescription className="text-sm text-gray-400">
+            Create procedural terrain using noise functions. Adjust parameters to shape your world.
+          </DialogDescription>
+        </DialogHeader>
 
-        <CardContent className="h-full overflow-hidden">
-          <div className="grid grid-cols-2 gap-6 h-full">
-            {/* Left side - Controls */}
-            <div className="space-y-4 overflow-y-auto">
+        <div className="flex h-[calc(100%-5rem)] overflow-hidden">
+          {/* Left side - Controls */}
+          <div className="w-1/2 p-6 overflow-y-auto border-r border-white/10 space-y-4">
               <Tabs defaultValue="shape" className="w-full">
-                <TabsList className="grid w-full grid-cols-5">
-                  <TabsTrigger value="shape">Shape</TabsTrigger>
-                  <TabsTrigger value="terrain">Terrain</TabsTrigger>
-                  <TabsTrigger value="mountains">Mountains</TabsTrigger>
-                  <TabsTrigger value="details">Details</TabsTrigger>
-                  <TabsTrigger value="presets">Presets</TabsTrigger>
+                <TabsList className="grid w-full grid-cols-5 bg-white/5 text-white">
+                  <TabsTrigger value="shape" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Shape</TabsTrigger>
+                  <TabsTrigger value="terrain" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Terrain</TabsTrigger>
+                  <TabsTrigger value="mountains" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Mountains</TabsTrigger>
+                  <TabsTrigger value="details" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Details</TabsTrigger>
+                  <TabsTrigger value="presets" className="data-[state=active]:bg-white/10 data-[state=active]:text-white">Presets</TabsTrigger>
                 </TabsList>
 
                 <TabsContent value="shape" className="space-y-4">
                   <div>
-                    <Label>Island Radius: {params.islandRadius.toFixed(2)}</Label>
+                    <Label className="text-white">Island Radius: {params.islandRadius.toFixed(2)}</Label>
                     <Slider
                       value={[params.islandRadius]}
                       onValueChange={([value]) => setParams(p => ({ ...p, islandRadius: value }))}
@@ -453,7 +458,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Island Falloff: {params.islandFalloff.toFixed(2)}</Label>
+                    <Label className="text-white">Island Falloff: {params.islandFalloff.toFixed(2)}</Label>
                     <Slider
                       value={[params.islandFalloff]}
                       onValueChange={([value]) => setParams(p => ({ ...p, islandFalloff: value }))}
@@ -464,7 +469,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Island Noise: {params.islandNoise.toFixed(2)}</Label>
+                    <Label className="text-white">Island Noise: {params.islandNoise.toFixed(2)}</Label>
                     <Slider
                       value={[params.islandNoise]}
                       onValueChange={([value]) => setParams(p => ({ ...p, islandNoise: value }))}
@@ -475,7 +480,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Water Level: {params.waterLevel.toFixed(3)}</Label>
+                    <Label className="text-white">Water Level: {params.waterLevel.toFixed(3)}</Label>
                     <Slider
                       value={[params.waterLevel]}
                       onValueChange={([value]) => setParams(p => ({ ...p, waterLevel: value }))}
@@ -488,7 +493,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
                 <TabsContent value="terrain" className="space-y-4">
                   <div>
-                    <Label>Base Scale: {params.baseScale.toFixed(1)}</Label>
+                    <Label className="text-white">Base Scale: {params.baseScale.toFixed(1)}</Label>
                     <Slider
                       value={[params.baseScale]}
                       onValueChange={([value]) => setParams(p => ({ ...p, baseScale: value }))}
@@ -499,7 +504,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Base Octaves: {params.baseOctaves}</Label>
+                    <Label className="text-white">Base Octaves: {params.baseOctaves}</Label>
                     <Slider
                       value={[params.baseOctaves]}
                       onValueChange={([value]) => setParams(p => ({ ...p, baseOctaves: Math.round(value) }))}
@@ -510,7 +515,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Base Amplitude: {params.baseAmplitude.toFixed(2)}</Label>
+                    <Label className="text-white">Base Amplitude: {params.baseAmplitude.toFixed(2)}</Label>
                     <Slider
                       value={[params.baseAmplitude]}
                       onValueChange={([value]) => setParams(p => ({ ...p, baseAmplitude: value }))}
@@ -523,7 +528,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
                 <TabsContent value="mountains" className="space-y-4">
                   <div>
-                    <Label>Mountain Threshold: {params.mountainThreshold.toFixed(2)}</Label>
+                    <Label className="text-white">Mountain Threshold: {params.mountainThreshold.toFixed(2)}</Label>
                     <Slider
                       value={[params.mountainThreshold]}
                       onValueChange={([value]) => setParams(p => ({ ...p, mountainThreshold: value }))}
@@ -534,7 +539,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Mountain Scale: {params.mountainScale.toFixed(1)}</Label>
+                    <Label className="text-white">Mountain Scale: {params.mountainScale.toFixed(1)}</Label>
                     <Slider
                       value={[params.mountainScale]}
                       onValueChange={([value]) => setParams(p => ({ ...p, mountainScale: value }))}
@@ -545,7 +550,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Mountain Octaves: {params.mountainOctaves}</Label>
+                    <Label className="text-white">Mountain Octaves: {params.mountainOctaves}</Label>
                     <Slider
                       value={[params.mountainOctaves]}
                       onValueChange={([value]) => setParams(p => ({ ...p, mountainOctaves: Math.round(value) }))}
@@ -556,7 +561,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Mountain Amplitude: {params.mountainAmplitude.toFixed(2)}</Label>
+                    <Label className="text-white">Mountain Amplitude: {params.mountainAmplitude.toFixed(2)}</Label>
                     <Slider
                       value={[params.mountainAmplitude]}
                       onValueChange={([value]) => setParams(p => ({ ...p, mountainAmplitude: value }))}
@@ -567,7 +572,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Ridge Strength: {params.ridgeStrength.toFixed(2)}</Label>
+                    <Label className="text-white">Ridge Strength: {params.ridgeStrength.toFixed(2)}</Label>
                     <Slider
                       value={[params.ridgeStrength]}
                       onValueChange={([value]) => setParams(p => ({ ...p, ridgeStrength: value }))}
@@ -580,7 +585,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
                 <TabsContent value="details" className="space-y-4">
                   <div>
-                    <Label>Detail Scale: {params.detailScale.toFixed(1)}</Label>
+                    <Label className="text-white">Detail Scale: {params.detailScale.toFixed(1)}</Label>
                     <Slider
                       value={[params.detailScale]}
                       onValueChange={([value]) => setParams(p => ({ ...p, detailScale: value }))}
@@ -591,7 +596,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Detail Octaves: {params.detailOctaves}</Label>
+                    <Label className="text-white">Detail Octaves: {params.detailOctaves}</Label>
                     <Slider
                       value={[params.detailOctaves]}
                       onValueChange={([value]) => setParams(p => ({ ...p, detailOctaves: Math.round(value) }))}
@@ -602,7 +607,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Detail Amplitude: {params.detailAmplitude.toFixed(3)}</Label>
+                    <Label className="text-white">Detail Amplitude: {params.detailAmplitude.toFixed(3)}</Label>
                     <Slider
                       value={[params.detailAmplitude]}
                       onValueChange={([value]) => setParams(p => ({ ...p, detailAmplitude: value }))}
@@ -613,7 +618,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Smoothing Passes: {params.smoothingPasses}</Label>
+                    <Label className="text-white">Smoothing Passes: {params.smoothingPasses}</Label>
                     <Slider
                       value={[params.smoothingPasses]}
                       onValueChange={([value]) => setParams(p => ({ ...p, smoothingPasses: Math.round(value) }))}
@@ -624,7 +629,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div>
-                    <Label>Smoothing Strength: {params.smoothingStrength.toFixed(2)}</Label>
+                    <Label className="text-white">Smoothing Strength: {params.smoothingStrength.toFixed(2)}</Label>
                     <Slider
                       value={[params.smoothingStrength]}
                       onValueChange={([value]) => setParams(p => ({ ...p, smoothingStrength: value }))}
@@ -637,13 +642,13 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
                 <TabsContent value="presets" className="space-y-4">
                   <div className="space-y-2">
-                    <Label>Save Current Settings</Label>
+                    <Label className="text-white">Save Current Settings</Label>
                     <div className="flex gap-2">
                       <Input
                         placeholder="Preset name..."
                         value={presetName}
                         onChange={(e) => setPresetName(e.target.value)}
-                        className="flex-1"
+                        className="flex-1 bg-white/5 border-white/20 text-white placeholder:text-gray-500"
                       />
                       <Button onClick={savePreset} disabled={!presetName.trim()} size="sm">
                         Save
@@ -652,14 +657,14 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   </div>
 
                   <div className="space-y-2">
-                    <Label>Saved Presets ({Object.keys(savedPresets).length})</Label>
+                    <Label className="text-white">Saved Presets ({Object.keys(savedPresets).length})</Label>
                     <div className="space-y-2 max-h-48 overflow-y-auto">
                       {Object.keys(savedPresets).length === 0 ? (
                         <p className="text-sm text-gray-400 italic">No saved presets</p>
                       ) : (
                         Object.keys(savedPresets).map((name) => (
                           <div key={name} className="flex items-center gap-2 p-2 bg-gray-800 rounded">
-                            <span className="flex-1 text-sm">{name}</span>
+                            <span className="flex-1 text-sm text-white">{name}</span>
                             <Button onClick={() => loadPreset(name)} variant="outline" size="sm">
                               Load
                             </Button>
@@ -715,11 +720,11 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                 onChange={importHeightmap}
                 className="hidden"
               />
-            </div>
+          </div>
 
-            {/* Right side - Preview */}
-            <div className="flex flex-col">
-              <Label className="mb-2">Preview {isGenerating && '(Generating...)'}</Label>
+          {/* Right side - Preview */}
+          <div className="w-1/2 p-6 flex flex-col">
+              <Label className="mb-2 text-white">Preview {isGenerating && '(Generating...)'}</Label>
               <div className="flex-1 flex items-center justify-center bg-gray-900 rounded border border-white/20">
                 <canvas
                   ref={canvasRef}
@@ -727,10 +732,9 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                   style={{ imageRendering: 'pixelated' }}
                 />
               </div>
-            </div>
           </div>
-        </CardContent>
-      </Card>
-    </div>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }

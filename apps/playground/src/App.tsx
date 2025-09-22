@@ -181,17 +181,27 @@ export function App() {
     if (!engine || !canvasRef.current) return;
 
     const canvas = canvasRef.current;
-    const uiStore = (window as any).__uiStore; // Get the store from TerraformingUI
+    let lastBrushTime = 0;
+    const BRUSH_RATE = 1000 / 30; // 30Hz for smooth painting
+    let lastMouseEvent: MouseEvent | null = null;
+    let animationFrameId: number | null = null;
 
     const performBrushOperation = (event: MouseEvent) => {
-      if (!isAltPressed || !uiStore) return;
+      const uiStore = (window as any).__uiStore;
+      if (!uiStore) {
+        console.log('No UI store available');
+        return false;
+      }
 
       // Get world position from raycasting
       const camera = engine.getCamera();
       const scene = engine.getScene();
       const terrainMesh = engine.getTerrainMesh();
 
-      if (!camera || !scene || !terrainMesh) return;
+      if (!camera || !scene || !terrainMesh) {
+        console.log('Missing camera, scene, or terrain mesh');
+        return false;
+      }
 
       const rect = canvas.getBoundingClientRect();
       const x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -205,6 +215,15 @@ export function App() {
         const point = intersects[0].point;
         const brushState = uiStore.getState().brush;
 
+        console.log('Queueing brush operation:', {
+          mode: brushState.mode,
+          material: brushState.material,
+          worldX: point.x,
+          worldZ: point.z,
+          radius: brushState.radius,
+          strength: brushState.strength
+        });
+
         // Queue the brush operation
         engine.brush.enqueue({
           mode: brushState.mode,
@@ -213,59 +232,77 @@ export function App() {
           worldZ: point.z,
           radius: brushState.radius,
           strength: brushState.strength,
-          dt: 0.016 // 60fps frame time
+          dt: 0.033 // ~30fps for smoother operations
         });
 
-        // Mark brush as active
-        brushState.setActive(true);
+        return true;
       }
+      console.log('No terrain intersection found');
+      return false;
     };
 
     const handlePointerDown = (event: MouseEvent) => {
+      console.log('Pointer down, isAltPressed:', isAltPressed, 'button:', event.button);
       if (isAltPressed && event.button === 0) { // Left click only
+        console.log('Starting brush drag');
         event.preventDefault();
+        event.stopPropagation();
         setIsDragging(true);
-        performBrushOperation(event);
 
-        // Start continuous operation while dragging
-        if (dragIntervalRef.current) clearInterval(dragIntervalRef.current);
-        dragIntervalRef.current = window.setInterval(() => {
-          const lastEvent = new MouseEvent('mousemove', {
-            clientX: mousePosition.x,
-            clientY: mousePosition.y,
-            bubbles: true
-          });
-          performBrushOperation(lastEvent);
-        }, 50); // ~20Hz for continuous brush
+        // Mark brush as active in UI
+        const uiStore = (window as any).__uiStore;
+        if (uiStore) {
+          uiStore.getState().brush.setActive(true);
+        }
+
+        // Perform initial brush operation
+        const success = performBrushOperation(event);
+        console.log('Initial brush operation result:', success);
+        lastBrushTime = Date.now();
+      }
+    };
+
+    const handlePointerMove = (event: MouseEvent) => {
+      // Always update mouse position
+      setMousePosition({ x: event.clientX, y: event.clientY });
+
+      // Perform brush operation if dragging with Alt
+      if (isDragging && isAltPressed) {
+        const now = Date.now();
+        if (now - lastBrushTime >= BRUSH_RATE) {
+          performBrushOperation(event);
+          lastBrushTime = now;
+        }
       }
     };
 
     const handlePointerUp = () => {
-      setIsDragging(false);
-      if (dragIntervalRef.current) {
-        clearInterval(dragIntervalRef.current);
-        dragIntervalRef.current = null;
-      }
+      if (isDragging) {
+        setIsDragging(false);
 
-      // Mark brush as inactive
-      const uiStore = (window as any).__uiStore;
-      if (uiStore) {
-        const brushState = uiStore.getState().brush;
-        brushState.setActive(false);
+        // Mark brush as inactive
+        const uiStore = (window as any).__uiStore;
+        if (uiStore) {
+          uiStore.getState().brush.setActive(false);
+        }
       }
     };
 
-    canvas.addEventListener('pointerdown', handlePointerDown);
-    window.addEventListener('pointerup', handlePointerUp);
+    // Use pointer events for better touch/mouse support
+    canvas.addEventListener('pointerdown', handlePointerDown, { capture: true });
+    canvas.addEventListener('pointermove', handlePointerMove);
+    canvas.addEventListener('pointerup', handlePointerUp);
+    canvas.addEventListener('pointercancel', handlePointerUp);
+    canvas.addEventListener('pointerleave', handlePointerUp);
 
     return () => {
-      canvas.removeEventListener('pointerdown', handlePointerDown);
-      window.removeEventListener('pointerup', handlePointerUp);
-      if (dragIntervalRef.current) {
-        clearInterval(dragIntervalRef.current);
-      }
+      canvas.removeEventListener('pointerdown', handlePointerDown, { capture: true });
+      canvas.removeEventListener('pointermove', handlePointerMove);
+      canvas.removeEventListener('pointerup', handlePointerUp);
+      canvas.removeEventListener('pointercancel', handlePointerUp);
+      canvas.removeEventListener('pointerleave', handlePointerUp);
     };
-  }, [engine, isAltPressed, mousePosition]);
+  }, [engine, isAltPressed, isDragging]);
 
   // Mouse tracking for tool cursor
   useEffect(() => {
