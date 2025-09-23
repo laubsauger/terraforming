@@ -13,6 +13,7 @@ export class DebugOverlaySystem {
   private scene: THREE.Scene;
   private terrainSize: number;
   private fluidSystem: FluidSystem;
+  private gridSize: number = 256; // Default grid size
 
   // Overlay meshes
   private overlayMeshes: Map<DebugOverlay, THREE.Mesh> = new Map();
@@ -27,7 +28,7 @@ export class DebugOverlaySystem {
   /**
    * Create an overlay mesh for a specific debug type
    */
-  private createOverlayMesh(type: DebugOverlay): THREE.Mesh | null {
+  private createOverlayMesh(type: DebugOverlay): THREE.Mesh | undefined {
     let overlayTexture: GPUTexture | null = null;
 
     // Get the appropriate texture from fluid system
@@ -52,23 +53,23 @@ export class DebugOverlaySystem {
         break;
       case 'height':
         // Height would come from terrain renderer
-        return null;
+        return undefined;
       case 'erosion':
         // Erosion visualization would need erosion rate texture
-        return null;
+        return undefined;
       case 'lava':
         overlayTexture = this.fluidSystem.getLavaDepthTexture?.() ?? null;
         break;
       case 'contours':
         // Contours are handled by terrain material directly
-        return null;
+        return undefined;
       default:
-        return null;
+        return undefined;
     }
 
     if (!overlayTexture) {
       console.warn(`DebugOverlaySystem: No texture available for overlay type: ${type}`);
-      return null;
+      return undefined;
     }
 
     // Create a placeholder DataTexture for WebGPU compatibility

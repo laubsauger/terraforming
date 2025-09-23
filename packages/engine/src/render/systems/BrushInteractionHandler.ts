@@ -571,27 +571,8 @@ export class BrushInteractionHandler {
       this.brushCursorRing.visible = false;
     }
 
-    // Update brush sphere position (if used) - ensure it updates during active operations
-    // Only show for brush tools
-    if (this.brushCursorSphere && worldPos && (this.brushReady || this.brushActive) && this.isBrushToolActive()) {
-      // Always update position when we have a valid world position
-      this.brushCursorSphere.position.set(worldPos.x, worldPos.y, worldPos.z);
-      this.brushCursorSphere.scale.setScalar(this.brushRadius);
-      this.brushCursorSphere.visible = true;
-
-      // Update material color based on mode
-      const actualMode = this.temporaryModeInvert ?
-        (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
-        this.brushMode;
-
-      if (this.brushCursorMaterial) {
-        if (actualMode === 'pickup') {
-          this.brushCursorMaterial.color.setHex(0x00AAFF);
-        } else {
-          this.brushCursorMaterial.color.setHex(0xFFAA00);
-        }
-      }
-    } else if (this.brushCursorSphere) {
+    // DISABLED: Brush sphere - tools have their own colored cursors
+    if (this.brushCursorSphere) {
       this.brushCursorSphere.visible = false;
     }
 

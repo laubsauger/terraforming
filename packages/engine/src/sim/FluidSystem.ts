@@ -147,7 +147,7 @@ export class FluidSystem {
       this.gravity,
       this.evaporationRate,
       this.rainIntensity,
-      this.simResolution,
+      this.resolution,
       0, // deltaTime (updated per frame)
       0, // time (updated per frame)
 
@@ -533,7 +533,7 @@ export class FluidSystem {
       this.gravity,
       this.evaporationRate,
       this.rainIntensity,
-      this.simResolution,
+      this.resolution,
       deltaTime,
       time,
 
@@ -573,16 +573,16 @@ export class FluidSystem {
       pass.setPipeline(this.sourceEmissionPipeline);
       pass.setBindGroup(0, this.sourceEmissionBindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
 
       // Debug log emission pass every 2 seconds
       if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) {
         console.log('FluidSystem: Source emission pass executed', {
-          simResolution: this.simResolution,
-          workgroups: Math.ceil(this.simResolution / 8)
+          resolution: this.resolution,
+          workgroups: Math.ceil(this.resolution / 8)
         });
       }
     } else {
@@ -600,8 +600,8 @@ export class FluidSystem {
       pass.setPipeline(this.flowVelocityPipeline);
       pass.setBindGroup(0, this.flowVelocityBindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
       this.pingPongState.flow = !this.pingPongState.flow;
@@ -621,8 +621,8 @@ export class FluidSystem {
       pass.setPipeline(this.flowAccumulationPipeline);
       pass.setBindGroup(0, this.flowAccumulationBindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
     }
@@ -633,8 +633,8 @@ export class FluidSystem {
       pass.setPipeline(this.waterAdvectionPipeline);
       pass.setBindGroup(0, this.waterAdvectionBindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
       this.pingPongState.water = !this.pingPongState.water;
@@ -646,8 +646,8 @@ export class FluidSystem {
       pass.setPipeline(this.poolDetectionPipeline);
       pass.setBindGroup(0, this.poolDetectionBindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
     }
@@ -695,8 +695,8 @@ export class FluidSystem {
       pass.setPipeline(this.hydraulicErosionPipeline);
       pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(
-        Math.ceil(this.simResolution / 8),
-        Math.ceil(this.simResolution / 8)
+        Math.ceil(this.resolution / 8),
+        Math.ceil(this.resolution / 8)
       );
       pass.end();
       this.pingPongState.sediment = !this.pingPongState.sediment;

@@ -588,7 +588,7 @@ export class TerrainRenderer extends BaseRenderer {
     if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
       // Use setTimeout to avoid blocking the render loop
       setTimeout(() => {
-        this.fluidSystem.debugWaterDepth().catch(console.error);
+        this.fluidSystem?.debugWaterDepth().catch(console.error);
       }, 0);
     }
   }
