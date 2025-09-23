@@ -130,7 +130,7 @@ export function createUiStore(
         })),
     },
     debug: {
-      overlays: sanitizeOverlayList(initialState.debug?.overlays ?? ['contours']),
+      overlays: sanitizeOverlayList(initialState.debug?.overlays ?? ['none']), // Start with no overlays
       setOverlays: (values: OverlayOption[]) =>
         set((state) => ({
           debug: {

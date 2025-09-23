@@ -7,6 +7,8 @@ export interface DebugOverlaySystemOptions {
   scene: THREE.Scene;
   terrainSize: number;
   fluidSystem: FluidSystem;
+  heightTexture: THREE.Texture; // Need height texture for terrain displacement
+  heightScale: number;
 }
 
 export class DebugOverlaySystem {
@@ -14,6 +16,8 @@ export class DebugOverlaySystem {
   private terrainSize: number;
   private fluidSystem: FluidSystem;
   private gridSize: number = 256; // Default grid size
+  private heightTexture: THREE.Texture;
+  private heightScale: number;
 
   // Overlay meshes
   private overlayMeshes: Map<DebugOverlay, THREE.Mesh> = new Map();
@@ -23,6 +27,8 @@ export class DebugOverlaySystem {
     this.scene = options.scene;
     this.terrainSize = options.terrainSize;
     this.fluidSystem = options.fluidSystem;
+    this.heightTexture = options.heightTexture;
+    this.heightScale = options.heightScale;
   }
 
   /**
@@ -93,27 +99,33 @@ export class DebugOverlaySystem {
     threeTexture.wrapT = THREE.ClampToEdgeWrapping;
     threeTexture.needsUpdate = false; // Don't update CPU data
 
-    // Create overlay plane geometry
+    // Create overlay plane geometry with same subdivision as terrain for proper displacement
+    const subdivisions = 127; // Same as terrain
     const geometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
-      1,
-      1
+      subdivisions,
+      subdivisions
     );
     geometry.rotateX(-Math.PI / 2);
 
-    // Create material
+    // Create material with terrain displacement
     const material = createDebugOverlayMaterialTSL({
       overlayTexture: threeTexture,
       overlayType: type as any,
-      opacity: 0.7
+      opacity: 0.7,
+      heightTexture: this.heightTexture,
+      heightScale: this.heightScale
     });
 
     // Create mesh
     const mesh = new THREE.Mesh(geometry, material);
-    mesh.position.y = 0.5; // Slightly above terrain
-    mesh.renderOrder = 10; // Render after terrain
+    mesh.position.y = 0; // At terrain level (displacement handled by material)
+    mesh.renderOrder = 100; // Render after everything
     mesh.visible = false; // Start hidden
+    mesh.frustumCulled = false; // Always render
+
+    console.log(`DebugOverlaySystem: Created overlay mesh for ${type}`);
 
     return mesh;
   }
@@ -148,6 +160,9 @@ export class DebugOverlaySystem {
       if (mesh) {
         mesh.visible = true;
         this.activeOverlays.add(overlay);
+        console.log(`DebugOverlaySystem: Activated overlay ${overlay}, mesh visible: ${mesh.visible}`);
+      } else {
+        console.warn(`DebugOverlaySystem: Failed to create/get mesh for ${overlay}`);
       }
     }
   }
@@ -195,11 +210,13 @@ export class DebugOverlaySystem {
         (threeTexture as any).gpuTexture = currentTexture;
         threeTexture.needsUpdate = false; // Don't update CPU data
 
-        // Recreate material with new texture
+        // Recreate material with new texture and terrain displacement
         mesh.material = createDebugOverlayMaterialTSL({
           overlayTexture: threeTexture,
           overlayType: overlay as any,
-          opacity: 0.7
+          opacity: 0.7,
+          heightTexture: this.heightTexture,
+          heightScale: this.heightScale
         });
       }
     }

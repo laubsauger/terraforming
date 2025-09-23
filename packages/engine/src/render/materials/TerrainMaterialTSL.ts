@@ -325,11 +325,13 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     const streamColor = vec3(0.5, 0.52, 0.55); // Lighter wet areas
 
     // Blend based on accumulation strength
-    terrainColorWithCaustics = mix(
+    const tempColor = mix(terrainColorWithCaustics.mul(0.7), riverColor, riverMask);
+    const newColor = mix(
       terrainColorWithCaustics,
-      mix(terrainColorWithCaustics.mul(0.7), riverColor, riverMask),
+      tempColor,
       streamMask
     );
+    terrainColorWithCaustics = newColor.add(vec3(0)); // Keep as OperatorNode
   }
 
   // Apply sediment visualization (lighter areas where sediment deposited)
@@ -337,7 +339,8 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     const sediment = texture(sedimentMap, uv()).r;
     const sedimentMask = smoothstep(float(0), float(0.1), sediment);
     const sedimentColor = vec3(0.8, 0.75, 0.65); // Light sandy sediment
-    terrainColorWithCaustics = mix(terrainColorWithCaustics, sedimentColor, sedimentMask.mul(0.3));
+    const newSedColor = mix(terrainColorWithCaustics, sedimentColor, sedimentMask.mul(0.3));
+    terrainColorWithCaustics = newSedColor.add(vec3(0)); // Keep as OperatorNode
   }
 
   const terrainColorFinal = terrainColorWithCaustics;
@@ -371,7 +374,8 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     const accumulation = texture(accumulationMap, uv()).r;
     const wetnessMask = smoothstep(float(0), float(0.05), accumulation);
     // Wet areas are glossier (lower roughness)
-    dynamicRoughness = mix(dynamicRoughness, float(0.1), wetnessMask.mul(0.8));
+    const newRoughness = mix(dynamicRoughness, float(0.1), wetnessMask.mul(0.8));
+    dynamicRoughness = newRoughness.add(float(0)); // Keep as OperatorNode
   }
 
   material.roughnessNode = clamp(dynamicRoughness, float(0.1), float(1.0));

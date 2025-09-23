@@ -276,6 +276,7 @@ export class FluidSystem {
         { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'rg32float' } }, // flow in
         { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rg32float' } }, // flow out
         { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // roughness texture
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // water depth
       ]
     });
 
@@ -293,6 +294,7 @@ export class FluidSystem {
         { binding: 2, resource: this.fields.flow.createView() },
         { binding: 3, resource: this.fields.flowOut.createView() },
         { binding: 4, resource: this.fields.rock.createView() }, // Use rock as roughness for now
+        { binding: 5, resource: this.fields.waterDepth.createView() }, // Water depth
       ]
     });
   }
@@ -605,6 +607,11 @@ export class FluidSystem {
       );
       pass.end();
       this.pingPongState.flow = !this.pingPongState.flow;
+
+      // Debug log flow velocity pass
+      if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
+        console.log('FluidSystem: Flow Velocity pass executed');
+      }
 
       // Copy the updated flow texture to sampled texture for use in other passes
       const currentFlow = this.pingPongState.flow ? this.fields.flow : this.fields.flowOut;

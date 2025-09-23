@@ -13,10 +13,11 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var heightTex: texture_2d<f32>;     // Combined height (soil + rock + water)
+@group(0) @binding(1) var heightTex: texture_2d<f32>;     // Terrain height (soil + rock)
 @group(0) @binding(2) var flowTexIn: texture_storage_2d<rg32float, read>;  // Previous flow (for inertia)
 @group(0) @binding(3) var flowTexOut: texture_storage_2d<rg32float, write>; // Output flow velocity
 @group(0) @binding(4) var roughnessTex: texture_2d<f32>;  // Terrain roughness/friction
+@group(0) @binding(5) var waterDepthTex: texture_storage_2d<r32float, read>; // Water depth
 
 const WORKGROUP_SIZE = 8u;
 const FLOW_INERTIA = 0.8;  // Blend factor for previous flow (0 = no inertia, 1 = full inertia)
@@ -32,14 +33,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let coord = vec2<i32>(id.xy);
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims);
 
-  // Sample height at center and neighbors
-  let h_center = textureLoad(heightTex, coord, 0).r;
+  // Sample terrain height and water depth at center and neighbors
+  let terrain_center = textureLoad(heightTex, coord, 0).r;
+  let water_center = textureLoad(waterDepthTex, coord).r;
+  let h_center = terrain_center + water_center;
 
-  // Get neighbor heights (with boundary clamping)
-  let h_left = textureLoad(heightTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
-  let h_right = textureLoad(heightTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
-  let h_up = textureLoad(heightTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
-  let h_down = textureLoad(heightTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
+  // Get neighbor heights (terrain + water)
+  let coord_left = clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1);
+  let coord_right = clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1);
+  let coord_up = clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1);
+  let coord_down = clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1);
+
+  let h_left = textureLoad(heightTex, coord_left, 0).r + textureLoad(waterDepthTex, coord_left).r;
+  let h_right = textureLoad(heightTex, coord_right, 0).r + textureLoad(waterDepthTex, coord_right).r;
+  let h_up = textureLoad(heightTex, coord_up, 0).r + textureLoad(waterDepthTex, coord_up).r;
+  let h_down = textureLoad(heightTex, coord_down, 0).r + textureLoad(waterDepthTex, coord_down).r;
 
   // Calculate height gradient (∇H)
   // Note: Negative gradient points downhill
@@ -53,7 +61,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // Convert gradient to velocity: v = -normalize(∇H) * sqrt(2 * g * |∇H|) * dt
   // This uses Bernoulli's equation for flow down a slope
   var velocity = vec2<f32>(0.0);
-  if (slope > 0.001) {
+
+  // Only calculate flow where there's water
+  if (water_center > 0.001 && slope > 0.001) {
     let flow_dir = -gradient / slope;  // Normalize and negate (flow downhill)
     let flow_speed = sqrt(2.0 * params.gravity * slope) * params.deltaTime;
     velocity = flow_dir * clamp(flow_speed, MIN_FLOW_SPEED, MAX_FLOW_SPEED);

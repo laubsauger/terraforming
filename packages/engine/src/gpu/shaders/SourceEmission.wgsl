@@ -28,6 +28,7 @@ const WORKGROUP_SIZE = 8u;
 const SOURCE_RADIUS = 3.0;        // Radius of source influence in texels
 const LAVA_TEMPERATURE = 1200.0;  // Initial temperature of emitted lava (Celsius)
 const GAUSSIAN_SIGMA = 1.5;       // Sigma for Gaussian falloff
+const EMISSION_SCALE = 0.001;     // Scale down emission rate (L/s to m depth per texel)
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -58,8 +59,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // Calculate Gaussian falloff
     let falloff = exp(-(distance * distance) / (2.0 * GAUSSIAN_SIGMA * GAUSSIAN_SIGMA));
 
-    // Calculate emission amount
-    let emission_rate = source.rate * params.deltaTime * falloff;
+    // Calculate emission amount (scaled to reasonable depth values)
+    let emission_rate = source.rate * params.deltaTime * falloff * EMISSION_SCALE;
 
     // Add to appropriate field based on source type
     if (source.sourceType < 0.5) {

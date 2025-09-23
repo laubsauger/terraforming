@@ -48,7 +48,7 @@ export class TerrainRenderer extends BaseRenderer {
   private debugOverlaySystem?: DebugOverlaySystem;
 
   // State
-  private showContours = true;
+  private showContours = false; // Start with contours off
 
   constructor(options: TerrainRendererOptions) {
     const { canvas, gridSize = 256, terrainSize = 100 } = options;
@@ -163,7 +163,9 @@ export class TerrainRenderer extends BaseRenderer {
       this.debugOverlaySystem = new DebugOverlaySystem({
         scene: this.scene,
         terrainSize: this.terrainSize,
-        fluidSystem: this.fluidSystem
+        fluidSystem: this.fluidSystem,
+        heightTexture: this.textureManager.heightTexture,
+        heightScale: this.HEIGHT_SCALE
       });
       console.log('TerrainRenderer: Debug overlay system initialized');
     }
@@ -184,6 +186,21 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Setup environment map for reflections after meshes are created
     this.setupEnvironmentMap();
+
+    // Log verification that environment is set
+    setTimeout(() => {
+      console.log('ENVIRONMENT MAP VERIFICATION:', {
+        hasEnvironment: !!this.scene.environment,
+        environmentType: this.scene.environment?.constructor.name,
+        isTexture: this.scene.environment?.isTexture,
+        hasImage: !!(this.scene.environment as any)?.image,
+        mapping: (this.scene.environment as any)?.mapping,
+        oceanMeshExists: !!this.meshFactory.oceanMesh,
+        oceanMaterial: this.meshFactory.oceanMesh?.material?.constructor.name,
+        waterMeshExists: !!this.meshFactory.waterMesh,
+        waterMaterial: this.meshFactory.waterMesh?.material?.constructor.name
+      });
+    }, 100);
 
     // Update terrain material with fluid textures now that meshFactory exists
     this.updateTerrainMaterialWithFluid();
@@ -265,6 +282,16 @@ export class TerrainRenderer extends BaseRenderer {
       this.scene.environmentIntensity = 1.0; // Full intensity for reflections
 
       console.log('TerrainRenderer: Environment map set up successfully');
+      console.log('Environment texture details:', {
+        isCanvasTexture: texture.isTexture,
+        hasImage: !!texture.image,
+        imageWidth: texture.image?.width,
+        imageHeight: texture.image?.height,
+        mapping: texture.mapping === THREE.EquirectangularReflectionMapping ? 'EquirectangularReflection' : 'Other',
+        colorSpace: texture.colorSpace === THREE.SRGBColorSpace ? 'SRGB' : 'Linear',
+        sceneHasEnvironment: !!this.scene.environment,
+        environmentIntensity: this.scene.environmentIntensity
+      });
     } catch (error) {
       console.warn('TerrainRenderer: Failed to setup environment map, water will reflect default environment', error);
     }
@@ -561,11 +588,21 @@ export class TerrainRenderer extends BaseRenderer {
     this.sourceEmitterManager.setVisualIndicatorsVisible(visible);
   }
 
+  private lastSimulationTime = 0;
+  private simulationInterval = 1000 / 30; // Run at 30 FPS max
+
   /**
-   * Update fluid simulation - should be called each frame
+   * Update fluid simulation - throttled to 30fps for performance
    */
   public updateSimulation(deltaTime: number, time: number): void {
     if (!this.fluidSystem) return;
+
+    // Throttle simulation updates to 30fps
+    const timeSinceLastUpdate = (time * 1000) - this.lastSimulationTime;
+    if (timeSinceLastUpdate < this.simulationInterval) {
+      return;
+    }
+    this.lastSimulationTime = time * 1000;
 
     // Get WebGPU device from the renderer
     const device = (this.renderer as any).backend?.device;
@@ -574,23 +611,62 @@ export class TerrainRenderer extends BaseRenderer {
     // Create command encoder for this frame
     const commandEncoder = device.createCommandEncoder();
 
-    // Update fluid system
-    this.fluidSystem.update(commandEncoder, deltaTime, time);
+    // Update fluid system with accumulated delta time
+    const simDeltaTime = timeSinceLastUpdate / 1000;
+    this.fluidSystem.update(commandEncoder, simDeltaTime, time);
 
     // Submit commands
     device.queue.submit([commandEncoder.finish()]);
 
-    // TODO: Fix texture binding for per-frame updates
-    // Currently disabled due to Three.js WebGPU texture binding issues
-    // this.updateTerrainMaterialWithFluid();
+    // Update water mesh every frame for smooth flow visualization
+    this.updateWaterMeshWithFluid();
+
+    // Update terrain material with fluid textures only occasionally to avoid performance issues
+    // TODO: Find a better way to update textures without recreating them
+    if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) {
+      this.updateTerrainMaterialWithFluid();
+    }
 
     // Debug: Check water depth values every 5 seconds
     if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
       // Use setTimeout to avoid blocking the render loop
-      setTimeout(() => {
-        this.fluidSystem?.debugWaterDepth().catch(console.error);
+      setTimeout(async () => {
+        if (this.fluidSystem) {
+          await this.fluidSystem.debugWaterDepth();
+        }
       }, 0);
     }
+  }
+
+  /**
+   * Update water mesh with current water depth texture
+   */
+  private updateWaterMeshWithFluid(): void {
+    if (!this.fluidSystem || !this.meshFactory.waterMesh) return;
+
+    const waterDepthGPUTexture = this.fluidSystem.getWaterDepthTexture();
+    if (!waterDepthGPUTexture) return;
+
+    // Create a placeholder DataTexture for WebGPU compatibility
+    const size = this.gridSize;
+    const data = new Float32Array(size * size);
+    const waterDepthTexture = new THREE.DataTexture(
+      data,
+      size,
+      size,
+      THREE.RedFormat,
+      THREE.FloatType
+    );
+
+    // Mark as GPU texture and attach the actual GPU texture
+    (waterDepthTexture as any).isStorageTexture = true;
+    (waterDepthTexture as any).gpuTexture = waterDepthGPUTexture;
+    waterDepthTexture.minFilter = THREE.LinearFilter;
+    waterDepthTexture.magFilter = THREE.LinearFilter;
+    waterDepthTexture.needsUpdate = false;
+
+    // Use MeshFactory's method to update water mesh with proper material
+    this.meshFactory.updateWaterWithFluidTexture(waterDepthTexture);
   }
 
   /**

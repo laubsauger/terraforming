@@ -147,7 +147,10 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   } else if (depthTexture) {
     // For dynamic water (rivers/lakes): use provided depth texture with more saturation
     const depth = texture(depthTexture, uv()).r;
-    const normalizedDepth = smoothstep(float(0), float(1), depth);
+
+    // Check if there's actually water
+    const hasWater = step(float(0.001), depth);
+    const normalizedDepth = smoothstep(float(0), float(0.5), depth);
 
     // More saturated colors for inland water
     const lakeShallowColor = vec3(0.25, 0.75, 0.85);  // Bright turquoise for shallow lakes
@@ -158,7 +161,8 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     waterColorNode = mix(shallowMix, lakeMediumColor, normalizedDepth.pow(0.3));
 
     // Higher opacity for lakes to make them more visible
-    opacityNode = mix(float(0.7), float(opacity), smoothstep(float(0), float(0.1), depth));
+    // Only show where there's actually water
+    opacityNode = hasWater.mul(mix(float(0.85), float(opacity), smoothstep(float(0), float(0.1), depth)));
 
     // Add ripple effects for lakes
     const lakeRipples = animatedUV.x.mul(8).add(animatedUV.y.mul(8)).sin();

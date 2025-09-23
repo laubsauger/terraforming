@@ -175,16 +175,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     smoothedFields = mix(originalFields, normalizedSmoothing, blendFactor);
   }
 
-  // Preserve total mass - very important for terrain consistency
-  let originalTotal = originalFields.r + originalFields.g + originalFields.b;
-  let smoothedTotal = smoothedFields.r + smoothedFields.g + smoothedFields.b;
-
-  if (smoothedTotal > 0.0 && originalTotal > 0.0) {
-    let massRatio = originalTotal / smoothedTotal;
-    smoothedFields.r *= massRatio;
-    smoothedFields.g *= massRatio;
-    smoothedFields.b *= massRatio;
-  }
+  // Don't preserve local mass - smoothing SHOULD redistribute material
+  // The mass is conserved globally across the entire smoothing area, not per-pixel
+  // Clamp to reasonable values to prevent extreme values
+  smoothedFields.r = clamp(smoothedFields.r, 0.0, 10.0);
+  smoothedFields.g = clamp(smoothedFields.g, 0.0, 10.0);
+  smoothedFields.b = clamp(smoothedFields.b, 0.0, 10.0);
 
   textureStore(fieldsOut, coord, smoothedFields);
 }

@@ -44,10 +44,10 @@ export const FluidConfig = {
   // === Source Emitters ===
   SOURCE_RADIUS: 3.0,               // Radius of source influence in texels
   SOURCE_GAUSSIAN_SIGMA: 1.5,       // Gaussian falloff sigma
-  DEFAULT_WATER_FLOW_RATE: 10.0,    // Default water emission rate
-  DEFAULT_LAVA_FLOW_RATE: 5.0,      // Default lava emission rate
-  MIN_FLOW_RATE: 0.1,               // Minimum source flow rate
-  MAX_FLOW_RATE: 100.0,             // Maximum source flow rate
+  DEFAULT_WATER_FLOW_RATE: 100.0,   // Default water emission rate (increased 10x)
+  DEFAULT_LAVA_FLOW_RATE: 50.0,     // Default lava emission rate (increased 10x)
+  MIN_FLOW_RATE: 1.0,               // Minimum source flow rate
+  MAX_FLOW_RATE: 1000.0,            // Maximum source flow rate
 
   // === Lava Parameters ===
   LAVA_INITIAL_TEMP: 1200.0,        // Initial lava temperature (Celsius)

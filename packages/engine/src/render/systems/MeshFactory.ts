@@ -1,6 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { createTerrainMaterialTSL } from '../materials/TerrainMaterialTSL';
 import { createWaterMaterialTSL } from '../materials/WaterMaterialTSL';
+import { createDynamicWaterMaterialTSL } from '../materials/DynamicWaterMaterialTSL';
 import { createLavaMaterialTSL } from '../materials/LavaMaterialTSL';
 import type { TextureManager } from './TextureManager';
 
@@ -19,6 +20,7 @@ export class MeshFactory {
   private waterLevel: number;
   private waterLevelNormalized: number;
   private textureManager: TextureManager;
+  private currentShowContours: boolean = false; // Track current contour state
 
   // Meshes
   public terrainMesh?: THREE.Mesh;
@@ -51,7 +53,7 @@ export class MeshFactory {
       flowMap: this.textureManager.flowTexture,
       accumulationMap: this.textureManager.accumulationTexture,
       waterDepthMap: waterDepthTexture, // Add fluid water depth
-      showContours: true,
+      showContours: this.currentShowContours, // Preserve current contour state
       contourInterval: 0.05,
       waterLevel: this.waterLevelNormalized,
     });
@@ -61,7 +63,30 @@ export class MeshFactory {
     currentMaterial.dispose(); // Clean up old material
   }
 
-  public createTerrain(scene: THREE.Scene, showContours: boolean = true): THREE.Mesh {
+  /**
+   * Update water mesh with fluid depth texture
+   */
+  public updateWaterWithFluidTexture(waterDepthTexture: THREE.Texture): void {
+    if (!this.waterMesh) return;
+
+    // Update water material with current depth texture and terrain height
+    const currentMaterial = this.waterMesh.material as THREE.Material;
+    const newMaterial = createDynamicWaterMaterialTSL({
+      waterDepthTexture: waterDepthTexture,
+      heightTexture: this.textureManager.heightTexture,
+      heightScale: this.heightScale,
+      opacity: 0.85
+    });
+
+    this.waterMesh.material = newMaterial;
+    currentMaterial.dispose();
+
+    // Always make water visible if we have a depth texture
+    this.waterMesh.visible = true;
+  }
+
+  public createTerrain(scene: THREE.Scene, showContours: boolean = false): THREE.Mesh {
+    this.currentShowContours = showContours; // Store initial state
     // Create terrain geometry - higher subdivision for better detail
     const subdivisions = 127; // 128x128 grid for detailed terrain
     const geometry = new THREE.PlaneGeometry(
@@ -123,24 +148,28 @@ export class MeshFactory {
 
   public createWater(scene: THREE.Scene): THREE.Mesh {
     // Create dynamic water surface (initially invisible) - for rivers/lakes
+    // Use higher resolution for better water surface detail
     const waterGeometry = new THREE.PlaneGeometry(
       this.terrainSize,
       this.terrainSize,
-      32, // Fixed low resolution for water
-      32
+      127, // Same subdivision as terrain for proper displacement
+      127
     );
     waterGeometry.rotateX(-Math.PI / 2);
 
-    const waterMaterial = createWaterMaterialTSL({
-      color: new THREE.Color(0x0099cc),
-      opacity: 0.4,
-      depthTexture: this.textureManager.waterDepthTexture
+    // Use dynamic water material that positions itself based on terrain + water depth
+    const waterMaterial = createDynamicWaterMaterialTSL({
+      waterDepthTexture: this.textureManager.waterDepthTexture,
+      heightTexture: this.textureManager.heightTexture,
+      heightScale: this.heightScale,
+      opacity: 0.85
     });
 
     this.waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
-    this.waterMesh.position.y = 0.3; // Lower water level to show shallow areas
+    this.waterMesh.position.y = 0; // Base position, displacement handled by material
     this.waterMesh.visible = false; // Start hidden until we have water depth data
     this.waterMesh.receiveShadow = true;
+    this.waterMesh.renderOrder = 10; // Render after terrain
     scene.add(this.waterMesh);
 
     return this.waterMesh;
@@ -174,6 +203,7 @@ export class MeshFactory {
 
   public updateTerrainContours(showContours: boolean): void {
     if (!this.terrainMesh) return;
+    this.currentShowContours = showContours; // Update stored state
 
     const oldMaterial = this.terrainMesh.material as THREE.Material;
 

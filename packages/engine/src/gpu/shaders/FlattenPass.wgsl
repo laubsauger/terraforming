@@ -60,7 +60,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let dist = distance(wpos, op.center);
 
     if (dist <= op.radius) {
-      // Get the target height from the center point
+      // Get the target height from the center point of the brush
       let centerCoord = coord_of(op.center);
       let centerHeight = getHeight(centerCoord);
 
@@ -90,19 +90,27 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 
     // Distribute the adjustment proportionally among materials
     let totalMaterial = originalFields.r + originalFields.g + originalFields.b;
-    if (totalMaterial > 0.0) {
+    if (totalMaterial > 0.001) {
       let soilRatio = originalFields.r / totalMaterial;
       let rockRatio = originalFields.g / totalMaterial;
       let lavaRatio = originalFields.b / totalMaterial;
 
-      // Apply adjustment
-      flattenedFields.r = max(0.0, originalFields.r + adjustmentFactor * soilRatio);
-      flattenedFields.g = max(0.0, originalFields.g + adjustmentFactor * rockRatio);
-      flattenedFields.b = max(0.0, originalFields.b + adjustmentFactor * lavaRatio);
-    } else if (adjustmentFactor > 0.0) {
-      // If we're raising from zero, add as soil by default
-      flattenedFields.r = adjustmentFactor;
+      // Apply adjustment - but ensure we don't go negative
+      if (adjustmentFactor > 0.0) {
+        // Raising: distribute proportionally
+        flattenedFields.r = originalFields.r + adjustmentFactor * soilRatio;
+        flattenedFields.g = originalFields.g + adjustmentFactor * rockRatio;
+        flattenedFields.b = originalFields.b + adjustmentFactor * lavaRatio;
+      } else {
+        // Lowering: remove proportionally but don't go below zero
+        let removalFactor = min(1.0, abs(adjustmentFactor) / totalMaterial);
+        flattenedFields.r = originalFields.r * (1.0 - removalFactor);
+        flattenedFields.g = originalFields.g * (1.0 - removalFactor);
+        flattenedFields.b = originalFields.b * (1.0 - removalFactor);
+      }
     }
+    // If there's no material and we're trying to raise, we can't create material from nothing
+    // The flatten operation should only redistribute existing material
 
     // Clamp to reasonable values
     flattenedFields.r = clamp(flattenedFields.r, 0.0, 10.0);
