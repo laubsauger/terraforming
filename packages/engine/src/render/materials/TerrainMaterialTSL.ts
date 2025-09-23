@@ -86,36 +86,36 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     }
   };
 
-  // === BEAUTIFUL TERRAIN COLORS ===
-  // Beach sand colors - highly saturated golden tones like tropical beaches
-  const wetSandBase = vec3(0.8, 0.6, 0.35);        // Rich golden wet sand
-  const wetSandVariation = vec3(0.9, 0.75, 0.5);   // Bright golden patches
-  const drySandBase = vec3(1.0, 0.95, 0.75);       // Brilliant white-gold sand
-  const drySandVariation = vec3(0.98, 0.9, 0.7);   // Pure warm sand variation
+  // === VIBRANT STYLIZED TERRAIN COLORS ===
+  // Beach sand colors - deep golden browns
+  const wetSandBase = vec3(0.65, 0.45, 0.25);      // Dark wet sand
+  const wetSandVariation = vec3(0.75, 0.55, 0.3);  // Medium brown sand
+  const drySandBase = vec3(0.9, 0.75, 0.5);        // Golden dry sand
+  const drySandVariation = vec3(0.85, 0.7, 0.45);  // Tan sand
 
-  // Grass colors - extremely vibrant tropical greens
-  const grassDark = vec3(0.15, 0.7, 0.2);          // Deep emerald green
-  const grassBright = vec3(0.3, 1.0, 0.25);        // Electric tropical green
-  const grassDry = vec3(0.5, 0.9, 0.35);           // Bright lime green
+  // Grass colors - rich, deep greens
+  const grassDark = vec3(0.05, 0.35, 0.05);        // Very dark forest green
+  const grassBright = vec3(0.15, 0.55, 0.1);       // Medium grass green
+  const grassDry = vec3(0.4, 0.5, 0.2);            // Olive green
 
-  // Rock colors - cool gray gradient for mountain progression
-  const rockDark = vec3(0.25, 0.27, 0.3);          // Dark bluish-gray base rock
-  const rockMedium = vec3(0.4, 0.42, 0.45);        // Medium gray rock
-  const rockLight = vec3(0.55, 0.57, 0.6);         // Lighter gray for higher elevations
-  const rockPale = vec3(0.7, 0.72, 0.75);          // Pale gray approaching snow line
+  // Rock colors - darker, more dramatic
+  const rockDark = vec3(0.2, 0.18, 0.16);          // Almost black rock
+  const rockMedium = vec3(0.35, 0.3, 0.28);        // Dark gray
+  const rockLight = vec3(0.5, 0.45, 0.4);          // Medium gray
+  const rockPale = vec3(0.65, 0.6, 0.55);          // Light gray
 
-  // Snow and high altitude - keep pure but not gray
-  const snowPure = vec3(0.98, 0.98, 1.0);          // Pure white snow
-  const snowBlue = vec3(0.9, 0.95, 1.0);           // Clean blue-tinted snow
+  // Snow and high altitude - bright whites
+  const snowPure = vec3(0.95, 0.95, 0.97);         // Bright white
+  const snowBlue = vec3(0.8, 0.85, 0.92);          // Blue-tinted snow
 
-  // Create TSL node material with enhanced color vibrancy
+  // Create TSL node material with matte appearance and rich colors
   const material = new THREE.MeshStandardNodeMaterial({
-    roughness: 0.7,   // Slightly smoother for better color
+    roughness: 0.9,   // Very rough for matte finish
     metalness: 0.0,
     flatShading: false,
     side: THREE.FrontSide,
     transparent: false,
-    envMapIntensity: 0.4, // More environment for richer colors
+    envMapIntensity: 0.05, // Minimal environment reflection
   });
 
   // Get UV coordinates properly for the plane geometry
@@ -151,13 +151,13 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const mediumNoise = mediumNoise1.mul(0.7).add(mediumNoise2.mul(0.3));
 
   // === BIOME DEFINITIONS ===
-  // Define height thresholds for different terrain types from config
-  const wetLevel = float(TerrainConfig.BEACH_WET);
-  const beachLevel = float(TerrainConfig.BEACH_DRY);
-  const sandLevel = float(TerrainConfig.BEACH_HIGH);
-  const grassLevel = float(TerrainConfig.GRASSLANDS);
-  const rockLevel = float(TerrainConfig.MOUNTAINS_LOW);
-  const snowLevel = float(TerrainConfig.MOUNTAINS_HIGH);
+  // Define height thresholds for different terrain types - better distribution
+  const wetLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED - 0.005);     // Wet sand zone
+  const beachLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.005);   // Beach transition
+  const sandLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.02);     // Dry sand end
+  const grassLevel = float(0.3);                                          // Grass starts higher
+  const rockLevel = float(0.5);                                           // Rock/mountain transition
+  const snowLevel = float(0.75);                                          // Snow cap
 
   // === SAND BIOMES (Beach & Coastal) ===
   // Create varied sand colors using multiple noise layers
@@ -253,9 +253,9 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const rockWeight = clamp(smoothstep(grassLevel.sub(0.05), rockLevel.add(0.1), normalizedHeight), float(0), float(1));
   const snowWeight = clamp(smoothstep(rockLevel, snowLevel.add(0.1), normalizedHeight), float(0), float(1));
 
-  // Dynamic roughness based on biome
-  // Sand is smooth, grass is medium, rocks are rough, snow is very smooth
-  const biomeRoughness = sandWeight.mul(0.3).add(grassWeight.mul(0.8)).add(rockWeight.mul(0.95)).add(snowWeight.mul(0.1));
+  // Dynamic roughness based on biome - all more matte to reduce specular
+  // Sand is slightly rough, grass is rough, rocks are very rough, snow is medium rough
+  const biomeRoughness = sandWeight.mul(0.7).add(grassWeight.mul(0.85)).add(rockWeight.mul(0.95)).add(snowWeight.mul(0.6));
 
   // === ENHANCED UNDERWATER TERRAIN EFFECTS ===
   // Use dynamic water depth from fluid simulation if available, otherwise fallback to static water level
@@ -378,7 +378,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     dynamicRoughness = newRoughness.add(float(0)); // Keep as OperatorNode
   }
 
-  material.roughnessNode = clamp(dynamicRoughness, float(0.1), float(1.0));
+  material.roughnessNode = clamp(dynamicRoughness, float(0.6), float(1.0)); // Minimum 0.6 roughness to reduce specular
 
   // Compute normals from height gradient for proper lighting
   if (normalMap) {

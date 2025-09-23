@@ -96,32 +96,26 @@ export function createDynamicWaterMaterialTSL(options: DynamicWaterMaterialOptio
   // Add small offset to avoid z-fighting with terrain
   const verticalOffset = hasWater.mul(float(0.1));
 
-  // Add wave displacement for visual interest
-  const waveTime = time.mul(2);
-  const waveHeight = sin(uv().x.mul(30).add(waveTime))
-    .mul(cos(uv().y.mul(30).sub(waveTime)))
-    .mul(0.02)
-    .mul(hasWater);
+  // Simple wave displacement for performance
+  const waveTime = time.mul(1.5);
+  const simpleWave = sin(uv().x.mul(15).add(waveTime)).mul(0.01).mul(hasWater);
 
   // Final position: terrain height + water depth + wave displacement + small offset
   const finalPosition = positionLocal.add(
-    vec3(0, terrainElevation.add(waterSurfaceHeight).add(verticalOffset).add(waveHeight), 0)
+    vec3(0, terrainElevation.add(waterSurfaceHeight).add(verticalOffset).add(simpleWave), 0)
   );
   material.positionNode = finalPosition;
 
-  // Create wave normals for proper reflections
-  const waveNormalStrength = float(0.3);
-  const wave1 = sin(animatedUV.x.mul(10)).mul(cos(animatedUV.y.mul(10))).mul(waveNormalStrength);
-  const wave2 = cos(animatedUV.x.mul(15).add(float(1))).mul(sin(animatedUV.y.mul(15).sub(float(1)))).mul(waveNormalStrength.mul(0.7));
-  const dx = wave1.add(wave2);
-  const dy = wave1.mul(0.8).add(wave2.mul(1.2));
+  // Simplified wave normals for performance
+  const waveNormal = sin(animatedUV.x.mul(8)).mul(0.2);
+  const dx = waveNormal;
+  const dy = cos(animatedUV.y.mul(8)).mul(0.2);
 
   material.normalNode = normalize(vec3(dx, dy, float(1)));
 
-  // Dynamic roughness based on depth
-  const baseRoughness = mix(float(0.4), float(0.2), normalizedDepth);
-  const roughnessNoise = sin(animatedUV.x.mul(50)).mul(cos(animatedUV.y.mul(50))).mul(0.1);
-  material.roughnessNode = clamp(baseRoughness.add(roughnessNoise), float(0.15), float(0.5));
+  // Simple roughness for performance
+  const baseRoughness = mix(float(0.35), float(0.25), normalizedDepth);
+  material.roughnessNode = baseRoughness;
 
   return material;
 }

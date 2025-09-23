@@ -62,16 +62,16 @@ export class DayNightCycleManager {
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-    // Ambient light
-    this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.2);
+    // Ambient light - reduced for better contrast
+    this.ambientLight = new THREE.AmbientLight(0xfff5e6, 0.1);
     this.scene.add(this.ambientLight);
 
     // Environment map for water reflections
     const gradientTexture = this.createSkyGradientTexture();
     this.scene.environment = gradientTexture;
 
-    // Sun light
-    this.sunLight = new THREE.DirectionalLight(0xfff8e1, 2.5);
+    // Sun light - reduced intensity to prevent washing out colors
+    this.sunLight = new THREE.DirectionalLight(0xfff8e1, 1.2);
     this.sunLight.castShadow = true;
 
     // Configure sun shadow camera
@@ -91,7 +91,7 @@ export class DayNightCycleManager {
     this.scene.add(this.sunLight.target);
 
     // Moon light
-    this.moonLight = new THREE.DirectionalLight(0x6080ff, 0.25);
+    this.moonLight = new THREE.DirectionalLight(0x6080ff, 0.15);
     this.moonLight.castShadow = true;
 
     // Configure moon shadow camera
@@ -229,21 +229,21 @@ export class DayNightCycleManager {
     const isDaytime = sunElevation > 0.1;
 
     if (isDaytime) {
-      const dayIntensity = Math.max(0.4, sunElevation * 2.5);
+      const dayIntensity = Math.max(0.3, sunElevation * 1.2);  // Reduced multiplier
       this.sunLight.intensity = dayIntensity;
       this.sunLight.castShadow = true;
-      this.moonLight.intensity = 0.02;
+      this.moonLight.intensity = 0.01;
       this.moonLight.castShadow = false;
     } else {
-      this.sunLight.intensity = 0.02;
+      this.sunLight.intensity = 0.01;
       this.sunLight.castShadow = false;
-      this.moonLight.intensity = moonElevation * 0.3;
+      this.moonLight.intensity = moonElevation * 0.15;  // Reduced moon intensity
       this.moonLight.castShadow = true;
     }
 
-    // Ambient light varies throughout the day
+    // Ambient light varies throughout the day - keep it subtle
     const dayFactor = Math.max(0, Math.cos(angle));
-    const ambientIntensity = 0.02 + dayFactor * 0.05;
+    const ambientIntensity = 0.05 + dayFactor * 0.1;  // Slightly higher base, still low overall
     this.ambientLight.intensity = ambientIntensity;
 
     // Adjust ambient color

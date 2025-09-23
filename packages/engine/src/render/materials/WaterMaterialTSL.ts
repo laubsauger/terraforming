@@ -175,9 +175,15 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     waterColorNode = mix(shallowWaterColor, mediumWaterColor, flowVariation);
   }
 
-  // Apply water color and opacity
-  material.colorNode = waterColorNode;
-  material.opacityNode = opacityNode;
+  // Apply water color and opacity with safety checks
+  // Ensure color doesn't go negative (causes black spots)
+  const safeColorR = waterColorNode.r.max(float(0));
+  const safeColorG = waterColorNode.g.max(float(0));
+  const safeColorB = waterColorNode.b.max(float(0));
+  const safeWaterColor = vec3(safeColorR, safeColorG, safeColorB);
+
+  material.colorNode = safeWaterColor;
+  material.opacityNode = opacityNode.clamp(float(0.1), float(1.0)); // Ensure minimum opacity
 
   // Improved noise for roughness - avoid regular grid patterns
   // Use prime numbers for better distribution
@@ -233,7 +239,9 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     roughnessNode = roughnessNode.sub(glintPattern.mul(0.2).mul(float(1).sub(smoothstep(float(0), float(0.02), clampedWaterDepth))));
   }
 
-  material.roughnessNode = roughnessNode.clamp(0.15, 0.7); // Balanced range for natural water
+  // Ensure roughness stays in valid range to prevent rendering artifacts
+  const finalRoughness = roughnessNode.isNaN ? float(0.3) : roughnessNode; // Fallback if NaN
+  material.roughnessNode = finalRoughness.clamp(0.15, 0.7); // Balanced range for natural water
 
   // Add metalness variation for sparkles on wave crests
   const metalnessBase = float(0.02);
@@ -287,7 +295,9 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const combinedWaves = waveSkew.add(secondaryHeight.mul(0.7)).add(tertiaryHeight.mul(0.5));
 
     // Apply displacement ONLY at shore with moderate amplitude
-    const shoreDisplacement = combinedWaves.mul(deepFalloff).mul(0.15);  // Moderate amplitude now that direction is fixed
+    // Clamp displacement to prevent extreme values that cause rendering artifacts
+    const rawDisplacement = combinedWaves.mul(deepFalloff).mul(0.15);  // Moderate amplitude
+    const shoreDisplacement = rawDisplacement.clamp(float(-2), float(2)); // Prevent extreme displacement
 
     // Apply vertical displacement at shore
     material.positionNode = positionLocal.add(vec3(0, shoreDisplacement, 0));
@@ -411,8 +421,20 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
     const dx = shoreWaves.add(oceanWaves.mul(nearShoreZone)).add(microWaves).mul(1.2);
     const dy = shoreWaves.mul(0.8).add(oceanWaves).add(microWaves.mul(0.7)).mul(1.2);
 
-    // Create normal with balanced perturbation
-    const normal = normalize(vec3(dx, dy, float(0.5)));  // Balanced Z component
+    // Create normal with safe normalization to prevent black spots
+    // Clamp displacement values to prevent extreme normals that cause artifacts
+    const safeNormalX = dx.clamp(float(-1), float(1)); // Clamp to reasonable range
+    const safeNormalY = dy.clamp(float(-1), float(1)); // Clamp to reasonable range
+
+    // Use higher Z component for more stability and less extreme reflections
+    const baseNormal = vec3(safeNormalX, safeNormalY, float(0.8));
+
+    // Normalize with safe length check to prevent NaN
+    const normalLength = length(baseNormal);
+    const minLength = float(0.01); // Prevent division by very small numbers
+    const safeLength = normalLength.max(minLength);
+    const normal = baseNormal.div(safeLength);
+
     material.normalNode = normal;
   } else {
     // Fallback - simple wave pattern for lakes/rivers

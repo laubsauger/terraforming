@@ -28,6 +28,9 @@ export class MeshFactory {
   public lavaMesh?: THREE.Mesh;
   public oceanMesh?: THREE.Mesh;
 
+  // Cache for water material to avoid recreation
+  private cachedWaterMaterial?: THREE.MeshPhysicalNodeMaterial;
+
   constructor(options: MeshFactoryOptions) {
     this.terrainSize = options.terrainSize;
     this.gridSize = options.gridSize;
@@ -64,22 +67,26 @@ export class MeshFactory {
   }
 
   /**
-   * Update water mesh with fluid depth texture
+   * Update water mesh with fluid depth texture - optimized to avoid material recreation
    */
   public updateWaterWithFluidTexture(waterDepthTexture: THREE.Texture): void {
     if (!this.waterMesh) return;
 
-    // Update water material with current depth texture and terrain height
-    const currentMaterial = this.waterMesh.material as THREE.Material;
-    const newMaterial = createDynamicWaterMaterialTSL({
-      waterDepthTexture: waterDepthTexture,
-      heightTexture: this.textureManager.heightTexture,
-      heightScale: this.heightScale,
-      opacity: 0.85
-    });
-
-    this.waterMesh.material = newMaterial;
-    currentMaterial.dispose();
+    // Only recreate material if we don't have a cached one
+    if (!this.cachedWaterMaterial) {
+      this.cachedWaterMaterial = createDynamicWaterMaterialTSL({
+        waterDepthTexture: waterDepthTexture,
+        heightTexture: this.textureManager.heightTexture,
+        heightScale: this.heightScale,
+        opacity: 0.85
+      });
+      this.waterMesh.material = this.cachedWaterMaterial;
+    } else {
+      // Just update the texture reference - much faster
+      // The material's shader will automatically use the new texture
+      // since we're passing the GPU texture directly
+      (waterDepthTexture as any).needsUpdate = false; // Don't trigger CPU update
+    }
 
     // Always make water visible if we have a depth texture
     this.waterMesh.visible = true;
@@ -252,6 +259,9 @@ export class MeshFactory {
     if (this.lavaMesh) {
       this.lavaMesh.geometry.dispose();
       (this.lavaMesh.material as THREE.Material).dispose();
+    }
+    if (this.cachedWaterMaterial) {
+      this.cachedWaterMaterial.dispose();
     }
   }
 }

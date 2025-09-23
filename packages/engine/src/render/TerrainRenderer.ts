@@ -589,42 +589,51 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private lastSimulationTime = 0;
-  private simulationInterval = 1000 / 30; // Run at 30 FPS max
+  private simulationInterval = 1000 / 10; // Run simulation at 10 FPS for performance
+  private lastMaterialUpdateTime = 0;
+  private materialUpdateInterval = 2000; // Update materials every 2 seconds
+  private lastWaterMeshUpdateTime = 0;
+  private waterMeshUpdateInterval = 100; // Update water mesh at 10fps
 
   /**
-   * Update fluid simulation - throttled to 30fps for performance
+   * Update fluid simulation - throttled for performance
    */
   public updateSimulation(deltaTime: number, time: number): void {
     if (!this.fluidSystem) return;
 
-    // Throttle simulation updates to 30fps
-    const timeSinceLastUpdate = (time * 1000) - this.lastSimulationTime;
-    if (timeSinceLastUpdate < this.simulationInterval) {
-      return;
+    const currentTimeMs = time * 1000;
+
+    // Run simulation at lower frequency (10 FPS)
+    const timeSinceLastSimulation = currentTimeMs - this.lastSimulationTime;
+    if (timeSinceLastSimulation >= this.simulationInterval) {
+      // Get WebGPU device from the renderer
+      const device = (this.renderer as any).backend?.device;
+      if (device) {
+        // Create command encoder for this frame
+        const commandEncoder = device.createCommandEncoder();
+
+        // Update fluid system with accumulated delta time
+        const simDeltaTime = timeSinceLastSimulation / 1000;
+        this.fluidSystem.update(commandEncoder, simDeltaTime, time);
+
+        // Submit commands
+        device.queue.submit([commandEncoder.finish()]);
+      }
+      this.lastSimulationTime = currentTimeMs;
     }
-    this.lastSimulationTime = time * 1000;
 
-    // Get WebGPU device from the renderer
-    const device = (this.renderer as any).backend?.device;
-    if (!device) return;
+    // Update water mesh less frequently (10fps) but independently of simulation
+    const timeSinceWaterUpdate = currentTimeMs - this.lastWaterMeshUpdateTime;
+    if (timeSinceWaterUpdate >= this.waterMeshUpdateInterval) {
+      this.updateWaterMeshWithFluid();
+      this.lastWaterMeshUpdateTime = currentTimeMs;
+    }
 
-    // Create command encoder for this frame
-    const commandEncoder = device.createCommandEncoder();
-
-    // Update fluid system with accumulated delta time
-    const simDeltaTime = timeSinceLastUpdate / 1000;
-    this.fluidSystem.update(commandEncoder, simDeltaTime, time);
-
-    // Submit commands
-    device.queue.submit([commandEncoder.finish()]);
-
-    // Update water mesh every frame for smooth flow visualization
-    this.updateWaterMeshWithFluid();
-
-    // Update terrain material with fluid textures only occasionally to avoid performance issues
-    // TODO: Find a better way to update textures without recreating them
-    if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) {
+    // Update terrain material very rarely (every 2 seconds)
+    const timeSinceMaterialUpdate = currentTimeMs - this.lastMaterialUpdateTime;
+    if (timeSinceMaterialUpdate >= this.materialUpdateInterval) {
       this.updateTerrainMaterialWithFluid();
+      this.lastMaterialUpdateTime = currentTimeMs;
     }
 
     // Debug: Check water depth values every 5 seconds
