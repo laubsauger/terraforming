@@ -26,6 +26,11 @@ export function App() {
   const [activeTool, setActiveTool] = useState<InteractionTool>('brush-raise');
   const [waterSourceFlowRate, setWaterSourceFlowRate] = useState(10); // L/s
   const [lavaSourceFlowRate, setLavaSourceFlowRate] = useState(5); // L/s
+
+  // Expose active tool to window for engine access
+  useEffect(() => {
+    (window as any).__activeToolElement = activeTool;
+  }, [activeTool]);
   // Initialize mouse position to center of screen for proper cursor display on load
   const [mousePosition, setMousePosition] = useState(() => {
     if (typeof window !== 'undefined') {

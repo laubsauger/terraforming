@@ -523,6 +523,11 @@ export class FluidSystem {
   }
 
   private updateParams(deltaTime: number = 0, time: number = 0): void {
+    // Log deltaTime if it's unusual
+    if (deltaTime === 0 || deltaTime > 1) {
+      console.warn('FluidSystem: Unusual deltaTime', { deltaTime, time });
+    }
+
     const params = new Float32Array([
       // Physics (offset 0)
       this.gravity,
@@ -549,8 +554,13 @@ export class FluidSystem {
 
   public update(encoder: GPUCommandEncoder, deltaTime: number, time: number): void {
     // Debug logging to verify simulation is running
-    if (Math.floor(time) % 10 === 0 && Math.floor(time * 10) % 10 === 0) { // Log every 10 seconds
-      console.log('FluidSystem: Running simulation update', { deltaTime, time });
+    if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) { // Log every 2 seconds
+      console.log('FluidSystem: Running simulation update', {
+        deltaTime,
+        time,
+        waterSources: this.waterSources.size,
+        lavaSources: this.lavaSources.size
+      });
     }
     // Update parameters
     this.updateParams(deltaTime, time);
@@ -567,6 +577,14 @@ export class FluidSystem {
         Math.ceil(this.simResolution / 8)
       );
       pass.end();
+
+      // Debug log emission pass every 2 seconds
+      if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) {
+        console.log('FluidSystem: Source emission pass executed', {
+          simResolution: this.simResolution,
+          workgroups: Math.ceil(this.simResolution / 8)
+        });
+      }
     } else {
       if (!this.sourceEmissionPipeline) {
         console.warn('FluidSystem: No source emission pipeline');

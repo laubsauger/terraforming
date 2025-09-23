@@ -95,6 +95,14 @@ export class BrushInteractionHandler {
     }
   }
 
+  private isBrushToolActive(): boolean {
+    // Check if a brush tool is active (only show brush visuals for actual brush tools)
+    const activeToolElement = (window as any).__activeToolElement;
+    return activeToolElement === 'brush-raise' ||
+           activeToolElement === 'brush-smooth' ||
+           activeToolElement === 'brush-flatten';
+  }
+
   private createBrushCursor(scene: THREE.Scene): void {
     // Create brush decal overlay plane
     const decalGeometry = new THREE.PlaneGeometry(this.terrainSize, this.terrainSize, 1, 1);
@@ -303,7 +311,7 @@ export class BrushInteractionHandler {
             this.temporaryModeInvert = event.metaKey;
           } else {
             this.brushReady = false;
-            if (!this.brushActive) {
+            if (!this.brushActive && this.isBrushToolActive()) {
               this.brushHovering = true;
             }
             this.temporaryModeInvert = false;
@@ -531,39 +539,9 @@ export class BrushInteractionHandler {
   private updateBrushCursor(worldPos?: THREE.Vector3): void {
     if (!this.brushModeIndicator) return;
 
-    // Update brush decal overlay
-    if (this.brushDecalMesh && this.brushDecalMaterial?.brushUniforms) {
-      if (worldPos && (this.brushHovering || this.brushReady || this.brushActive)) {
-        // Update decal uniforms
-        this.brushDecalMaterial.brushUniforms.position.value.set(worldPos.x, worldPos.z);
-        this.brushDecalMaterial.brushUniforms.radius.value = this.brushRadius;
-
-        // Determine actual mode with temporary invert
-        const actualMode = this.temporaryModeInvert ?
-          (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
-          this.brushMode;
-        this.brushDecalMaterial.brushUniforms.mode.value = actualMode === 'pickup' ? 0 : 1;
-
-        // Update material type
-        const matValue = this.brushMaterial === 'soil' ? 0 : this.brushMaterial === 'rock' ? 1 : 2;
-        this.brushDecalMaterial.brushUniforms.material.value = matValue;
-
-        // Update state (0=hidden, 1=hovering, 2=ready, 3=active)
-        let state = 0;
-        if (this.brushActive) state = 3;
-        else if (this.brushReady) state = 2;
-        else if (this.brushHovering) state = 1;
-        this.brushDecalMaterial.brushUniforms.state.value = state;
-
-        // Update time for animation
-        this.brushDecalMaterial.brushUniforms.time.value = performance.now() * 0.001;
-
-        // Position decal mesh at terrain height with small offset to prevent z-fighting
-        this.brushDecalMesh.position.set(0, worldPos.y + 0.1, 0);
-        this.brushDecalMesh.visible = true;
-      } else {
-        this.brushDecalMesh.visible = false;
-      }
+    // DISABLED: Brush decal overlay - tools have their own colored cursors
+    if (this.brushDecalMesh) {
+      this.brushDecalMesh.visible = false;
     }
 
     // Update brush ring position and shape to follow terrain
@@ -594,7 +572,8 @@ export class BrushInteractionHandler {
     }
 
     // Update brush sphere position (if used) - ensure it updates during active operations
-    if (this.brushCursorSphere && worldPos && (this.brushReady || this.brushActive)) {
+    // Only show for brush tools
+    if (this.brushCursorSphere && worldPos && (this.brushReady || this.brushActive) && this.isBrushToolActive()) {
       // Always update position when we have a valid world position
       this.brushCursorSphere.position.set(worldPos.x, worldPos.y, worldPos.z);
       this.brushCursorSphere.scale.setScalar(this.brushRadius);

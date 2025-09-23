@@ -71,17 +71,26 @@ export class DebugOverlaySystem {
       return null;
     }
 
-    // Create Three.js texture wrapper
-    const threeTexture = new THREE.Texture();
-    threeTexture.isGPUTexture = true;
+    // Create a placeholder DataTexture for WebGPU compatibility
+    const size = this.gridSize;
+    const channels = type === 'flow' ? 2 : 1;
+    const data = new Float32Array(size * size * channels);
+    const threeTexture = new THREE.DataTexture(
+      data,
+      size,
+      size,
+      type === 'flow' ? THREE.RGFormat : THREE.RedFormat,
+      THREE.FloatType
+    );
+
+    // Mark as GPU texture and attach the actual GPU texture
+    (threeTexture as any).isStorageTexture = true;
     (threeTexture as any).gpuTexture = overlayTexture;
-    threeTexture.format = type === 'flow' ? THREE.RGFormat : THREE.RedFormat;
-    threeTexture.type = THREE.FloatType;
     threeTexture.minFilter = THREE.LinearFilter;
     threeTexture.magFilter = THREE.LinearFilter;
     threeTexture.wrapS = THREE.ClampToEdgeWrapping;
     threeTexture.wrapT = THREE.ClampToEdgeWrapping;
-    threeTexture.needsUpdate = true;
+    threeTexture.needsUpdate = false; // Don't update CPU data
 
     // Create overlay plane geometry
     const geometry = new THREE.PlaneGeometry(
@@ -168,24 +177,29 @@ export class DebugOverlaySystem {
       }
 
       if (currentTexture) {
-        // Update the GPU texture reference
-        const material = mesh.material as any;
-        if (material.colorNode) {
-          // Update texture reference in the material
-          const threeTexture = new THREE.Texture();
-          threeTexture.isGPUTexture = true;
-          (threeTexture as any).gpuTexture = currentTexture;
-          threeTexture.format = overlay === 'flow' ? THREE.RGFormat : THREE.RedFormat;
-          threeTexture.type = THREE.FloatType;
-          threeTexture.needsUpdate = true;
+        // Create a placeholder DataTexture for WebGPU compatibility
+        const size = this.gridSize;
+        const channels = overlay === 'flow' ? 2 : 1;
+        const data = new Float32Array(size * size * channels);
+        const threeTexture = new THREE.DataTexture(
+          data,
+          size,
+          size,
+          overlay === 'flow' ? THREE.RGFormat : THREE.RedFormat,
+          THREE.FloatType
+        );
 
-          // Recreate material with new texture
-          mesh.material = createDebugOverlayMaterialTSL({
-            overlayTexture: threeTexture,
-            overlayType: overlay as any,
-            opacity: 0.7
-          });
-        }
+        // Mark as GPU texture and attach the actual GPU texture
+        (threeTexture as any).isStorageTexture = true;
+        (threeTexture as any).gpuTexture = currentTexture;
+        threeTexture.needsUpdate = false; // Don't update CPU data
+
+        // Recreate material with new texture
+        mesh.material = createDebugOverlayMaterialTSL({
+          overlayTexture: threeTexture,
+          overlayType: overlay as any,
+          opacity: 0.7
+        });
       }
     }
   }

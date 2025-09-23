@@ -201,64 +201,73 @@ export class TerrainRenderer extends BaseRenderer {
    * Setup environment map for reflections
    */
   private setupEnvironmentMap(): void {
-    // Create a simple gradient environment texture for sky reflections
-    const size = 256;
-    const data = new Uint8Array(size * size * 4);
+    try {
+      // Create a simple gradient environment texture for sky reflections
+      const size = 256;
+      const data = new Uint8Array(size * size * 4);
 
-    for (let i = 0; i < size; i++) {
-      for (let j = 0; j < size; j++) {
-        const index = (i * size + j) * 4;
+      for (let i = 0; i < size; i++) {
+        for (let j = 0; j < size; j++) {
+          const index = (i * size + j) * 4;
 
-        // Create a sky gradient from horizon to zenith
-        const t = i / size; // 0 at bottom, 1 at top
+          // Create a sky gradient from horizon to zenith
+          const t = i / size; // 0 at bottom, 1 at top
 
-        // Sky colors: horizon (light blue-gray) to zenith (deeper blue)
-        const horizonR = 180;
-        const horizonG = 200;
-        const horizonB = 220;
+          // Sky colors: horizon (light blue-gray) to zenith (deeper blue)
+          const horizonR = 180;
+          const horizonG = 200;
+          const horizonB = 220;
 
-        const zenithR = 100;
-        const zenithG = 140;
-        const zenithB = 200;
+          const zenithR = 100;
+          const zenithG = 140;
+          const zenithB = 200;
 
-        // Add some variation for clouds
-        const cloudNoise = Math.sin(j * 0.05) * Math.cos(i * 0.03) * 20;
+          // Add some variation for clouds
+          const cloudNoise = Math.sin(j * 0.05) * Math.cos(i * 0.03) * 20;
 
-        // Interpolate between horizon and zenith
-        const r = horizonR + (zenithR - horizonR) * t + cloudNoise;
-        const g = horizonG + (zenithG - horizonG) * t + cloudNoise;
-        const b = horizonB + (zenithB - horizonB) * t + cloudNoise * 0.5;
+          // Interpolate between horizon and zenith
+          const r = horizonR + (zenithR - horizonR) * t + cloudNoise;
+          const g = horizonG + (zenithG - horizonG) * t + cloudNoise;
+          const b = horizonB + (zenithB - horizonB) * t + cloudNoise * 0.5;
 
-        // Add sun spot
-        const sunX = size * 0.7;
-        const sunY = size * 0.8;
-        const sunDist = Math.sqrt((j - sunX) ** 2 + (i - sunY) ** 2);
-        const sunIntensity = Math.max(0, 1 - sunDist / 50);
-        const sunGlow = Math.max(0, 1 - sunDist / 100) * 0.3;
+          // Add sun spot
+          const sunX = size * 0.7;
+          const sunY = size * 0.8;
+          const sunDist = Math.sqrt((j - sunX) ** 2 + (i - sunY) ** 2);
+          const sunIntensity = Math.max(0, 1 - sunDist / 50);
+          const sunGlow = Math.max(0, 1 - sunDist / 100) * 0.3;
 
-        data[index] = Math.min(255, r + sunIntensity * 75 + sunGlow * 50);
-        data[index + 1] = Math.min(255, g + sunIntensity * 50 + sunGlow * 40);
-        data[index + 2] = Math.min(255, b + sunIntensity * 30 + sunGlow * 30);
-        data[index + 3] = 255;
+          data[index] = Math.min(255, r + sunIntensity * 75 + sunGlow * 50);
+          data[index + 1] = Math.min(255, g + sunIntensity * 50 + sunGlow * 40);
+          data[index + 2] = Math.min(255, b + sunIntensity * 30 + sunGlow * 30);
+          data[index + 3] = 255;
+        }
       }
+
+      // Create a canvas-based texture for better WebGPU compatibility
+      const canvas = document.createElement('canvas');
+      canvas.width = size;
+      canvas.height = size;
+      const ctx = canvas.getContext('2d')!;
+      const imageData = ctx.createImageData(size, size);
+      imageData.data.set(data);
+      ctx.putImageData(imageData, 0, 0);
+
+      const texture = new THREE.CanvasTexture(canvas);
+      texture.mapping = THREE.EquirectangularReflectionMapping;
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.generateMipmaps = true;
+      texture.needsUpdate = true;
+
+      // Apply directly to scene
+      this.scene.environment = texture;
+      this.scene.backgroundIntensity = 0.3; // Dim background
+      this.scene.environmentIntensity = 1.0; // Full intensity for reflections
+
+      console.log('TerrainRenderer: Environment map set up successfully');
+    } catch (error) {
+      console.warn('TerrainRenderer: Failed to setup environment map, water will reflect default environment', error);
     }
-
-    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
-    texture.needsUpdate = true;
-    texture.mapping = THREE.EquirectangularReflectionMapping;
-
-    // Create a cube render target for proper environment mapping
-    const pmremGenerator = new THREE.PMREMGenerator(this);
-    const envMap = pmremGenerator.fromEquirectangular(texture).texture;
-
-    // Apply to scene
-    this.scene.environment = envMap;
-    this.scene.backgroundIntensity = 0.3; // Dim background
-    this.scene.environmentIntensity = 1.0; // Full intensity for reflections
-
-    // Clean up
-    pmremGenerator.dispose();
-    texture.dispose();
   }
 
   /**
@@ -594,17 +603,26 @@ export class TerrainRenderer extends BaseRenderer {
     const waterDepthGPUTexture = this.fluidSystem.getWaterDepthTexture();
     if (!waterDepthGPUTexture) return;
 
-    // Create Three.js texture from GPU texture using the correct method
-    const waterDepthTexture = new THREE.Texture();
-    waterDepthTexture.isGPUTexture = true;
+    // Create a placeholder DataTexture for WebGPU compatibility
+    // The actual GPU texture will be bound via WebGPU, but we need a valid Three.js texture object
+    const size = this.gridSize;
+    const data = new Float32Array(size * size);
+    const waterDepthTexture = new THREE.DataTexture(
+      data,
+      size,
+      size,
+      THREE.RedFormat,
+      THREE.FloatType
+    );
+
+    // Mark as GPU texture and attach the actual GPU texture
+    (waterDepthTexture as any).isStorageTexture = true;
     (waterDepthTexture as any).gpuTexture = waterDepthGPUTexture;
-    waterDepthTexture.format = THREE.RedFormat;
-    waterDepthTexture.type = THREE.FloatType;
     waterDepthTexture.minFilter = THREE.LinearFilter;
     waterDepthTexture.magFilter = THREE.LinearFilter;
     waterDepthTexture.wrapS = THREE.ClampToEdgeWrapping;
     waterDepthTexture.wrapT = THREE.ClampToEdgeWrapping;
-    waterDepthTexture.needsUpdate = true;
+    waterDepthTexture.needsUpdate = false; // Don't update CPU data
 
     // Update terrain material if meshFactory exists
     if (this.meshFactory) {
