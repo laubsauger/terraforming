@@ -15,14 +15,14 @@ struct Params {
 struct Source {
   position: vec2<f32>,  // World position (normalized 0-1)
   rate: f32,            // Flow rate (units per second)
-  type: f32,            // 0 = water, 1 = lava, -1 = inactive
+  sourceType: f32,      // 0 = water, 1 = lava, -1 = inactive
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var<storage, read> sources: array<Source, 128>;
-@group(0) @binding(2) var waterDepthTex: texture_storage_2d<r16float, read_write>;
+@group(0) @binding(2) var waterDepthTex: texture_storage_2d<r32float, read_write>;
 @group(0) @binding(3) var lavaDepthTex: texture_storage_2d<r32float, read_write>;  // Using lava material field
-@group(0) @binding(4) var temperatureTex: texture_storage_2d<r16float, read_write>;
+@group(0) @binding(4) var temperatureTex: texture_storage_2d<r32float, read_write>;
 
 const WORKGROUP_SIZE = 8u;
 const SOURCE_RADIUS = 3.0;        // Radius of source influence in texels
@@ -46,7 +46,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let source = sources[i];
 
     // Skip inactive sources
-    if (source.type < 0.0) { break; }  // Assume sources are packed at beginning
+    if (source.sourceType < 0.0) { break; }  // Assume sources are packed at beginning
 
     // Calculate distance from source to this texel
     let source_texel = source.position * vec2<f32>(dims);
@@ -62,7 +62,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let emission_rate = source.rate * params.deltaTime * falloff;
 
     // Add to appropriate field based on source type
-    if (source.type < 0.5) {
+    if (source.sourceType < 0.5) {
       // Water source
       water_emission += emission_rate;
     } else {

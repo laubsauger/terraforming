@@ -55,6 +55,7 @@ const OVERLAY_OPTIONS: OverlayOption[] = [
   'accumulation',
   'erosion',
   'pools',
+  'waterDepth',
   'sediment',
   'lava',
   'temperature',

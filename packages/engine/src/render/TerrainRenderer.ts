@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { BaseRenderer } from './BaseRenderer';
 import { BrushSystem } from '../sim/BrushSystem';
 import { FluidSystem } from '../sim/FluidSystem';
-import { TerrainConfig } from '@terraforming/types';
+import { TerrainConfig, DebugOverlay } from '@terraforming/types';
 
 // Import subsystems
 import { BrushInteractionHandler } from './systems/BrushInteractionHandler';
@@ -13,6 +13,7 @@ import { TextureManager } from './systems/TextureManager';
 import { MeshFactory } from './systems/MeshFactory';
 import { HeightSampler } from './systems/HeightSampler';
 import { SourceEmitterManager } from './systems/SourceEmitterManager';
+import { DebugOverlaySystem } from './systems/DebugOverlaySystem';
 
 export interface TerrainRendererOptions {
   canvas: HTMLCanvasElement;
@@ -44,6 +45,7 @@ export class TerrainRenderer extends BaseRenderer {
   private sourceEmitterManager: SourceEmitterManager;
   private brushSystem?: BrushSystem;
   private fluidSystem?: FluidSystem;
+  private debugOverlaySystem?: DebugOverlaySystem;
 
   // State
   private showContours = true;
@@ -142,6 +144,33 @@ export class TerrainRenderer extends BaseRenderer {
       handCapacityKg: 10000,
     });
 
+    // Initialize fluid system with WebGPU device
+    const fields = this.brushSystem.getFields();
+    if (fields) {
+      this.fluidSystem = new FluidSystem({
+        device: device,
+        fields: fields,
+        resolution: this.gridSize,
+        simResolution: Math.floor(this.gridSize * 0.25), // Run at quarter resolution
+        gravity: 9.81,
+        evaporationRate: 0.0001,
+        rainIntensity: 0.0,
+      });
+      console.log('TerrainRenderer: Fluid system initialized');
+
+    // Initialize debug overlay system
+    if (this.fluidSystem) {
+      this.debugOverlaySystem = new DebugOverlaySystem({
+        scene: this.scene,
+        terrainSize: this.terrainSize,
+        fluidSystem: this.fluidSystem
+      });
+      console.log('TerrainRenderer: Debug overlay system initialized');
+    }
+    } else {
+      console.warn('TerrainRenderer: Could not initialize fluid system - fields not available');
+    }
+
     // Connect subsystems
     this.brushInteractionHandler.setBrushSystem(this.brushSystem);
     this.heightSampler.setBrushSystem(this.brushSystem);
@@ -153,16 +182,101 @@ export class TerrainRenderer extends BaseRenderer {
     this.meshFactory.createWater(this.scene);
     this.meshFactory.createLava(this.scene);
 
-    // Generate test terrain
-    this.terrainGenerator.generateTestTerrain(this.textureManager.heightTexture);
+    // Setup environment map for reflections after meshes are created
+    this.setupEnvironmentMap();
 
-    // Initialize brush system with terrain data
-    this.initializeBrushSystemWithTerrain();
+    // Update terrain material with fluid textures now that meshFactory exists
+    this.updateTerrainMaterialWithFluid();
+
+    // Load default heightmap (async)
+    this.loadDefaultTerrain();
 
     console.log('TerrainRenderer: Scene children count:', this.scene.children.length);
     console.log('TerrainRenderer: Terrain mesh added:', !!this.meshFactory.terrainMesh);
     console.log('TerrainRenderer: Ocean mesh added:', !!this.meshFactory.oceanMesh);
     console.log('TerrainRenderer: Brush system initialized:', !!this.brushSystem);
+  }
+
+  /**
+   * Setup environment map for reflections
+   */
+  private setupEnvironmentMap(): void {
+    // Create a simple gradient environment texture for sky reflections
+    const size = 256;
+    const data = new Uint8Array(size * size * 4);
+
+    for (let i = 0; i < size; i++) {
+      for (let j = 0; j < size; j++) {
+        const index = (i * size + j) * 4;
+
+        // Create a sky gradient from horizon to zenith
+        const t = i / size; // 0 at bottom, 1 at top
+
+        // Sky colors: horizon (light blue-gray) to zenith (deeper blue)
+        const horizonR = 180;
+        const horizonG = 200;
+        const horizonB = 220;
+
+        const zenithR = 100;
+        const zenithG = 140;
+        const zenithB = 200;
+
+        // Add some variation for clouds
+        const cloudNoise = Math.sin(j * 0.05) * Math.cos(i * 0.03) * 20;
+
+        // Interpolate between horizon and zenith
+        const r = horizonR + (zenithR - horizonR) * t + cloudNoise;
+        const g = horizonG + (zenithG - horizonG) * t + cloudNoise;
+        const b = horizonB + (zenithB - horizonB) * t + cloudNoise * 0.5;
+
+        // Add sun spot
+        const sunX = size * 0.7;
+        const sunY = size * 0.8;
+        const sunDist = Math.sqrt((j - sunX) ** 2 + (i - sunY) ** 2);
+        const sunIntensity = Math.max(0, 1 - sunDist / 50);
+        const sunGlow = Math.max(0, 1 - sunDist / 100) * 0.3;
+
+        data[index] = Math.min(255, r + sunIntensity * 75 + sunGlow * 50);
+        data[index + 1] = Math.min(255, g + sunIntensity * 50 + sunGlow * 40);
+        data[index + 2] = Math.min(255, b + sunIntensity * 30 + sunGlow * 30);
+        data[index + 3] = 255;
+      }
+    }
+
+    const texture = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+    texture.needsUpdate = true;
+    texture.mapping = THREE.EquirectangularReflectionMapping;
+
+    // Create a cube render target for proper environment mapping
+    const pmremGenerator = new THREE.PMREMGenerator(this);
+    const envMap = pmremGenerator.fromEquirectangular(texture).texture;
+
+    // Apply to scene
+    this.scene.environment = envMap;
+    this.scene.backgroundIntensity = 0.3; // Dim background
+    this.scene.environmentIntensity = 1.0; // Full intensity for reflections
+
+    // Clean up
+    pmremGenerator.dispose();
+    texture.dispose();
+  }
+
+  /**
+   * Load the default heightmap asynchronously
+   */
+  private async loadDefaultTerrain(): Promise<void> {
+    try {
+      // Load the default heightmap
+      await this.terrainGenerator.loadDefaultHeightmap(this.textureManager.heightTexture);
+
+      // Initialize brush system with terrain data after loading
+      this.initializeBrushSystemWithTerrain();
+
+      console.log('TerrainRenderer: Default heightmap loaded successfully');
+    } catch (error) {
+      console.error('TerrainRenderer: Error loading default heightmap:', error);
+      // Fallback already handled in loadDefaultHeightmap
+    }
   }
 
   /**
@@ -386,7 +500,18 @@ export class TerrainRenderer extends BaseRenderer {
   public addWaterSource(worldX: number, worldZ: number, flowRate: number = 10): string {
     const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
     const position = new THREE.Vector3(worldX, height, worldZ);
-    return this.sourceEmitterManager.addSource(position, 'water', flowRate);
+    const sourceId = this.sourceEmitterManager.addSource(position, 'water', flowRate);
+
+    // Add to fluid system for actual simulation
+    if (this.fluidSystem) {
+      // Convert world coordinates to grid pixel coordinates
+      const gridX = ((worldX + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      const gridZ = ((worldZ + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      this.fluidSystem.addWaterSource(sourceId, gridX, gridZ, flowRate);
+      console.log(`Added water source to fluid system at grid coords (${gridX.toFixed(0)}, ${gridZ.toFixed(0)})`);
+    }
+
+    return sourceId;
   }
 
   /**
@@ -395,14 +520,29 @@ export class TerrainRenderer extends BaseRenderer {
   public addLavaSource(worldX: number, worldZ: number, flowRate: number = 10): string {
     const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
     const position = new THREE.Vector3(worldX, height, worldZ);
-    return this.sourceEmitterManager.addSource(position, 'lava', flowRate);
+    const sourceId = this.sourceEmitterManager.addSource(position, 'lava', flowRate);
+
+    // Add to fluid system for actual simulation
+    if (this.fluidSystem) {
+      // Convert world coordinates to grid pixel coordinates
+      const gridX = ((worldX + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      const gridZ = ((worldZ + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      this.fluidSystem.addLavaSource(sourceId, gridX, gridZ, flowRate);
+      console.log(`Added lava source to fluid system at grid coords (${gridX.toFixed(0)}, ${gridZ.toFixed(0)})`);
+    }
+
+    return sourceId;
   }
 
   /**
    * Remove a source by ID
    */
   public removeSource(id: string): boolean {
-    return this.sourceEmitterManager.removeSource(id);
+    const removed = this.sourceEmitterManager.removeSource(id);
+    if (removed && this.fluidSystem) {
+      this.fluidSystem.removeSource(id);
+    }
+    return removed;
   }
 
   /**
@@ -410,6 +550,66 @@ export class TerrainRenderer extends BaseRenderer {
    */
   public setSourceIndicatorsVisible(visible: boolean): void {
     this.sourceEmitterManager.setVisualIndicatorsVisible(visible);
+  }
+
+  /**
+   * Update fluid simulation - should be called each frame
+   */
+  public updateSimulation(deltaTime: number, time: number): void {
+    if (!this.fluidSystem) return;
+
+    // Get WebGPU device from the renderer
+    const device = (this.renderer as any).backend?.device;
+    if (!device) return;
+
+    // Create command encoder for this frame
+    const commandEncoder = device.createCommandEncoder();
+
+    // Update fluid system
+    this.fluidSystem.update(commandEncoder, deltaTime, time);
+
+    // Submit commands
+    device.queue.submit([commandEncoder.finish()]);
+
+    // TODO: Fix texture binding for per-frame updates
+    // Currently disabled due to Three.js WebGPU texture binding issues
+    // this.updateTerrainMaterialWithFluid();
+
+    // Debug: Check water depth values every 5 seconds
+    if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
+      // Use setTimeout to avoid blocking the render loop
+      setTimeout(() => {
+        this.fluidSystem.debugWaterDepth().catch(console.error);
+      }, 0);
+    }
+  }
+
+  /**
+   * Update terrain material with fluid simulation textures
+   */
+  private updateTerrainMaterialWithFluid(): void {
+    if (!this.fluidSystem) return;
+
+    // Get water depth texture from fluid system
+    const waterDepthGPUTexture = this.fluidSystem.getWaterDepthTexture();
+    if (!waterDepthGPUTexture) return;
+
+    // Create Three.js texture from GPU texture using the correct method
+    const waterDepthTexture = new THREE.Texture();
+    waterDepthTexture.isGPUTexture = true;
+    (waterDepthTexture as any).gpuTexture = waterDepthGPUTexture;
+    waterDepthTexture.format = THREE.RedFormat;
+    waterDepthTexture.type = THREE.FloatType;
+    waterDepthTexture.minFilter = THREE.LinearFilter;
+    waterDepthTexture.magFilter = THREE.LinearFilter;
+    waterDepthTexture.wrapS = THREE.ClampToEdgeWrapping;
+    waterDepthTexture.wrapT = THREE.ClampToEdgeWrapping;
+    waterDepthTexture.needsUpdate = true;
+
+    // Update terrain material if meshFactory exists
+    if (this.meshFactory) {
+      this.meshFactory.updateTerrainWithFluidTextures(waterDepthTexture);
+    }
   }
 
   /**
@@ -442,8 +642,26 @@ export class TerrainRenderer extends BaseRenderer {
       }
     }
 
+    // Update debug overlays (if active)
+    if (this.debugOverlaySystem) {
+      this.debugOverlaySystem.update();
+    }
+
     // Render the scene
     super.render();
+  }
+
+  /**
+   * Set active debug overlays
+   */
+  public setDebugOverlays(overlays: DebugOverlay[]): void {
+    if (this.debugOverlaySystem) {
+      this.debugOverlaySystem.setOverlays(overlays);
+    }
+
+    // Handle contours separately (they're part of terrain material)
+    this.showContours = overlays.includes('contours');
+    this.meshFactory.updateTerrainContours(this.showContours);
   }
 
   /**
@@ -457,9 +675,18 @@ export class TerrainRenderer extends BaseRenderer {
     this.textureManager.dispose();
     this.meshFactory.dispose();
 
+    if (this.debugOverlaySystem) {
+      this.debugOverlaySystem.dispose();
+    }
+
     // Clean up brush system
     if (this.brushSystem) {
       this.brushSystem.destroy();
+    }
+
+    // Clean up fluid system
+    if (this.fluidSystem) {
+      this.fluidSystem.destroy();
     }
 
     // Dispose of controls

@@ -207,32 +207,11 @@ class StubEngine implements Engine {
       setOverlay: (kind: DebugOverlay | 'none') => {
         const previousOverlay = this.overlay;
         this.overlay = kind;
-        // Update renderer debug mode
+        // Update renderer with new debug overlay system
         if (this.renderer) {
-          // Handle contours specially since it's a material setting
-          if (kind === 'contours') {
-            this.renderer.setShowContours(true);
-            this.renderer.setDebugMode(0); // Clear other debug modes
-          } else {
-            // Always turn off contours when switching to any other mode
-            this.renderer.setShowContours(false);
-          }
-
-          // Handle other debug modes
-          if (kind !== 'contours') {
-            const debugModeMap: Record<Exclude<DebugOverlay, 'contours'> | 'none', number> = {
-              'none': 0,
-              'height': 8,
-              'flow': 1,
-              'accumulation': 2,
-              'erosion': 3,
-              'pools': 5,
-              'sediment': 7,
-              'lava': 4,
-              'temperature': 6,
-            };
-            this.renderer.setDebugMode(debugModeMap[kind as keyof typeof debugModeMap] || 0);
-          }
+          // Convert single overlay to array for the new system
+          const overlays: DebugOverlay[] = kind === 'none' ? [] : [kind];
+          this.renderer.setDebugOverlays(overlays);
         }
       },
     };
@@ -468,7 +447,13 @@ class StubEngine implements Engine {
       // Run simulation updates only if not paused
       if (!this.simulationPaused) {
         const simDeltaMs = deltaMs * this.timeScale;
-        // Future: Update simulation here
+        const simDeltaS = simDeltaMs / 1000.0; // Convert to seconds
+        const simTimeS = now / 1000.0; // Total time in seconds
+
+        // Update fluid simulation
+        if (this.renderer && (this.renderer as any).updateSimulation) {
+          (this.renderer as any).updateSimulation(simDeltaS, simTimeS);
+        }
       }
 
       // Always render the scene (even when simulation is paused)

@@ -14,8 +14,8 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var flowTex: texture_2d<f32>;           // Flow velocity field
-@group(0) @binding(2) var waterDepthTex: texture_2d<f32>;     // Water depth
-@group(0) @binding(3) var poolMaskTex: texture_storage_2d<r8unorm, write>;  // Pool mask output
+@group(0) @binding(2) var waterDepthTex: texture_storage_2d<r32float, read>;     // Water depth
+@group(0) @binding(3) var poolMaskTex: texture_storage_2d<r32float, write>;  // Pool mask output
 @group(0) @binding(4) var heightTex: texture_2d<f32>;         // Terrain height
 
 const WORKGROUP_SIZE = 8u;
@@ -33,7 +33,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims);
 
   // Get water depth
-  let water_depth = textureLoad(waterDepthTex, coord, 0).r;
+  let water_depth = textureLoad(waterDepthTex, coord).r;
 
   // No pool without water
   if (water_depth < DEPTH_THRESHOLD) {
@@ -76,10 +76,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       );
 
       let h_sample = textureLoad(heightTex, sample_coord, 0).r;
-      let w_sample = textureLoad(waterDepthTex, sample_coord, 0).r;
+      let w_sample = textureLoad(waterDepthTex, sample_coord).r;
       let total_height = h_sample + w_sample;
 
-      let distance = length(vec2<f32>(dx, dy));
+      let distance = length(vec2<f32>(f32(dx), f32(dy)));
       let weight = 1.0 / (1.0 + distance);
 
       smoothed_height += total_height * weight;

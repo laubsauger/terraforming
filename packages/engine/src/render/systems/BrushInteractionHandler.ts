@@ -43,6 +43,7 @@ export class BrushInteractionHandler {
   // Event handlers
   private animationFrameId: number | null = null;
   private eventHandlers: any = {};
+  private lastMouseEvent?: MouseEvent;
 
   // Callbacks
   private getHeightAtWorldPos?: (x: number, z: number) => number;
@@ -108,7 +109,6 @@ export class BrushInteractionHandler {
     });
 
     this.brushDecalMesh = new THREE.Mesh(decalGeometry, this.brushDecalMaterial);
-    this.brushDecalMesh.position.y = 0.5;
     this.brushDecalMesh.renderOrder = 1000;
     this.brushDecalMesh.visible = false;
     scene.add(this.brushDecalMesh);
@@ -129,7 +129,7 @@ export class BrushInteractionHandler {
     this.brushCursorSphere.renderOrder = 100;
     scene.add(this.brushCursorSphere);
 
-    // Create ring
+    // Create ring - will be dynamically updated with terrain height
     const segments = 64;
     const points: THREE.Vector3[] = [];
     for (let i = 0; i <= segments; i++) {
@@ -279,6 +279,8 @@ export class BrushInteractionHandler {
     };
 
     const handleMouseMove = (event: MouseEvent) => {
+      this.lastMouseEvent = event; // Store for use in performBrushOperation
+
       const rect = this.canvas.getBoundingClientRect();
       const mouse = new THREE.Vector2(
         ((event.clientX - rect.left) / rect.width) * 2 - 1,
@@ -321,45 +323,68 @@ export class BrushInteractionHandler {
     };
 
     const performBrushOperation = () => {
-      if (this.brushActive && this.brushSystem && lastWorldPos) {
-        // Apply temporary mode invert if Meta key is pressed
-        const actualMode = this.temporaryModeInvert ?
-          (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
-          this.brushMode;
-
-        // Get height at brush position for debugging
-        const rawHeight = this.getHeightAtWorldPos?.(lastWorldPos.x, lastWorldPos.z);
-        const heightMeters = rawHeight ?? 0;
-        const heightNormalized = heightMeters / 64.0; // Convert to normalized
-        const waterLevelNormalized = 0.15;
-        const isUnderwater = heightNormalized < waterLevelNormalized;
-
-        // Debug: Check if height callback is working
-        if (rawHeight === undefined) {
-          console.warn('Height callback returned undefined - callback may not be set properly');
-        }
-
-        console.log(`Brush op at (${lastWorldPos.x.toFixed(1)}, ${lastWorldPos.z.toFixed(1)}):`, {
-          mode: actualMode,
-          material: this.brushMaterial,
-          heightNormalized: heightNormalized.toFixed(3),
-          heightMeters: heightMeters.toFixed(1) + 'm',
-          isUnderwater,
-          waterLevel: '9.6m (0.15 normalized)'
-        });
-
-        this.brushSystem.addBrushOp(
-          actualMode,
-          this.brushMaterial,
-          lastWorldPos.x,
-          lastWorldPos.z,
-          this.brushRadius,
-          this.brushStrength,
-          0.016,
-          heightMeters
+      if (this.brushActive && this.brushSystem) {
+        // Get current mouse position and update lastWorldPos
+        const rect = this.canvas.getBoundingClientRect();
+        const mouse = new THREE.Vector2(
+          ((this.lastMouseEvent?.clientX ?? rect.left) - rect.left) / rect.width * 2 - 1,
+          -((this.lastMouseEvent?.clientY ?? rect.top) - rect.top) / rect.height * 2 + 1
         );
 
-        this.updateBrushCursor(lastWorldPos);
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, this.camera);
+
+        const terrainMesh = this.getTerrainMesh?.();
+        if (terrainMesh) {
+          const intersects = raycaster.intersectObject(terrainMesh);
+          if (intersects.length > 0) {
+            const baseHit = intersects[0].point;
+            lastWorldPos = this.performRayMarching(baseHit, raycaster);
+            this.lastBrushWorldPos = lastWorldPos;
+          }
+        }
+
+        if (lastWorldPos) {
+          // Apply temporary mode invert if Meta key is pressed
+          const actualMode = this.temporaryModeInvert ?
+            (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
+            this.brushMode;
+
+          // Get height at brush position for debugging
+          const rawHeight = this.getHeightAtWorldPos?.(lastWorldPos.x, lastWorldPos.z);
+          const heightMeters = rawHeight ?? 0;
+          const heightNormalized = heightMeters / 64.0; // Convert to normalized
+          const waterLevelNormalized = 0.15;
+          const isUnderwater = heightNormalized < waterLevelNormalized;
+
+          // Debug: Check if height callback is working
+          if (rawHeight === undefined) {
+            console.warn('Height callback returned undefined - callback may not be set properly');
+          }
+
+          console.log(`Brush op at (${lastWorldPos.x.toFixed(1)}, ${lastWorldPos.z.toFixed(1)}):`, {
+            mode: actualMode,
+            material: this.brushMaterial,
+            heightNormalized: heightNormalized.toFixed(3),
+            heightMeters: heightMeters.toFixed(1) + 'm',
+            isUnderwater,
+            waterLevel: '9.6m (0.15 normalized)'
+          });
+
+          this.brushSystem.addBrushOp(
+            actualMode,
+            this.brushMaterial,
+            lastWorldPos.x,
+            lastWorldPos.z,
+            this.brushRadius,
+            this.brushStrength,
+            0.016,
+            heightMeters
+          );
+
+          this.updateBrushCursor(lastWorldPos);
+        }
+
         this.animationFrameId = requestAnimationFrame(performBrushOperation);
       }
     };
@@ -533,10 +558,62 @@ export class BrushInteractionHandler {
         // Update time for animation
         this.brushDecalMaterial.brushUniforms.time.value = performance.now() * 0.001;
 
+        // Position decal mesh at terrain height with small offset to prevent z-fighting
+        this.brushDecalMesh.position.set(0, worldPos.y + 0.1, 0);
         this.brushDecalMesh.visible = true;
       } else {
         this.brushDecalMesh.visible = false;
       }
+    }
+
+    // Update brush ring position and shape to follow terrain
+    if (this.brushCursorRing && worldPos && (this.brushHovering || this.brushReady || this.brushActive)) {
+      // Update ring geometry to follow terrain height
+      const segments = 64;
+      const points: THREE.Vector3[] = [];
+      for (let i = 0; i <= segments; i++) {
+        const angle = (i / segments) * Math.PI * 2;
+        const x = Math.cos(angle) * this.brushRadius;
+        const z = Math.sin(angle) * this.brushRadius;
+
+        // Get terrain height at this ring point
+        const ringWorldX = worldPos.x + x;
+        const ringWorldZ = worldPos.z + z;
+        const ringHeight = this.getHeightAtWorldPos?.(ringWorldX, ringWorldZ) ?? worldPos.y;
+
+        // Position relative to center position
+        points.push(new THREE.Vector3(x, ringHeight - worldPos.y, z));
+      }
+
+      // Update geometry
+      this.brushCursorRing.geometry.setFromPoints(points);
+      this.brushCursorRing.position.set(worldPos.x, worldPos.y, worldPos.z);
+      this.brushCursorRing.visible = true;
+    } else if (this.brushCursorRing) {
+      this.brushCursorRing.visible = false;
+    }
+
+    // Update brush sphere position (if used) - ensure it updates during active operations
+    if (this.brushCursorSphere && worldPos && (this.brushReady || this.brushActive)) {
+      // Always update position when we have a valid world position
+      this.brushCursorSphere.position.set(worldPos.x, worldPos.y, worldPos.z);
+      this.brushCursorSphere.scale.setScalar(this.brushRadius);
+      this.brushCursorSphere.visible = true;
+
+      // Update material color based on mode
+      const actualMode = this.temporaryModeInvert ?
+        (this.brushMode === 'pickup' ? 'deposit' : 'pickup') :
+        this.brushMode;
+
+      if (this.brushCursorMaterial) {
+        if (actualMode === 'pickup') {
+          this.brushCursorMaterial.color.setHex(0x00AAFF);
+        } else {
+          this.brushCursorMaterial.color.setHex(0xFFAA00);
+        }
+      }
+    } else if (this.brushCursorSphere) {
+      this.brushCursorSphere.visible = false;
     }
 
     // Hide everything when not in brush mode
@@ -548,6 +625,7 @@ export class BrushInteractionHandler {
     // Show mode indicator when brush is ready or active
     if (this.brushReady || this.brushActive) {
       this.brushModeIndicator.visible = true;
+      // Update position continuously (important during dragging)
       this.brushModeIndicator.position.set(worldPos.x, worldPos.y, worldPos.z);
 
       // Determine actual mode (considering temporary invert)
@@ -565,23 +643,33 @@ export class BrushInteractionHandler {
       pickupArrows.forEach((arrow: any, index: number) => {
         arrow.visible = actualMode === 'pickup';
 
-        // Position arrow around the brush radius
-        const angle = (index / 3) * Math.PI * 2;
-        arrow.position.x = Math.cos(angle) * arrowRadius;
-        arrow.position.z = Math.sin(angle) * arrowRadius;
+        if (arrow.visible) {
+          // Always update position around the brush radius
+          const angle = (index / 3) * Math.PI * 2;
+          const arrowX = Math.cos(angle) * arrowRadius;
+          const arrowZ = Math.sin(angle) * arrowRadius;
+          arrow.position.x = arrowX;
+          arrow.position.z = arrowZ;
 
-        if (arrow.visible && this.brushActive) {
-          // Animate pickup arrows moving up
-          const time = Date.now() * 0.001;
-          arrow.position.y = 0.2 + Math.sin(time * 3 + index) * 0.5 + 1.0;
-          if (arrow.material) {
-            arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
-          }
-        } else if (arrow.visible) {
-          // Reset position when ready but not active
-          arrow.position.y = 0.5;
-          if (arrow.material) {
-            arrow.material.opacity = 0.8;
+          // Get terrain height at arrow position for better alignment
+          const arrowWorldX = worldPos.x + arrowX;
+          const arrowWorldZ = worldPos.z + arrowZ;
+          const arrowTerrainHeight = this.getHeightAtWorldPos?.(arrowWorldX, arrowWorldZ) ?? worldPos.y;
+          const arrowBaseY = arrowTerrainHeight - worldPos.y;
+
+          if (this.brushActive) {
+            // Animate pickup arrows moving up
+            const time = Date.now() * 0.001;
+            arrow.position.y = arrowBaseY + 0.2 + Math.sin(time * 3 + index) * 0.5 + 1.0;
+            if (arrow.material) {
+              arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
+            }
+          } else {
+            // Reset position when ready but not active
+            arrow.position.y = arrowBaseY + 0.5;
+            if (arrow.material) {
+              arrow.material.opacity = 0.8;
+            }
           }
         }
       });
@@ -589,23 +677,33 @@ export class BrushInteractionHandler {
       depositArrows.forEach((arrow: any, index: number) => {
         arrow.visible = actualMode === 'deposit';
 
-        // Position arrow around the brush radius
-        const angle = (index / 3) * Math.PI * 2 + Math.PI / 6;
-        arrow.position.x = Math.cos(angle) * arrowRadius;
-        arrow.position.z = Math.sin(angle) * arrowRadius;
+        if (arrow.visible) {
+          // Always update position around the brush radius
+          const angle = (index / 3) * Math.PI * 2 + Math.PI / 6;
+          const arrowX = Math.cos(angle) * arrowRadius;
+          const arrowZ = Math.sin(angle) * arrowRadius;
+          arrow.position.x = arrowX;
+          arrow.position.z = arrowZ;
 
-        if (arrow.visible && this.brushActive) {
-          // Animate deposit arrows moving down
-          const time = Date.now() * 0.001;
-          arrow.position.y = 1.5 - Math.sin(time * 3 + index) * 0.5;
-          if (arrow.material) {
-            arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
-          }
-        } else if (arrow.visible) {
-          // Reset position when ready but not active
-          arrow.position.y = 1.0;
-          if (arrow.material) {
-            arrow.material.opacity = 0.8;
+          // Get terrain height at arrow position for better alignment
+          const arrowWorldX = worldPos.x + arrowX;
+          const arrowWorldZ = worldPos.z + arrowZ;
+          const arrowTerrainHeight = this.getHeightAtWorldPos?.(arrowWorldX, arrowWorldZ) ?? worldPos.y;
+          const arrowBaseY = arrowTerrainHeight - worldPos.y;
+
+          if (this.brushActive) {
+            // Animate deposit arrows moving down
+            const time = Date.now() * 0.001;
+            arrow.position.y = arrowBaseY + 1.5 - Math.sin(time * 3 + index) * 0.5;
+            if (arrow.material) {
+              arrow.material.opacity = 0.7 + Math.sin(time * 5) * 0.3;
+            }
+          } else {
+            // Reset position when ready but not active
+            arrow.position.y = arrowBaseY + 1.0;
+            if (arrow.material) {
+              arrow.material.opacity = 0.8;
+            }
           }
         }
       });

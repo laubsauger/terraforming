@@ -24,7 +24,7 @@ export interface Source {
     position: [number, number];
     rate: number;
 }
-export type DebugOverlay = 'flow' | 'accumulation' | 'pools' | 'sediment' | 'lava' | 'temperature';
+export type DebugOverlay = 'height' | 'flow' | 'accumulation' | 'erosion' | 'pools' | 'waterDepth' | 'sediment' | 'lava' | 'temperature' | 'contours';
 export interface PerfGpuPassTiming {
     name: string;
     gpuMs: number | null;

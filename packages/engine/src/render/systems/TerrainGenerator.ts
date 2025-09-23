@@ -7,6 +7,7 @@ export interface TerrainGeneratorOptions {
 
 export class TerrainGenerator {
   private gridSize: number;
+  private defaultHeightmapUrl = '/heightmap-presets/default.png';
 
   constructor(options: TerrainGeneratorOptions) {
     this.gridSize = options.gridSize;
@@ -127,6 +128,72 @@ export class TerrainGenerator {
 
     // Return difference for more interesting patterns
     return secondDist - minDist;
+  }
+
+  /**
+   * Load heightmap from an image URL
+   */
+  public async loadHeightmapFromImage(url: string, heightTexture: THREE.DataTexture): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+
+      img.onload = () => {
+        const size = this.gridSize;
+
+        // Create canvas to read image data
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+
+        if (!ctx) {
+          reject(new Error('Could not create canvas context'));
+          return;
+        }
+
+        // Draw and resize image to match grid size
+        ctx.drawImage(img, 0, 0, size, size);
+        const imageData = ctx.getImageData(0, 0, size, size);
+
+        // Copy to height texture
+        const data = heightTexture.image.data as Float32Array;
+        for (let i = 0; i < size * size; i++) {
+          const pixelIndex = i * 4;
+          // Use red channel for height (grayscale image)
+          const height = imageData.data[pixelIndex] / 255;
+
+          // Write to all channels in DataTexture
+          data[i * 4] = height;     // R
+          data[i * 4 + 1] = height; // G
+          data[i * 4 + 2] = height; // B
+          data[i * 4 + 3] = 1;      // A
+        }
+
+        heightTexture.needsUpdate = true;
+        console.log('TerrainGenerator: Loaded heightmap from', url);
+        resolve();
+      };
+
+      img.onerror = () => {
+        console.error('TerrainGenerator: Failed to load heightmap from', url);
+        reject(new Error(`Failed to load heightmap from ${url}`));
+      };
+
+      img.src = url;
+    });
+  }
+
+  /**
+   * Load the default heightmap
+   */
+  public async loadDefaultHeightmap(heightTexture: THREE.DataTexture): Promise<void> {
+    try {
+      await this.loadHeightmapFromImage(this.defaultHeightmapUrl, heightTexture);
+    } catch (error) {
+      console.warn('TerrainGenerator: Could not load default heightmap, generating procedural terrain instead');
+      this.generateTestTerrain(heightTexture);
+    }
   }
 
   public generateTestTerrain(heightTexture: THREE.DataTexture): void {
@@ -409,16 +476,6 @@ export class TerrainGenerator {
 
     // Apply smoothing pass to eliminate rough edges
     this.applySmoothingPass(data, size);
-
-    // Debug output
-    const waterPercentage = (belowWaterCount / totalCount) * 100;
-    console.log(`Terrain Generation Stats (updated):
-      Min Height: ${minHeight.toFixed(4)} (${(minHeight * 64).toFixed(2)}m)
-      Max Height: ${maxHeight.toFixed(4)} (${(maxHeight * 64).toFixed(2)}m)
-      Sea Level: ${TerrainConfig.SEA_LEVEL_NORMALIZED} (${TerrainConfig.WATER_LEVEL_ABSOLUTE}m)
-      Below Water: ${waterPercentage.toFixed(1)}% of terrain
-      Ocean should be: ${(TerrainConfig.SEA_LEVEL_NORMALIZED * 100).toFixed(1)}% of height range`);
-
     heightTexture.needsUpdate = true;
   }
 

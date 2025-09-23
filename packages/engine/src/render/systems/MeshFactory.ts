@@ -35,6 +35,32 @@ export class MeshFactory {
     this.textureManager = options.textureManager;
   }
 
+  /**
+   * Update terrain material with fluid simulation textures
+   */
+  public updateTerrainWithFluidTextures(waterDepthTexture: THREE.Texture): void {
+    if (!this.terrainMesh) return;
+
+    // Create new material with fluid textures
+    const currentMaterial = this.terrainMesh.material as THREE.MeshStandardNodeMaterial;
+    const newMaterial = createTerrainMaterialTSL({
+      heightMap: this.textureManager.heightTexture,
+      heightScale: this.heightScale,
+      terrainSize: this.terrainSize,
+      gridSize: this.gridSize,
+      flowMap: this.textureManager.flowTexture,
+      accumulationMap: this.textureManager.accumulationTexture,
+      waterDepthMap: waterDepthTexture, // Add fluid water depth
+      showContours: true,
+      contourInterval: 0.05,
+      waterLevel: this.waterLevelNormalized,
+    });
+
+    // Replace material
+    this.terrainMesh.material = newMaterial;
+    currentMaterial.dispose(); // Clean up old material
+  }
+
   public createTerrain(scene: THREE.Scene, showContours: boolean = true): THREE.Mesh {
     // Create terrain geometry - higher subdivision for better detail
     const subdivisions = 127; // 128x128 grid for detailed terrain

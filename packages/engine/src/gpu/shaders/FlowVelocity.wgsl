@@ -14,8 +14,8 @@ struct Params {
 
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var heightTex: texture_2d<f32>;     // Combined height (soil + rock + water)
-@group(0) @binding(2) var flowTexIn: texture_storage_2d<rg16float, read>;  // Previous flow (for inertia)
-@group(0) @binding(3) var flowTexOut: texture_storage_2d<rg16float, write>; // Output flow velocity
+@group(0) @binding(2) var flowTexIn: texture_storage_2d<rg32float, read>;  // Previous flow (for inertia)
+@group(0) @binding(3) var flowTexOut: texture_storage_2d<rg32float, write>; // Output flow velocity
 @group(0) @binding(4) var roughnessTex: texture_2d<f32>;  // Terrain roughness/friction
 
 const WORKGROUP_SIZE = 8u;

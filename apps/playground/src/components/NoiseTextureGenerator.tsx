@@ -11,7 +11,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@playground/components/ui/dialog';
-import { Download, Upload, RotateCcw, Send, RefreshCw } from 'lucide-react';
+import { Download, Upload, RotateCcw, Send, RefreshCw, Edit3, X, Check } from 'lucide-react';
 import type { Engine } from '@terraforming/engine';
 
 interface NoiseParams {
@@ -43,6 +43,15 @@ interface NoiseParams {
   // Smoothing
   smoothingPasses: number;
   smoothingStrength: number;
+}
+
+interface PresetConfig {
+  id: string;
+  name: string;
+  description: string;
+  thumbnail: string;
+  isDefault?: boolean;
+  params: NoiseParams;
 }
 
 interface NoiseTextureGeneratorProps {
@@ -81,6 +90,14 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
   const [heightData, setHeightData] = useState<Float32Array | null>(null);
   const [savedPresets, setSavedPresets] = useState<{ [key: string]: NoiseParams }>({});
   const [activeTab, setActiveTab] = useState('shape');
+  const [builtinPresets, setBuiltinPresets] = useState<PresetConfig[]>([]);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const [presetThumbnails, setPresetThumbnails] = useState<{ [key: string]: string }>({});
+  const [isEditingCurrent, setIsEditingCurrent] = useState(false);
+  const [editCanvas, setEditCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [brushSize, setBrushSize] = useState(10);
+  const [brushStrength, setBrushStrength] = useState(0.5);
+  const [brushMode, setBrushMode] = useState<'raise' | 'lower' | 'smooth' | 'flatten'>('raise');
 
   // Noise functions
   const hash2 = useCallback((x: number, y: number): number => {
@@ -449,6 +466,158 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     engine.applyHeightmap(currentData, size);
   }, [engine]);
 
+  // Start editing the current heightmap
+  const startEditingCurrent = useCallback(() => {
+    if (!engine) return;
+
+    const currentData = engine.getCurrentHeightmap();
+    if (!currentData) return;
+
+    setIsEditingCurrent(true);
+    const size = Math.sqrt(currentData.length);
+
+    // Create editable canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    // Draw current heightmap to canvas
+    const imageData = ctx.createImageData(size, size);
+    for (let i = 0; i < currentData.length; i++) {
+      const value = Math.max(0, Math.min(1, currentData[i]));
+      const gray = Math.floor(value * 255);
+      const idx = i * 4;
+      imageData.data[idx] = gray;
+      imageData.data[idx + 1] = gray;
+      imageData.data[idx + 2] = gray;
+      imageData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    setEditCanvas(canvas);
+    setHeightData(new Float32Array(currentData));
+  }, [engine]);
+
+  // Apply brush to heightmap
+  const applyBrush = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!editCanvas || !heightData || !isEditingCurrent) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const x = Math.floor(((event.clientX - rect.left) / rect.width) * editCanvas.width);
+    const y = Math.floor(((event.clientY - rect.top) / rect.height) * editCanvas.height);
+
+    const size = editCanvas.width;
+    const ctx = editCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // Get the height at cursor position for flatten mode
+    const centerIdx = y * size + x;
+    const targetHeight = heightData[centerIdx];
+
+    // Apply brush effect
+    const radius = brushSize;
+    const strength = brushStrength * 0.02; // Scale down for subtle effect
+
+    // For smooth operation, we need to first collect neighbor averages
+    const smoothedValues = new Float32Array(heightData.length);
+    if (brushMode === 'smooth') {
+      // Pre-calculate smoothed values using Gaussian blur
+      for (let py = 0; py < size; py++) {
+        for (let px = 0; px < size; px++) {
+          const idx = py * size + px;
+          let sum = 0;
+          let weightSum = 0;
+
+          // Sample in a 3x3 kernel for smoother results
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const nx = px + kx;
+              const ny = py + ky;
+              if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+                const nidx = ny * size + nx;
+                // Gaussian weight based on distance
+                const weight = (kx === 0 && ky === 0) ? 0.25 : 0.125;
+                sum += heightData[nidx] * weight;
+                weightSum += weight;
+              }
+            }
+          }
+          smoothedValues[idx] = weightSum > 0 ? sum / weightSum : heightData[idx];
+        }
+      }
+    }
+
+    // Apply the brush effect
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        const px = x + dx;
+        const py = y + dy;
+
+        if (px >= 0 && px < size && py >= 0 && py < size) {
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist <= radius) {
+            const idx = py * size + px;
+            // Smoother falloff curve
+            const falloff = Math.pow(1 - (dist / radius), 2);
+            const effect = strength * falloff;
+
+            let newValue = heightData[idx];
+
+            switch (brushMode) {
+              case 'raise':
+                newValue = Math.min(1, newValue + effect);
+                break;
+              case 'lower':
+                newValue = Math.max(0, newValue - effect);
+                break;
+              case 'smooth':
+                // Blend toward the pre-calculated smoothed value
+                newValue = heightData[idx] * (1 - effect * 2) + smoothedValues[idx] * (effect * 2);
+                break;
+              case 'flatten':
+                // Blend toward the target height (height at cursor)
+                newValue = heightData[idx] * (1 - effect * 3) + targetHeight * (effect * 3);
+                break;
+            }
+
+            heightData[idx] = newValue;
+          }
+        }
+      }
+    }
+
+    // Update canvas display
+    const imageData = ctx.getImageData(0, 0, size, size);
+    for (let i = 0; i < heightData.length; i++) {
+      const gray = Math.floor(heightData[i] * 255);
+      const idx = i * 4;
+      imageData.data[idx] = gray;
+      imageData.data[idx + 1] = gray;
+      imageData.data[idx + 2] = gray;
+      imageData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+  }, [editCanvas, heightData, isEditingCurrent, brushSize, brushStrength, brushMode]);
+
+  // Apply edited heightmap to terrain
+  const applyEditedHeightmap = useCallback(() => {
+    if (!engine || !heightData || !isEditingCurrent) return;
+
+    const size = Math.sqrt(heightData.length);
+    engine.updateHeightmap(heightData);
+    setIsEditingCurrent(false);
+    setEditCanvas(null);
+  }, [engine, heightData, isEditingCurrent]);
+
+  // Cancel editing
+  const cancelEditing = useCallback(() => {
+    setIsEditingCurrent(false);
+    setEditCanvas(null);
+    loadCurrentHeightmap();
+  }, [loadCurrentHeightmap]);
+
   const resetToDefaults = useCallback(() => {
     setParams({
       islandRadius: 0.7,
@@ -469,6 +638,93 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
       smoothingPasses: 2,
       smoothingStrength: 0.3,
     });
+  }, []);
+
+  // Generate thumbnail for a preset
+  const generatePresetThumbnail = useCallback(async (preset: PresetConfig): Promise<string> => {
+    const size = 128; // Small thumbnail size
+    const data = new Float32Array(size * size);
+
+    // Generate heightmap with preset params (simplified version for thumbnail)
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const idx = y * size + x;
+        const nx = (x / size) * 2 - 1;
+        const ny = (y / size) * 2 - 1;
+        const dist = Math.sqrt(nx * nx + ny * ny);
+
+        const shapeNoise = noise2D(nx * preset.params.islandNoise, ny * preset.params.islandNoise, preset.params.baseScale, 2);
+        const islandShape = Math.max(0, 1 - dist * (preset.params.islandRadius + shapeNoise * 0.2));
+        const islandMask = Math.pow(islandShape, preset.params.islandFalloff);
+
+        let height = 0;
+        if (islandMask > 0.01) {
+          const baseNoise = noise2D(nx, ny, preset.params.baseScale, preset.params.baseOctaves);
+          height = preset.params.waterLevel + islandMask * preset.params.baseAmplitude * (0.5 + baseNoise * 0.5);
+
+          if (islandMask > preset.params.mountainThreshold) {
+            const mountainZone = (islandMask - preset.params.mountainThreshold) / (1 - preset.params.mountainThreshold);
+            const ridges = ridgeNoise(nx, ny, preset.params.mountainScale, preset.params.mountainOctaves);
+            height += ridges * preset.params.ridgeStrength * mountainZone * preset.params.mountainAmplitude;
+          }
+        }
+
+        data[idx] = Math.max(0, Math.min(1, height));
+      }
+    }
+
+    // Convert to canvas
+    const canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+
+    const imageData = ctx.createImageData(size, size);
+    for (let i = 0; i < data.length; i++) {
+      const gray = Math.floor(data[i] * 255);
+      const idx = i * 4;
+      imageData.data[idx] = gray;
+      imageData.data[idx + 1] = gray;
+      imageData.data[idx + 2] = gray;
+      imageData.data[idx + 3] = 255;
+    }
+    ctx.putImageData(imageData, 0, 0);
+
+    return canvas.toDataURL('image/png');
+  }, [noise2D, ridgeNoise]);
+
+  // Load built-in presets
+  const loadBuiltinPresets = useCallback(async () => {
+    try {
+      const response = await fetch('/heightmap-presets/presets.json');
+      const data = await response.json();
+      setBuiltinPresets(data.presets);
+
+      // Find and apply default preset
+      const defaultPreset = data.presets.find((p: PresetConfig) => p.isDefault);
+      if (defaultPreset) {
+        setParams(defaultPreset.params);
+        setSelectedPresetId(defaultPreset.id);
+      }
+
+      // Generate thumbnails for all presets
+      const thumbnails: { [key: string]: string } = {};
+      for (const preset of data.presets) {
+        // Generate thumbnail dynamically
+        const thumbnail = await generatePresetThumbnail(preset);
+        thumbnails[preset.id] = thumbnail;
+      }
+      setPresetThumbnails(thumbnails);
+    } catch (error) {
+      console.warn('Failed to load builtin presets:', error);
+    }
+  }, [generatePresetThumbnail]);
+
+  // Load preset from built-in presets
+  const loadBuiltinPreset = useCallback((preset: PresetConfig) => {
+    setParams(preset.params);
+    setSelectedPresetId(preset.id);
   }, []);
 
   const savePreset = useCallback(() => {
@@ -494,8 +750,9 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     localStorage.setItem('terraforming-noise-presets', JSON.stringify(newPresets));
   }, [savedPresets]);
 
-  // Load presets from localStorage on mount
+  // Load presets from localStorage and built-in presets on mount
   useEffect(() => {
+    // Load user presets
     try {
       const saved = localStorage.getItem('terraforming-noise-presets');
       if (saved) {
@@ -504,7 +761,10 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
     } catch (error) {
       console.warn('Failed to load saved presets:', error);
     }
-  }, []);
+
+    // Load built-in presets
+    loadBuiltinPresets();
+  }, [loadBuiltinPresets]);
 
   // Auto-generate on parameter changes (debounced)
   useEffect(() => {
@@ -743,43 +1003,198 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                 <TabsContent value="current" className="space-y-4">
                   <div className="space-y-4">
                     <Label className="text-white">Current Terrain Heightmap</Label>
-                    <div className="flex items-center justify-center bg-gray-900 rounded border border-white/20 p-4">
-                      <canvas
-                        ref={currentCanvasRef}
-                        className="max-w-full max-h-full object-contain"
-                        style={{ imageRendering: 'pixelated' }}
-                      />
-                    </div>
 
-                    <div className="flex gap-2">
-                      <Button onClick={loadCurrentHeightmap} variant="outline" size="sm" className="flex-1">
-                        <RefreshCw className="w-4 h-4 mr-2" />
-                        Load Current
-                      </Button>
-                      <Button onClick={saveCurrentHeightmap} variant="outline" size="sm" className="flex-1">
-                        <Download className="w-4 h-4 mr-2" />
-                        Save Current
-                      </Button>
-                    </div>
+                    {isEditingCurrent ? (
+                      <>
+                        {/* Editing Mode */}
+                        <div className="space-y-3">
+                          {/* Brush Controls */}
+                          <div className="grid grid-cols-2 gap-2">
+                            <Button
+                              onClick={() => setBrushMode('raise')}
+                              variant={brushMode === 'raise' ? 'default' : 'outline'}
+                              size="sm"
+                            >
+                              Raise
+                            </Button>
+                            <Button
+                              onClick={() => setBrushMode('lower')}
+                              variant={brushMode === 'lower' ? 'default' : 'outline'}
+                              size="sm"
+                            >
+                              Lower
+                            </Button>
+                            <Button
+                              onClick={() => setBrushMode('smooth')}
+                              variant={brushMode === 'smooth' ? 'default' : 'outline'}
+                              size="sm"
+                            >
+                              Smooth
+                            </Button>
+                            <Button
+                              onClick={() => setBrushMode('flatten')}
+                              variant={brushMode === 'flatten' ? 'default' : 'outline'}
+                              size="sm"
+                            >
+                              Flatten
+                            </Button>
+                          </div>
 
-                    <div className="pt-2">
-                      <Button onClick={applyCurrentToTerrain} disabled={!engine} size="sm" className="w-full">
-                        <Send className="w-4 h-4 mr-2" />
-                        Apply Current to Terrain
-                      </Button>
-                    </div>
+                          <div>
+                            <Label className="text-white">Brush Size: {brushSize}px</Label>
+                            <Slider
+                              value={[brushSize]}
+                              onValueChange={([value]) => setBrushSize(value)}
+                              min={1}
+                              max={50}
+                              step={1}
+                            />
+                          </div>
+
+                          <div>
+                            <Label className="text-white">Brush Strength: {(brushStrength * 100).toFixed(0)}%</Label>
+                            <Slider
+                              value={[brushStrength]}
+                              onValueChange={([value]) => setBrushStrength(value)}
+                              min={0.1}
+                              max={1}
+                              step={0.05}
+                            />
+                          </div>
+
+                          {/* Editable Canvas */}
+                          <div className="flex items-center justify-center bg-gray-900 rounded border-2 border-blue-500 p-4 cursor-crosshair">
+                            {editCanvas && (
+                              <canvas
+                                width={editCanvas.width}
+                                height={editCanvas.height}
+                                className="max-w-full max-h-full object-contain"
+                                style={{
+                                  imageRendering: 'pixelated',
+                                  width: '100%',
+                                  maxWidth: '400px'
+                                }}
+                                onMouseDown={applyBrush}
+                                onMouseMove={(e) => {
+                                  if (e.buttons === 1) applyBrush(e);
+                                }}
+                                ref={(canvas) => {
+                                  if (canvas && editCanvas) {
+                                    const ctx = canvas.getContext('2d');
+                                    if (ctx) {
+                                      ctx.drawImage(editCanvas, 0, 0);
+                                    }
+                                  }
+                                }}
+                              />
+                            )}
+                          </div>
+
+                          {/* Edit Actions */}
+                          <div className="flex gap-2">
+                            <Button onClick={applyEditedHeightmap} size="sm" className="flex-1">
+                              <Check className="w-4 h-4 mr-2" />
+                              Apply Changes
+                            </Button>
+                            <Button onClick={cancelEditing} variant="outline" size="sm" className="flex-1">
+                              <X className="w-4 h-4 mr-2" />
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        {/* View Mode */}
+                        <div className="flex items-center justify-center bg-gray-900 rounded border border-white/20 p-4">
+                          <canvas
+                            ref={currentCanvasRef}
+                            className="max-w-full max-h-full object-contain"
+                            style={{ imageRendering: 'pixelated' }}
+                          />
+                        </div>
+
+                        <div className="flex gap-2">
+                          <Button onClick={loadCurrentHeightmap} variant="outline" size="sm" className="flex-1">
+                            <RefreshCw className="w-4 h-4 mr-2" />
+                            Load Current
+                          </Button>
+                          <Button onClick={startEditingCurrent} variant="outline" size="sm" className="flex-1">
+                            <Edit3 className="w-4 h-4 mr-2" />
+                            Edit
+                          </Button>
+                          <Button onClick={saveCurrentHeightmap} variant="outline" size="sm" className="flex-1">
+                            <Download className="w-4 h-4 mr-2" />
+                            Save
+                          </Button>
+                        </div>
+
+                        <div className="pt-2">
+                          <Button onClick={applyCurrentToTerrain} disabled={!engine} size="sm" className="w-full">
+                            <Send className="w-4 h-4 mr-2" />
+                            Apply Current to Terrain
+                          </Button>
+                        </div>
+                      </>
+                    )}
 
                     <div className="pt-2 border-t border-white/20">
                       <p className="text-xs text-gray-400">
-                        Display, save, and restore the current terrain heightmap. Use "Load Current" to update the display, "Save Current" to export as PNG, and "Apply Current to Terrain" to restore the current state.
+                        {isEditingCurrent
+                          ? "Use the brush tools to modify the heightmap. Click and drag to paint. Apply changes when done."
+                          : "Display, edit, save, and restore the current terrain heightmap. Click 'Edit' to modify the heightmap directly."}
                       </p>
                     </div>
                   </div>
                 </TabsContent>
 
                 <TabsContent value="presets" className="space-y-4">
+                  {/* Built-in Presets */}
                   <div className="space-y-2">
-                    <Label className="text-white">Save Current Settings</Label>
+                    <Label className="text-white">Built-in Presets</Label>
+                    <div className="grid grid-cols-2 gap-2 max-h-64 overflow-y-auto">
+                      {builtinPresets.map((preset) => (
+                        <button
+                          key={preset.id}
+                          onClick={() => loadBuiltinPreset(preset)}
+                          className={`relative group p-2 bg-gray-800 hover:bg-gray-700 rounded transition-all ${
+                            selectedPresetId === preset.id ? 'ring-2 ring-blue-500' : ''
+                          }`}
+                        >
+                          <div className="aspect-square bg-gray-900 rounded mb-2 overflow-hidden">
+                            {presetThumbnails[preset.id] ? (
+                              <img
+                                src={presetThumbnails[preset.id]}
+                                alt={preset.name}
+                                className="w-full h-full object-cover"
+                                style={{ imageRendering: 'pixelated' }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center text-gray-600">
+                                <div className="text-center">
+                                  <div className="text-xs">Preview</div>
+                                  <div className="text-xs">Loading...</div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-left">
+                            <div className="text-sm font-medium text-white truncate">{preset.name}</div>
+                            <div className="text-xs text-gray-400 truncate">{preset.description}</div>
+                            {preset.isDefault && (
+                              <div className="absolute top-1 right-1 bg-blue-500 text-white text-xs px-1 py-0.5 rounded">
+                                Default
+                              </div>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* User Presets */}
+                  <div className="space-y-2 pt-4 border-t border-white/20">
+                    <Label className="text-white">Custom Presets</Label>
                     <div className="flex gap-2">
                       <Input
                         placeholder="Preset name..."
@@ -788,16 +1203,13 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
                         className="flex-1 bg-white/5 border-white/20 text-white placeholder:text-gray-500"
                       />
                       <Button onClick={savePreset} disabled={!presetName.trim()} size="sm">
-                        Save
+                        Save Current
                       </Button>
                     </div>
-                  </div>
 
-                  <div className="space-y-2">
-                    <Label className="text-white">Saved Presets ({Object.keys(savedPresets).length})</Label>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                    <div className="space-y-2 max-h-32 overflow-y-auto">
                       {Object.keys(savedPresets).length === 0 ? (
-                        <p className="text-sm text-gray-400 italic">No saved presets</p>
+                        <p className="text-sm text-gray-400 italic">No saved custom presets</p>
                       ) : (
                         Object.keys(savedPresets).map((name) => (
                           <div key={name} className="flex items-center gap-2 p-2 bg-gray-800 rounded">
@@ -821,7 +1233,7 @@ export function NoiseTextureGenerator({ engine, isOpen, onClose }: NoiseTextureG
 
                   <div className="pt-2 border-t border-white/20">
                     <p className="text-xs text-gray-400">
-                      Presets are saved to browser localStorage and will persist between sessions.
+                      Custom presets are saved to browser localStorage. Built-in presets provide starting points for different terrain types.
                     </p>
                   </div>
                 </TabsContent>

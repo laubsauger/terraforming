@@ -12,9 +12,9 @@ struct Params {
 }
 
 @group(0) @binding(0) var<uniform> params: Params;
-@group(0) @binding(1) var flowTex: texture_2d<f32>;                      // Flow velocity field
-@group(0) @binding(2) var waterDepthTexIn: texture_storage_2d<r16float, read>;   // Current water depth
-@group(0) @binding(3) var waterDepthTexOut: texture_storage_2d<r16float, write>; // Updated water depth
+@group(0) @binding(1) var flowTex: texture_storage_2d<rg32float, read>;   // Flow velocity field
+@group(0) @binding(2) var waterDepthTexIn: texture_storage_2d<r32float, read>;   // Current water depth
+@group(0) @binding(3) var waterDepthTexOut: texture_storage_2d<r32float, write>; // Updated water depth
 @group(0) @binding(4) var heightTex: texture_2d<f32>;                    // Terrain height
 
 const WORKGROUP_SIZE = 8u;
@@ -31,7 +31,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims);
 
   // Get flow velocity
-  let flow = textureLoad(flowTex, coord, 0).rg;
+  let flow = textureLoad(flowTex, coord).rg;
   let flow_speed = length(flow);
 
   // Get current water depth
@@ -72,10 +72,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // Apply mass conservation correction
   // Calculate divergence of flow field
-  let flow_left = textureLoad(flowTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).rg;
-  let flow_right = textureLoad(flowTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).rg;
-  let flow_up = textureLoad(flowTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).rg;
-  let flow_down = textureLoad(flowTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).rg;
+  let flow_left = textureLoad(flowTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
+  let flow_right = textureLoad(flowTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
+  let flow_up = textureLoad(flowTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
+  let flow_down = textureLoad(flowTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
 
   let div_x = (flow_right.x - flow_left.x) * 0.5;
   let div_y = (flow_down.y - flow_up.y) * 0.5;

@@ -16,8 +16,8 @@ struct Params {
 @group(0) @binding(1) var flowTex: texture_2d<f32>;              // Flow velocity
 @group(0) @binding(2) var waterDepthTex: texture_2d<f32>;        // Water depth
 @group(0) @binding(3) var soilTex: texture_storage_2d<r32float, read_write>;      // Soil height
-@group(0) @binding(4) var sedimentTexIn: texture_storage_2d<r16float, read>;      // Current sediment
-@group(0) @binding(5) var sedimentTexOut: texture_storage_2d<r16float, write>;   // Updated sediment
+@group(0) @binding(4) var sedimentTexIn: texture_storage_2d<r32float, read>;      // Current sediment
+@group(0) @binding(5) var sedimentTexOut: texture_storage_2d<r32float, write>;   // Updated sediment
 @group(0) @binding(6) var flowAccumulationTex: texture_2d<f32>;  // Flow accumulation for capacity
 
 const WORKGROUP_SIZE = 8u;

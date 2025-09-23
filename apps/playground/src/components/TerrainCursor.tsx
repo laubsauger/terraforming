@@ -431,9 +431,47 @@ export function TerrainCursor({
         centerDot.position.y = 0.05; // Slight offset above terrain
       }
 
-      // Update fill mesh position to follow terrain
+      // Update fill mesh to average terrain height
       if (fillMesh) {
-        fillMesh.position.y = 0.02; // Just above terrain
+        // Calculate average height within brush radius for better fill positioning
+        let totalHeight = 0;
+        let sampleCount = 0;
+        const samplePoints = 8; // Sample points around the circle
+
+        for (let i = 0; i < samplePoints; i++) {
+          const angle = (i / samplePoints) * Math.PI * 2;
+          const sampleRadius = brushSize * 0.7; // Sample at 70% of radius
+          const sampleX = centerPosition.x + Math.cos(angle) * sampleRadius;
+          const sampleZ = centerPosition.z + Math.sin(angle) * sampleRadius;
+
+          const height = engine.getTerrainHeightAt(sampleX, sampleZ);
+          if (height !== null) {
+            totalHeight += height;
+            sampleCount++;
+          }
+        }
+
+        // Add center point sample
+        const centerHeight = engine.getTerrainHeightAt(centerPosition.x, centerPosition.z);
+        if (centerHeight !== null) {
+          totalHeight += centerHeight;
+          sampleCount++;
+        }
+
+        const averageHeight = sampleCount > 0 ? totalHeight / sampleCount : centerPosition.y;
+
+        // Position fill mesh at average height with small offset
+        fillMesh.position.y = averageHeight - centerPosition.y + 0.02;
+
+        // Optionally tilt the fill mesh to match terrain normal
+        // This is simpler and more stable than deforming the geometry
+        if (normal) {
+          const up = new THREE.Vector3(0, 1, 0);
+          if (normal.y > 0.7) { // Only apply rotation for reasonably flat surfaces
+            const quaternion = new THREE.Quaternion().setFromUnitVectors(up, normal);
+            fillMesh.quaternion.slerp(quaternion, 0.5); // Smooth rotation
+          }
+        }
       }
 
       if (line && line.geometry) {
@@ -546,7 +584,7 @@ export function TerrainCursor({
       line.geometry.setFromPoints(points);
     }
 
-    // Update fill mesh size
+    // Update fill mesh size - keep as simple ring since terrain-following is handled in position update
     if (fillMesh && fillMesh.geometry) {
       fillMesh.geometry.dispose();
       const fillGeometry = new THREE.RingGeometry(0, brushSize, 64);

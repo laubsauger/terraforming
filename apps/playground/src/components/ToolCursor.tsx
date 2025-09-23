@@ -5,6 +5,7 @@ export const TOOL_COLORS = {
   'select': '#ffffff',
   'brush-raise': '#8b4513', // Brown for terrain
   'brush-smooth': '#ffd700', // Gold for smoothing
+  'brush-flatten': '#9370db', // Purple for flatten
   'add-water-source': '#0099cc', // Blue for water
   'add-lava-source': '#ff4500', // Orange-red for lava
 } as const;

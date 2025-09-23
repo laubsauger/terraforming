@@ -12,9 +12,10 @@ export interface TerrainMaterialTSLOptions {
   flowMap?: Texture;
   accumulationMap?: Texture;
   sedimentMap?: Texture;
+  waterDepthMap?: Texture; // Dynamic water depth from fluid simulation
   showContours?: boolean;
   contourInterval?: number;
-  waterLevel?: number; // Normalized water level
+  waterLevel?: number; // Normalized water level (fallback for static water)
 }
 
 /**
@@ -31,6 +32,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     flowMap,
     accumulationMap,
     sedimentMap,
+    waterDepthMap,
     showContours = false,
     contourInterval = 0.05, // Contour every 5% of height (0.75m with scale 15)
     waterLevel = TerrainConfig.SEA_LEVEL_NORMALIZED, // Default from config
@@ -256,8 +258,19 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const biomeRoughness = sandWeight.mul(0.3).add(grassWeight.mul(0.8)).add(rockWeight.mul(0.95)).add(snowWeight.mul(0.1));
 
   // === ENHANCED UNDERWATER TERRAIN EFFECTS ===
-  const isUnderwater = step(normalizedHeight, waterLevelNode);
-  const underwaterDepth = clamp(waterLevelNode.sub(normalizedHeight), float(0), float(1));
+  // Use dynamic water depth from fluid simulation if available, otherwise fallback to static water level
+  const dynamicWaterLevel = waterDepthMap ? texture(waterDepthMap, uv()) : null;
+  const effectiveWaterLevel = dynamicWaterLevel ?
+    normalizedHeight.add(dynamicWaterLevel.r.mul(0.1)) : // Scale water depth appropriately
+    waterLevelNode; // Fallback to static water level
+
+  const isUnderwater = dynamicWaterLevel ?
+    step(float(0.0001), dynamicWaterLevel.r) : // Any water depth > 0.0001 means underwater (increased sensitivity)
+    step(normalizedHeight, waterLevelNode); // Static fallback
+
+  const underwaterDepth = dynamicWaterLevel ?
+    clamp(dynamicWaterLevel.r.mul(100.0), float(0), float(1)) : // Scale water depth for visual effect (increased multiplier for testing)
+    clamp(waterLevelNode.sub(normalizedHeight), float(0), float(1)); // Static fallback
 
   // Create smooth underwater color progression from shallow to deep - more saturated
   const shallowUnderwaterTint = vec3(0.85, 0.92, 0.98);     // Very light blue tint for shallow

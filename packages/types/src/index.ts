@@ -35,6 +35,7 @@ export type DebugOverlay =
   | 'accumulation'
   | 'erosion'
   | 'pools'
+  | 'waterDepth'
   | 'sediment'
   | 'lava'
   | 'temperature'

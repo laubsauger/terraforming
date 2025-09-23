@@ -115,7 +115,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         );
 
         let sample_acc = textureLoad(accumulationTex, sample_coord).r;
-        let distance = length(vec2<f32>(dx, dy));
+        let distance = length(vec2<f32>(f32(dx), f32(dy)));
         let weight = 1.0 / (1.0 + distance);
 
         blurred_acc += sample_acc * weight;

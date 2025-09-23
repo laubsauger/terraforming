@@ -14,6 +14,7 @@ export type InteractionTool =
   | 'select'
   | 'brush-raise'
   | 'brush-smooth'
+  | 'brush-flatten'
   | 'add-water-source'
   | 'add-lava-source';
 

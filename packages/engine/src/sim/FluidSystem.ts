@@ -1,4 +1,4 @@
-import { Fields } from './fields';
+import { Fields, createFieldTex, createFlowTex, createFlowSampledTex, createMaskTex, createDepthTex } from './fields';
 import { type Source } from '@terraforming/types';
 import { FluidConfig } from './FluidConfig';
 // Import shader sources
@@ -11,7 +11,7 @@ import hydraulicErosionShaderSrc from '../gpu/shaders/HydraulicErosion.wgsl?raw'
 
 export interface FluidSystemOptions {
   device: GPUDevice;
-  fields: Fields;
+  fields: any; // Accept any fields structure from BrushSystem
   resolution: number;
   simResolution?: number; // Run sim at lower res for performance
   gravity?: number;
@@ -21,7 +21,7 @@ export interface FluidSystemOptions {
 
 export class FluidSystem {
   private device: GPUDevice;
-  private fields: Fields;
+  private fields!: Fields; // Initialized in initializeFields()
   private resolution: number;
   private simResolution: number;
 
@@ -40,6 +40,7 @@ export class FluidSystem {
   private waterAdvectionPipeline: GPUComputePipeline | null = null;
   private poolDetectionPipeline: GPUComputePipeline | null = null;
   private hydraulicErosionPipeline: GPUComputePipeline | null = null;
+  private hydraulicErosionBindGroupLayout: GPUBindGroupLayout | null = null;
   private sourceEmissionPipeline: GPUComputePipeline | null = null;
 
   // Bind groups for each pipeline
@@ -63,7 +64,6 @@ export class FluidSystem {
 
   constructor(options: FluidSystemOptions) {
     this.device = options.device;
-    this.fields = options.fields;
     this.resolution = options.resolution;
     this.simResolution = options.simResolution ?? Math.floor(options.resolution * FluidConfig.SIMULATION_SCALE);
 
@@ -72,12 +72,67 @@ export class FluidSystem {
     this.evaporationRate = options.evaporationRate ?? FluidConfig.EVAPORATION_RATE;
     this.rainIntensity = options.rainIntensity ?? 0.0;
 
+    // Initialize fields - create missing fluid textures if needed
+    this.initializeFields(options.fields);
+
     // Create uniform buffers
     this.paramsBuffer = this.createParamsBuffer();
     this.sourceBuffer = this.createSourceBuffer();
 
     // Initialize pipelines (deferred until shaders are ready)
     this.initPipelines();
+  }
+
+  private initializeFields(inputFields: any): void {
+    const w = this.resolution;
+    const h = this.resolution;
+
+    // Start with the provided fields (should have soil, rock, lava from BrushSystem)
+    this.fields = { ...inputFields } as Fields;
+
+    // Create fluid-specific textures if they don't exist
+    if (!this.fields.flow) {
+      this.fields.flow = createFlowTex(this.device, w, h);
+    }
+    if (!this.fields.flowOut) {
+      this.fields.flowOut = createFlowTex(this.device, w, h);
+    }
+    if (!this.fields.flowSampled) {
+      this.fields.flowSampled = createFlowSampledTex(this.device, w, h);
+    }
+    if (!this.fields.waterDepth) {
+      this.fields.waterDepth = createDepthTex(this.device, w, h);
+    }
+    if (!this.fields.waterDepthOut) {
+      this.fields.waterDepthOut = createDepthTex(this.device, w, h);
+    }
+    if (!this.fields.waterDepthSampled) {
+      this.fields.waterDepthSampled = this.device.createTexture({
+        size: { width: w, height: h },
+        format: 'r32float',
+        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
+      });
+    }
+    if (!this.fields.flowAccumulation) {
+      this.fields.flowAccumulation = createFieldTex(this.device, w, h);
+    }
+    if (!this.fields.poolMask) {
+      this.fields.poolMask = createMaskTex(this.device, w, h);
+    }
+    if (!this.fields.temperature) {
+      this.fields.temperature = createDepthTex(this.device, w, h);
+    }
+    if (!this.fields.sediment) {
+      this.fields.sediment = createDepthTex(this.device, w, h);
+    }
+    if (!this.fields.sedimentOut) {
+      this.fields.sedimentOut = createDepthTex(this.device, w, h);
+    }
+
+    // Validate required terrain fields exist
+    if (!this.fields.soil || !this.fields.rock || !this.fields.lava) {
+      throw new Error('FluidSystem requires soil, rock, and lava textures from BrushSystem');
+    }
   }
 
   private createParamsBuffer(): GPUBuffer {
@@ -124,77 +179,259 @@ export class FluidSystem {
 
   private initPipelines(): void {
     try {
-      // Create shader modules
+      // Create shader modules with individual error handling
+      console.log('FluidSystem: Creating shader modules...');
+
       const flowVelocityShader = this.device.createShaderModule({
         label: 'Flow Velocity Shader',
         code: flowVelocityShaderSrc,
       });
+      console.log('FluidSystem: Flow Velocity shader created successfully');
 
       const flowAccumulationShader = this.device.createShaderModule({
         label: 'Flow Accumulation Shader',
         code: flowAccumulationShaderSrc,
       });
+      console.log('FluidSystem: Flow Accumulation shader created successfully');
 
       const sourceEmissionShader = this.device.createShaderModule({
         label: 'Source Emission Shader',
         code: sourceEmissionShaderSrc,
       });
+      console.log('FluidSystem: Source Emission shader created successfully');
 
       const waterAdvectionShader = this.device.createShaderModule({
         label: 'Water Advection Shader',
         code: waterAdvectionShaderSrc,
       });
+      console.log('FluidSystem: Water Advection shader created successfully');
 
       const poolDetectionShader = this.device.createShaderModule({
         label: 'Pool Detection Shader',
         code: poolDetectionShaderSrc,
       });
+      console.log('FluidSystem: Pool Detection shader created successfully');
 
       const hydraulicErosionShader = this.device.createShaderModule({
         label: 'Hydraulic Erosion Shader',
         code: hydraulicErosionShaderSrc,
       });
+      console.log('FluidSystem: Hydraulic Erosion shader created successfully');
 
-      // Create pipelines
-      this.createFlowVelocityPipeline(flowVelocityShader);
-      this.createFlowAccumulationPipeline(flowAccumulationShader);
-      this.createSourceEmissionPipeline(sourceEmissionShader);
-      this.createWaterAdvectionPipeline(waterAdvectionShader);
-      this.createPoolDetectionPipeline(poolDetectionShader);
-      this.createHydraulicErosionPipeline(hydraulicErosionShader);
+      // Create pipelines with individual error handling
+      console.log('FluidSystem: Creating compute pipelines...');
+
+      try {
+        this.createFlowVelocityPipeline(flowVelocityShader);
+        console.log('FluidSystem: Flow Velocity pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Flow Velocity pipeline:', e);
+      }
+
+      try {
+        this.createFlowAccumulationPipeline(flowAccumulationShader);
+        console.log('FluidSystem: Flow Accumulation pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Flow Accumulation pipeline:', e);
+      }
+
+      try {
+        this.createSourceEmissionPipeline(sourceEmissionShader);
+        console.log('FluidSystem: Source Emission pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Source Emission pipeline:', e);
+      }
+
+      try {
+        this.createWaterAdvectionPipeline(waterAdvectionShader);
+        console.log('FluidSystem: Water Advection pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Water Advection pipeline:', e);
+      }
+
+      try {
+        this.createPoolDetectionPipeline(poolDetectionShader);
+        console.log('FluidSystem: Pool Detection pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Pool Detection pipeline:', e);
+      }
+
+      try {
+        this.createHydraulicErosionPipeline(hydraulicErosionShader);
+        console.log('FluidSystem: Hydraulic Erosion pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Hydraulic Erosion pipeline:', e);
+      }
+
     } catch (error) {
       console.error('FluidSystem: Failed to initialize pipelines', error);
     }
   }
 
   private createFlowVelocityPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating flow velocity pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // height texture (combined soil+rock)
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'rg32float' } }, // flow in
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'rg32float' } }, // flow out
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // roughness texture
+      ]
+    });
+
+    this.flowVelocityPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Create bind group
+    this.flowVelocityBindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuffer } },
+        { binding: 1, resource: this.fields.soil.createView() }, // Use soil as height for now
+        { binding: 2, resource: this.fields.flow.createView() },
+        { binding: 3, resource: this.fields.flowOut.createView() },
+        { binding: 4, resource: this.fields.rock.createView() }, // Use rock as roughness for now
+      ]
+    });
   }
 
   private createFlowAccumulationPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating flow accumulation pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow field
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // accumulation
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // height field
+      ]
+    });
+
+    this.flowAccumulationPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Create bind group - Note: flow field needs to be a sampled texture, not storage
+    this.flowAccumulationBindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuffer } },
+        { binding: 1, resource: this.fields.flowSampled.createView() }, // Flow field as sampled texture
+        { binding: 2, resource: this.fields.flowAccumulation.createView() },
+        { binding: 3, resource: this.fields.soil.createView() }, // Use soil as height field
+      ]
+    });
   }
 
   private createWaterAdvectionPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating water advection pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'rg32float' } }, // flow
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // water depth in
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // water depth out
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // height texture
+      ]
+    });
+
+    this.waterAdvectionPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Create bind group
+    this.waterAdvectionBindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuffer } },
+        { binding: 1, resource: this.fields.flow.createView() },
+        { binding: 2, resource: this.fields.waterDepth.createView() },
+        { binding: 3, resource: this.fields.waterDepthOut.createView() },
+        { binding: 4, resource: this.fields.soil.createView() }, // Use soil as height
+      ]
+    });
   }
 
   private createPoolDetectionPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating pool detection pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow (sampled)
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // water depth (storage)
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // pool mask
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // height
+      ]
+    });
+
+    this.poolDetectionPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Create bind group
+    this.poolDetectionBindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuffer } },
+        { binding: 1, resource: this.fields.flowSampled.createView() }, // Use sampled flow texture
+        { binding: 2, resource: this.fields.waterDepth.createView() }, // Water depth storage texture
+        { binding: 3, resource: this.fields.poolMask.createView() },
+        { binding: 4, resource: this.fields.soil.createView() }, // Use soil as height
+      ]
+    });
   }
 
   private createHydraulicErosionPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating hydraulic erosion pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow (sampled)
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // water depth (sampled)
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // soil
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // sediment in
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // sediment out
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow accumulation
+      ]
+    });
+
+    this.hydraulicErosionPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Store bind group layout for dynamic bind group creation
+    this.hydraulicErosionBindGroupLayout = bindGroupLayout;
+    this.hydraulicErosionBindGroup = null;
   }
 
   private createSourceEmissionPipeline(shaderModule: GPUShaderModule): void {
-    // Pipeline creation will be implemented when shader is ready
-    console.log('Creating source emission pipeline');
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } }, // sources
+        { binding: 2, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // water depth
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // lava depth (using lava field)
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // temperature
+      ]
+    });
+
+    this.sourceEmissionPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Create bind group
+    this.sourceEmissionBindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.paramsBuffer } },
+        { binding: 1, resource: { buffer: this.sourceBuffer } },
+        { binding: 2, resource: this.fields.waterDepth.createView() },
+        { binding: 3, resource: this.fields.lava.createView() }, // Use lava field for lava depth
+        { binding: 4, resource: this.fields.temperature.createView() },
+      ]
+    });
   }
 
   // Public API
@@ -207,9 +444,14 @@ export class FluidSystem {
       return;
     }
 
+    // Normalize coordinates to 0-1 range for the shader
+    // x and z are in grid coordinates (0-256), need to normalize to 0-1
+    const normalizedX = x / this.resolution;
+    const normalizedZ = z / this.resolution;
+
     this.waterSources.set(id, {
       id,
-      position: [x, z],
+      position: [normalizedX, normalizedZ],
       rate: flowRate,
     });
     this.updateSourceBuffer();
@@ -223,9 +465,14 @@ export class FluidSystem {
       return;
     }
 
+    // Normalize coordinates to 0-1 range for the shader
+    // x and z are in grid coordinates (0-256), need to normalize to 0-1
+    const normalizedX = x / this.resolution;
+    const normalizedZ = z / this.resolution;
+
     this.lavaSources.set(id, {
       id,
-      position: [x, z],
+      position: [normalizedX, normalizedZ],
       rate: flowRate,
     });
     this.updateSourceBuffer();
@@ -257,6 +504,12 @@ export class FluidSystem {
 
     const data = new Float32Array(sources);
     this.device.queue.writeBuffer(this.sourceBuffer, 0, data);
+
+    // Debug: Log first few sources
+    if (this.waterSources.size > 0 || this.lavaSources.size > 0) {
+      console.log('FluidSystem: Updated source buffer with', this.waterSources.size, 'water sources and', this.lavaSources.size, 'lava sources');
+      console.log('FluidSystem: First source data:', data.slice(0, 16));
+    }
   }
 
   public setRainIntensity(intensity: number): void {
@@ -295,6 +548,10 @@ export class FluidSystem {
   }
 
   public update(encoder: GPUCommandEncoder, deltaTime: number, time: number): void {
+    // Debug logging to verify simulation is running
+    if (Math.floor(time) % 10 === 0 && Math.floor(time * 10) % 10 === 0) { // Log every 10 seconds
+      console.log('FluidSystem: Running simulation update', { deltaTime, time });
+    }
     // Update parameters
     this.updateParams(deltaTime, time);
 
@@ -310,6 +567,13 @@ export class FluidSystem {
         Math.ceil(this.simResolution / 8)
       );
       pass.end();
+    } else {
+      if (!this.sourceEmissionPipeline) {
+        console.warn('FluidSystem: No source emission pipeline');
+      }
+      if (!this.sourceEmissionBindGroup) {
+        console.warn('FluidSystem: No source emission bind group');
+      }
     }
 
     // 2. Calculate flow velocity from height gradient
@@ -323,6 +587,14 @@ export class FluidSystem {
       );
       pass.end();
       this.pingPongState.flow = !this.pingPongState.flow;
+
+      // Copy the updated flow texture to sampled texture for use in other passes
+      const currentFlow = this.pingPongState.flow ? this.fields.flow : this.fields.flowOut;
+      encoder.copyTextureToTexture(
+        { texture: currentFlow },
+        { texture: this.fields.flowSampled },
+        { width: this.resolution, height: this.resolution }
+      );
     }
 
     // 3. Accumulate flow
@@ -362,11 +634,48 @@ export class FluidSystem {
       pass.end();
     }
 
+    // Copy textures for hydraulic erosion (needs sampled textures)
+    const flowTexture = this.getFlowTexture();
+    const waterDepthTexture = this.getWaterDepthTexture();
+
+    if (flowTexture && this.fields.flowSampled) {
+      encoder.copyTextureToTexture(
+        { texture: flowTexture },
+        { texture: this.fields.flowSampled },
+        { width: this.simResolution, height: this.simResolution }
+      );
+    }
+
+    if (waterDepthTexture && this.fields.waterDepthSampled) {
+      encoder.copyTextureToTexture(
+        { texture: waterDepthTexture },
+        { texture: this.fields.waterDepthSampled },
+        { width: this.simResolution, height: this.simResolution }
+      );
+    }
+
     // 6. Apply hydraulic erosion
-    if (this.hydraulicErosionPipeline && this.hydraulicErosionBindGroup) {
+    if (this.hydraulicErosionPipeline && this.hydraulicErosionBindGroupLayout) {
+      // Create bind group with current ping-pong state
+      const currentSediment = this.pingPongState.sediment ? this.fields.sedimentOut : this.fields.sediment;
+      const outputSediment = this.pingPongState.sediment ? this.fields.sediment : this.fields.sedimentOut;
+
+      const bindGroup = this.device.createBindGroup({
+        layout: this.hydraulicErosionBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.paramsBuffer } },
+          { binding: 1, resource: this.fields.flowSampled.createView() },
+          { binding: 2, resource: this.fields.waterDepthSampled.createView() },
+          { binding: 3, resource: this.fields.soil.createView() },
+          { binding: 4, resource: currentSediment.createView() }, // Read from current
+          { binding: 5, resource: outputSediment.createView() }, // Write to output
+          { binding: 6, resource: this.fields.flowAccumulation.createView() },
+        ]
+      });
+
       const pass = encoder.beginComputePass({ label: 'Hydraulic Erosion' });
       pass.setPipeline(this.hydraulicErosionPipeline);
-      pass.setBindGroup(0, this.hydraulicErosionBindGroup);
+      pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(
         Math.ceil(this.simResolution / 8),
         Math.ceil(this.simResolution / 8)
@@ -377,15 +686,102 @@ export class FluidSystem {
   }
 
   public getFlowTexture(): GPUTexture {
-    return this.pingPongState.flow ? this.fields.flowOut : this.fields.flow;
+    const texture = this.pingPongState.flow ? this.fields.flowOut : this.fields.flow;
+    if (!texture) {
+      console.error('FluidSystem: Flow texture is undefined!', {
+        pingPongFlow: this.pingPongState.flow,
+        hasFlow: !!this.fields.flow,
+        hasFlowOut: !!this.fields.flowOut
+      });
+    }
+    return texture;
   }
 
   public getWaterDepthTexture(): GPUTexture {
-    return this.pingPongState.water ? this.fields.waterDepthOut : this.fields.waterDepth;
+    const texture = this.pingPongState.water ? this.fields.waterDepthOut : this.fields.waterDepth;
+    if (!texture) {
+      console.error('FluidSystem: Water depth texture is undefined!', {
+        pingPongWater: this.pingPongState.water,
+        hasWaterDepth: !!this.fields.waterDepth,
+        hasWaterDepthOut: !!this.fields.waterDepthOut
+      });
+    }
+    return texture;
   }
 
   public getSedimentTexture(): GPUTexture {
     return this.pingPongState.sediment ? this.fields.sedimentOut : this.fields.sediment;
+  }
+
+  public getFlowAccumulationTexture(): GPUTexture {
+    return this.fields.flowAccumulation;
+  }
+
+  public getPoolMaskTexture(): GPUTexture {
+    return this.fields.poolMask;
+  }
+
+  public getTemperatureTexture(): GPUTexture {
+    return this.fields.temperature;
+  }
+
+  public getLavaDepthTexture(): GPUTexture {
+    return this.fields.lava;
+  }
+
+  // Debug method to read back water depth values
+  public async debugWaterDepth(): Promise<void> {
+    const waterDepthTexture = this.getWaterDepthTexture();
+    if (!waterDepthTexture) return;
+
+    // Create a buffer to copy texture data to
+    const bytesPerPixel = 4; // r32float = 4 bytes
+    const bufferSize = this.resolution * this.resolution * bytesPerPixel;
+    const readBuffer = this.device.createBuffer({
+      size: bufferSize,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    // Copy texture to buffer
+    const encoder = this.device.createCommandEncoder();
+    encoder.copyTextureToBuffer(
+      { texture: waterDepthTexture },
+      { buffer: readBuffer, bytesPerRow: this.resolution * bytesPerPixel },
+      { width: this.resolution, height: this.resolution }
+    );
+    this.device.queue.submit([encoder.finish()]);
+
+    // Read buffer
+    await readBuffer.mapAsync(GPUMapMode.READ);
+    const arrayBuffer = readBuffer.getMappedRange();
+    const data = new Float32Array(arrayBuffer);
+
+    // Find non-zero values
+    let maxValue = 0;
+    let nonZeroCount = 0;
+    let sampleValues: number[] = [];
+
+    for (let i = 0; i < data.length; i++) {
+      if (data[i] > 0) {
+        nonZeroCount++;
+        maxValue = Math.max(maxValue, data[i]);
+        if (sampleValues.length < 10) {
+          sampleValues.push(data[i]);
+        }
+      }
+    }
+
+    console.log('FluidSystem: Water depth debug:', {
+      totalPixels: data.length,
+      nonZeroPixels: nonZeroCount,
+      maxWaterDepth: maxValue,
+      sampleValues: sampleValues,
+      waterSources: Array.from(this.waterSources.values()),
+      lavaSources: Array.from(this.lavaSources.values())
+    });
+
+    readBuffer.unmap();
+    readBuffer.destroy();
   }
 
   public destroy(): void {

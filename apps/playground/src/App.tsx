@@ -4,7 +4,7 @@ import type { Engine } from '@terraforming/engine';
 import { InteractionToolbar, type InteractionTool } from '@playground/components/InteractionToolbar';
 import type { PerfSample, Source } from '@terraforming/types';
 import { initEngine } from '@terraforming/engine';
-import { Pointer, Wand2, Waves, Droplets, Flame } from 'lucide-react';
+import { Pointer, Wand2, Waves, Minus, Droplets, Flame } from 'lucide-react';
 import { StatsPanel } from '@playground/components/StatsPanel';
 import { ToolCursor, TOOL_COLORS } from '@playground/components/ToolCursor';
 import { TerrainCursor } from '@playground/components/TerrainCursor';
@@ -75,17 +75,24 @@ export function App() {
         color: TOOL_COLORS['brush-smooth'],
       },
       {
+        id: 'brush-flatten' as InteractionTool,
+        label: 'Flatten terrain',
+        icon: <Minus className="h-4 w-4" />,
+        shortcut: 'r',
+        color: TOOL_COLORS['brush-flatten'],
+      },
+      {
         id: 'add-water-source' as InteractionTool,
         label: 'Add water source',
         icon: <Droplets className="h-4 w-4" />,
-        shortcut: 'r',
+        shortcut: 't',
         color: TOOL_COLORS['add-water-source'],
       },
       {
         id: 'add-lava-source' as InteractionTool,
         label: 'Add lava source',
         icon: <Flame className="h-4 w-4" />,
-        shortcut: 't',
+        shortcut: 'y',
         color: TOOL_COLORS['add-lava-source'],
       },
     ],
@@ -357,6 +364,29 @@ export function App() {
           return true;
         }
 
+        // Handle flatten tool
+        if (activeTool === 'brush-flatten') {
+          console.log('Queueing flatten operation:', {
+            worldX: point.x,
+            worldZ: point.z,
+            radius: brushState.radius,
+            strength: brushState.strength,
+          });
+
+          // Queue the flatten operation
+          engine.brush.enqueue({
+            mode: 'flatten',
+            material: brushState.material, // Not used for flattening but required by interface
+            worldX: point.x,
+            worldZ: point.z,
+            radius: brushState.radius,
+            strength: brushState.strength,
+            dt: 0.033 // ~30fps for flatten operations
+          });
+
+          return true;
+        }
+
         // Regular brush operations (pickup/deposit)
         // Invert mode if CMD is held
         const actualMode = (event.metaKey || localIsCmdPressed)
@@ -576,7 +606,7 @@ export function App() {
       });
 
       // For terrain tools, immediately show cursor
-      if (activeTool === 'brush-raise' || activeTool === 'brush-smooth') {
+      if (activeTool === 'brush-raise' || activeTool === 'brush-smooth' || activeTool === 'brush-flatten') {
         setShowCursor(true);
       }
 
@@ -679,7 +709,7 @@ export function App() {
       <TerrainCursor
         activeTool={activeTool}
         brushSize={brushSize}
-        isVisible={(activeTool === 'brush-raise' || activeTool === 'brush-smooth' || activeTool === 'add-water-source' || activeTool === 'add-lava-source') || isAdjustingBrush}
+        isVisible={(activeTool === 'brush-raise' || activeTool === 'brush-smooth' || activeTool === 'brush-flatten' || activeTool === 'add-water-source' || activeTool === 'add-lava-source') || isAdjustingBrush}
         engine={engine}
         mousePosition={mousePosition}
         canvasElement={canvasRef.current}
