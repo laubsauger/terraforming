@@ -661,7 +661,7 @@ export class TerrainRenderer extends BaseRenderer {
   private lastMaterialUpdateTime = 0;
   private materialUpdateInterval = 2000; // Update materials every 2 seconds
   private lastWaterMeshUpdateTime = 0;
-  private waterMeshUpdateInterval = 1000 / 30; // Update water mesh at 30fps to match
+  private waterMeshUpdateInterval = 1000 / 10; // Update water mesh at 10fps for performance
 
   /**
    * Update fluid simulation - throttled for performance
@@ -697,12 +697,12 @@ export class TerrainRenderer extends BaseRenderer {
       this.lastWaterMeshUpdateTime = currentTimeMs;
     }
 
-    // Update terrain material very rarely (every 2 seconds)
-    const timeSinceMaterialUpdate = currentTimeMs - this.lastMaterialUpdateTime;
-    if (timeSinceMaterialUpdate >= this.materialUpdateInterval) {
-      this.updateTerrainMaterialWithFluid();
-      this.lastMaterialUpdateTime = currentTimeMs;
-    }
+    // DISABLED: Terrain material update causing performance issues
+    // const timeSinceMaterialUpdate = currentTimeMs - this.lastMaterialUpdateTime;
+    // if (timeSinceMaterialUpdate >= this.materialUpdateInterval) {
+    //   this.updateTerrainMaterialWithFluid();
+    //   this.lastMaterialUpdateTime = currentTimeMs;
+    // }
 
     // Debug: Check water depth values every 5 seconds
     if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
@@ -828,11 +828,12 @@ export class TerrainRenderer extends BaseRenderer {
     if (this.brushSystem && this.renderer) {
       const device = (this.renderer as any).backend?.device;
       if (device) {
-        // Force execute on first frame even if physics not running
-        if (!this.heightTextureInitialized || true) { // Always execute for now
+        // Only execute when physics is running or on first frame
+        if (!this.heightTextureInitialized || this.physicsRunning) {
           const commandEncoder = device.createCommandEncoder();
           this.brushSystem.execute(commandEncoder);
           device.queue.submit([commandEncoder.finish()]);
+          this.heightTextureInitialized = true;
         }
       }
     }

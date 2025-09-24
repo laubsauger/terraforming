@@ -28,7 +28,7 @@ const WORKGROUP_SIZE = 8u;
 const SOURCE_RADIUS = 0.5;        // Tiny radius - natural spring point
 const LAVA_TEMPERATURE = 1200.0;  // Initial temperature of emitted lava (Celsius)
 const GAUSSIAN_SIGMA = 0.5;       // Tight point source
-const EMISSION_SCALE = 0.001;     // Higher rate since smaller area
+const EMISSION_SCALE = 0.01;      // 10x higher emission scale for visible water
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {

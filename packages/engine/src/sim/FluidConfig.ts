@@ -47,7 +47,7 @@ export const FluidConfig = {
   DEFAULT_WATER_FLOW_RATE: 100.0,   // Default water emission rate (increased 10x)
   DEFAULT_LAVA_FLOW_RATE: 50.0,     // Default lava emission rate (increased 10x)
   MIN_FLOW_RATE: 1.0,               // Minimum source flow rate
-  MAX_FLOW_RATE: 1000.0,            // Maximum source flow rate
+  MAX_FLOW_RATE: 10000.0,           // Maximum source flow rate (increased 10x for better testing)
 
   // === Lava Parameters ===
   LAVA_INITIAL_TEMP: 1200.0,        // Initial lava temperature (Celsius)

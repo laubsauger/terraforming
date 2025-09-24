@@ -27,6 +27,7 @@ export class MeshFactory {
   // Meshes
   public terrainMesh?: THREE.Mesh;
   public waterMesh?: THREE.Mesh;
+  private waterMaterialCreated: boolean = false;
   public lavaMesh?: THREE.Mesh;
   public oceanMesh?: THREE.Mesh;
 
@@ -77,28 +78,18 @@ export class MeshFactory {
       return;
     }
 
-    console.log('MeshFactory: Updating water with fluid texture', {
-      textureId: waterDepthTexture.id,
-      textureUuid: waterDepthTexture.uuid,
-      textureSource: waterDepthTexture.source?.data,
-      hasSource: !!waterDepthTexture.source,
-      waterMeshExists: !!this.waterMesh
-    });
-
-    // Always recreate with debug material for now
-    const currentMaterial = this.waterMesh.material as THREE.Material;
-
-    // Use CHECKER DEBUG material for maximum visibility
-    const debugMaterial = createCheckerDebugMaterialTSL({
-      waterDepthTexture: waterDepthTexture,
-      heightTexture: this.textureManager.heightTexture,
-      heightScale: this.heightScale
-    });
-
-    this.waterMesh.material = debugMaterial;
-    if (currentMaterial && currentMaterial !== debugMaterial) {
-      currentMaterial.dispose();
+    // Only create material once, then just update texture
+    if (!this.waterMaterialCreated) {
+      console.log('MeshFactory: Creating initial water material (once only)');
+      const debugMaterial = createCheckerDebugMaterialTSL({
+        waterDepthTexture: waterDepthTexture,
+        heightTexture: this.textureManager.heightTexture,
+        heightScale: this.heightScale
+      });
+      this.waterMesh.material = debugMaterial;
+      this.waterMaterialCreated = true;
     }
+    // Material already exists, texture updates happen automatically via GPU binding
 
     // Always make water visible
     this.waterMesh.visible = true;
@@ -107,17 +98,7 @@ export class MeshFactory {
     // Compute bounding box for proper frustum culling
     this.waterMesh.geometry.computeBoundingBox();
 
-    // Debug log mesh state
-    const bounds = this.waterMesh.geometry.boundingBox;
-    console.log('MeshFactory: Water mesh updated:', {
-      visible: this.waterMesh.visible,
-      renderOrder: this.waterMesh.renderOrder,
-      position: this.waterMesh.position,
-      bounds: bounds,
-      hasDepthTexture: !!waterDepthTexture,
-      materialType: debugMaterial.type,
-      materialNeedsUpdate: debugMaterial.needsUpdate
-    });
+    // Removed debug logging to reduce performance impact
   }
 
   public createTerrain(scene: THREE.Scene, showContours: boolean = false): THREE.Mesh {
