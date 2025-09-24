@@ -20,10 +20,10 @@ struct Params {
 @group(0) @binding(5) var waterDepthTex: texture_storage_2d<r32float, read>; // Water depth
 
 const WORKGROUP_SIZE = 8u;
-const FLOW_INERTIA = 0.8;  // Blend factor for previous flow (0 = no inertia, 1 = full inertia)
-const MIN_FLOW_SPEED = 0.001;
-const MAX_FLOW_SPEED = 10.0;
-const ROUGHNESS_DAMPING = 0.5;  // How much roughness slows flow
+const FLOW_INERTIA = 0.3;  // Lower inertia so water responds quicker to terrain
+const MIN_FLOW_SPEED = 0.01;  // Higher minimum to ensure flow happens
+const MAX_FLOW_SPEED = 50.0;  // Higher max for steep slopes
+const ROUGHNESS_DAMPING = 0.8;  // Less damping  // How much roughness slows flow
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -62,11 +62,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // This uses Bernoulli's equation for flow down a slope
   var velocity = vec2<f32>(0.0);
 
-  // Only calculate flow where there's water
-  if (water_center > 0.001 && slope > 0.001) {
-    let flow_dir = -gradient / slope;  // Normalize and negate (flow downhill)
-    let flow_speed = sqrt(2.0 * params.gravity * slope) * params.deltaTime;
-    velocity = flow_dir * clamp(flow_speed, MIN_FLOW_SPEED, MAX_FLOW_SPEED);
+  // Calculate flow for any water present
+  if (water_center > 0.0001) {
+    // Simple approach: just use the gradient directly as velocity
+    // This ensures water ALWAYS flows downhill
+    velocity = -gradient * params.gravity * params.deltaTime;
+
+    // Clamp to reasonable speeds
+    let speed = length(velocity);
+    if (speed > MAX_FLOW_SPEED) {
+      velocity = (velocity / speed) * MAX_FLOW_SPEED;
+    }
+    if (speed < MIN_FLOW_SPEED && speed > 0.0001) {
+      velocity = (velocity / speed) * MIN_FLOW_SPEED;
+    }
   }
 
   // Apply terrain roughness damping

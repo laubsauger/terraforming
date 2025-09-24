@@ -29,6 +29,7 @@ export interface SmoothOp {
   radius: number;        // meters
   strength: number;      // smoothing strength (0-1)
   dt: number;
+  mode?: number;         // 0=smooth, 1=smooth+raise, 2=smooth+lower (optional for compatibility)
 }
 
 export function materialKindToIndex(kind: MatKind | null): number {

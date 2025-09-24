@@ -5,6 +5,7 @@ export interface FlattenOp {
   radius: number;
   strength: number;
   dt: number;
+  mode?: number; // 0=flatten, 1=flatten+raise, 2=flatten+lower (optional for compatibility)
 }
 
 export interface FlattenPipeline {
@@ -83,14 +84,15 @@ export function executeFlattenPass(
 ): void {
   if (ops.length === 0) return;
 
-  // Create operations buffer
-  const opsData = new Float32Array(ops.length * 5);
+  // Create operations buffer - now includes mode field
+  const opsData = new Float32Array(ops.length * 6);
   ops.forEach((op, i) => {
-    opsData[i * 5 + 0] = op.center[0];
-    opsData[i * 5 + 1] = op.center[1];
-    opsData[i * 5 + 2] = op.radius;
-    opsData[i * 5 + 3] = op.strength;
-    opsData[i * 5 + 4] = op.dt;
+    opsData[i * 6 + 0] = op.center[0];
+    opsData[i * 6 + 1] = op.center[1];
+    opsData[i * 6 + 2] = op.radius;
+    opsData[i * 6 + 3] = op.strength;
+    opsData[i * 6 + 4] = op.dt;
+    opsData[i * 6 + 5] = op.mode || 0; // Default to 0 (flatten only) for compatibility
   });
 
   const opsBuffer = device.createBuffer({

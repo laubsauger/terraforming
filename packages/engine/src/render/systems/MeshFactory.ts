@@ -2,6 +2,8 @@ import * as THREE from 'three/webgpu';
 import { createTerrainMaterialTSL } from '../materials/TerrainMaterialTSL';
 import { createWaterMaterialTSL } from '../materials/WaterMaterialTSL';
 import { createDynamicWaterMaterialTSL } from '../materials/DynamicWaterMaterialTSL';
+import { createDebugWaterMaterialTSL } from '../materials/DebugWaterMaterialTSL';
+import { createCheckerDebugMaterialTSL } from '../materials/CheckerDebugMaterialTSL';
 import { createLavaMaterialTSL } from '../materials/LavaMaterialTSL';
 import type { TextureManager } from './TextureManager';
 
@@ -67,29 +69,55 @@ export class MeshFactory {
   }
 
   /**
-   * Update water mesh with fluid depth texture - optimized to avoid material recreation
+   * Update water mesh with fluid depth texture - DEBUG VERSION
    */
   public updateWaterWithFluidTexture(waterDepthTexture: THREE.Texture): void {
-    if (!this.waterMesh) return;
-
-    // Only recreate material if we don't have a cached one
-    if (!this.cachedWaterMaterial) {
-      this.cachedWaterMaterial = createDynamicWaterMaterialTSL({
-        waterDepthTexture: waterDepthTexture,
-        heightTexture: this.textureManager.heightTexture,
-        heightScale: this.heightScale,
-        opacity: 0.85
-      });
-      this.waterMesh.material = this.cachedWaterMaterial;
-    } else {
-      // Just update the texture reference - much faster
-      // The material's shader will automatically use the new texture
-      // since we're passing the GPU texture directly
-      (waterDepthTexture as any).needsUpdate = false; // Don't trigger CPU update
+    if (!this.waterMesh) {
+      console.error('MeshFactory: No water mesh to update!');
+      return;
     }
 
-    // Always make water visible if we have a depth texture
+    console.log('MeshFactory: Updating water with fluid texture', {
+      textureId: waterDepthTexture.id,
+      textureUuid: waterDepthTexture.uuid,
+      textureSource: waterDepthTexture.source?.data,
+      hasSource: !!waterDepthTexture.source,
+      waterMeshExists: !!this.waterMesh
+    });
+
+    // Always recreate with debug material for now
+    const currentMaterial = this.waterMesh.material as THREE.Material;
+
+    // Use CHECKER DEBUG material for maximum visibility
+    const debugMaterial = createCheckerDebugMaterialTSL({
+      waterDepthTexture: waterDepthTexture,
+      heightTexture: this.textureManager.heightTexture,
+      heightScale: this.heightScale
+    });
+
+    this.waterMesh.material = debugMaterial;
+    if (currentMaterial && currentMaterial !== debugMaterial) {
+      currentMaterial.dispose();
+    }
+
+    // Always make water visible
     this.waterMesh.visible = true;
+    this.waterMesh.renderOrder = 100; // Render on top of everything
+
+    // Compute bounding box for proper frustum culling
+    this.waterMesh.geometry.computeBoundingBox();
+
+    // Debug log mesh state
+    const bounds = this.waterMesh.geometry.boundingBox;
+    console.log('MeshFactory: Water mesh updated:', {
+      visible: this.waterMesh.visible,
+      renderOrder: this.waterMesh.renderOrder,
+      position: this.waterMesh.position,
+      bounds: bounds,
+      hasDepthTexture: !!waterDepthTexture,
+      materialType: debugMaterial.type,
+      materialNeedsUpdate: debugMaterial.needsUpdate
+    });
   }
 
   public createTerrain(scene: THREE.Scene, showContours: boolean = false): THREE.Mesh {
@@ -154,7 +182,7 @@ export class MeshFactory {
   }
 
   public createWater(scene: THREE.Scene): THREE.Mesh {
-    // Create dynamic water surface (initially invisible) - for rivers/lakes
+    // Create dynamic water surface - DEBUG VERSION
     // Use higher resolution for better water surface detail
     const waterGeometry = new THREE.PlaneGeometry(
       this.terrainSize,
@@ -164,20 +192,20 @@ export class MeshFactory {
     );
     waterGeometry.rotateX(-Math.PI / 2);
 
-    // Use dynamic water material that positions itself based on terrain + water depth
-    const waterMaterial = createDynamicWaterMaterialTSL({
+    // Use CHECKER DEBUG material for maximum visibility
+    const waterMaterial = createCheckerDebugMaterialTSL({
       waterDepthTexture: this.textureManager.waterDepthTexture,
       heightTexture: this.textureManager.heightTexture,
-      heightScale: this.heightScale,
-      opacity: 0.85
+      heightScale: this.heightScale
     });
 
     this.waterMesh = new THREE.Mesh(waterGeometry, waterMaterial);
     this.waterMesh.position.y = 0; // Base position, displacement handled by material
-    this.waterMesh.visible = false; // Start hidden until we have water depth data
-    this.waterMesh.receiveShadow = true;
-    this.waterMesh.renderOrder = 10; // Render after terrain
+    this.waterMesh.visible = true; // START VISIBLE FOR DEBUG
+    this.waterMesh.renderOrder = 100; // Render on top
+    this.waterMesh.frustumCulled = false; // Always render
     scene.add(this.waterMesh);
+    console.log('Created CHECKER DEBUG water mesh - should see pink/black checkerboard 10m above terrain!');
 
     return this.waterMesh;
   }
@@ -233,7 +261,9 @@ export class MeshFactory {
 
   public updateWaterVisibility(): void {
     if (this.waterMesh) {
-      this.waterMesh.visible = this.textureManager.hasWater();
+      // Always visible for debug
+      this.waterMesh.visible = true;
+      console.log('Water mesh visibility: true (debug mode)');
     }
   }
 

@@ -61,11 +61,17 @@ export function createDebugOverlayMaterialTSL(options: DebugOverlayMaterialOptio
   // Apply terrain displacement if height texture is provided
   if (heightTexture) {
     const height = texture(heightTexture, overlayUV).r;
-    const displacement = height.mul(float(heightScale));
+    const terrainY = height.mul(float(heightScale));
 
     // Offset slightly above terrain to avoid z-fighting
     const offset = float(0.5);
-    material.positionNode = positionLocal.add(vec3(0, displacement.add(offset), 0));
+
+    // REPLACE Y coordinate with terrain height, don't add to flat plane
+    material.positionNode = vec3(
+      positionLocal.x,
+      terrainY.add(offset),
+      positionLocal.z
+    );
   }
 
   return material;

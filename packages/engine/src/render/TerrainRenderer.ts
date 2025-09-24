@@ -541,10 +541,18 @@ export class TerrainRenderer extends BaseRenderer {
     // Add to fluid system for actual simulation
     if (this.fluidSystem) {
       // Convert world coordinates to grid pixel coordinates
+      // Note: Z is flipped because texture V-coordinate goes top-to-bottom (0 at top, 1 at bottom)
+      // while world Z goes bottom-to-top (negative to positive)
       const gridX = ((worldX + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
-      const gridZ = ((worldZ + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      const gridZ = (((-worldZ) + this.terrainSize / 2) / this.terrainSize) * this.gridSize; // Flip Z
       this.fluidSystem.addWaterSource(sourceId, gridX, gridZ, flowRate);
-      console.log(`Added water source to fluid system at grid coords (${gridX.toFixed(0)}, ${gridZ.toFixed(0)})`);
+      console.log(`Added water source:`, {
+        worldPos: [worldX.toFixed(1), worldZ.toFixed(1)],
+        gridPos: [gridX.toFixed(0), gridZ.toFixed(0)],
+        normalized: [(gridX / this.gridSize).toFixed(3), (gridZ / this.gridSize).toFixed(3)],
+        terrainSize: this.terrainSize,
+        gridSize: this.gridSize
+      });
     }
 
     return sourceId;
@@ -561,8 +569,9 @@ export class TerrainRenderer extends BaseRenderer {
     // Add to fluid system for actual simulation
     if (this.fluidSystem) {
       // Convert world coordinates to grid pixel coordinates
+      // Note: Z is flipped because texture V-coordinate goes top-to-bottom
       const gridX = ((worldX + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
-      const gridZ = ((worldZ + this.terrainSize / 2) / this.terrainSize) * this.gridSize;
+      const gridZ = (((-worldZ) + this.terrainSize / 2) / this.terrainSize) * this.gridSize; // Flip Z
       this.fluidSystem.addLavaSource(sourceId, gridX, gridZ, flowRate);
       console.log(`Added lava source to fluid system at grid coords (${gridX.toFixed(0)}, ${gridZ.toFixed(0)})`);
     }
@@ -589,11 +598,11 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private lastSimulationTime = 0;
-  private simulationInterval = 1000 / 10; // Run simulation at 10 FPS for performance
+  private simulationInterval = 1000 / 15; // Run simulation at 15 FPS for debug
   private lastMaterialUpdateTime = 0;
   private materialUpdateInterval = 2000; // Update materials every 2 seconds
   private lastWaterMeshUpdateTime = 0;
-  private waterMeshUpdateInterval = 100; // Update water mesh at 10fps
+  private waterMeshUpdateInterval = 50; // Update water mesh at 20fps for debug
 
   /**
    * Update fluid simulation - throttled for performance
@@ -656,26 +665,46 @@ export class TerrainRenderer extends BaseRenderer {
     const waterDepthGPUTexture = this.fluidSystem.getWaterDepthTexture();
     if (!waterDepthGPUTexture) return;
 
-    // Create a placeholder DataTexture for WebGPU compatibility
+    // Copy GPU texture data to CPU for Three.js
+    const device = (this.renderer as any).backend?.device;
+    if (!device) return;
+
     const size = this.gridSize;
-    const data = new Float32Array(size * size);
-    const waterDepthTexture = new THREE.DataTexture(
-      data,
-      size,
-      size,
-      THREE.RedFormat,
-      THREE.FloatType
+    const bytesPerRow = Math.ceil((size * 4) / 256) * 256; // Align to 256 bytes
+    const buffer = device.createBuffer({
+      size: bytesPerRow * size,
+      usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+    });
+
+    const commandEncoder = device.createCommandEncoder();
+    commandEncoder.copyTextureToBuffer(
+      { texture: waterDepthGPUTexture },
+      { buffer, bytesPerRow },
+      { width: size, height: size }
     );
+    device.queue.submit([commandEncoder.finish()]);
 
-    // Mark as GPU texture and attach the actual GPU texture
-    (waterDepthTexture as any).isStorageTexture = true;
-    (waterDepthTexture as any).gpuTexture = waterDepthGPUTexture;
-    waterDepthTexture.minFilter = THREE.LinearFilter;
-    waterDepthTexture.magFilter = THREE.LinearFilter;
-    waterDepthTexture.needsUpdate = false;
+    // Read the buffer and update texture
+    buffer.mapAsync(GPUMapMode.READ).then(() => {
+      const copyArrayBuffer = buffer.getMappedRange();
+      const data = new Float32Array(copyArrayBuffer.slice(0));
+      buffer.unmap();
+      buffer.destroy();
 
-    // Use MeshFactory's method to update water mesh with proper material
-    this.meshFactory.updateWaterWithFluidTexture(waterDepthTexture);
+      // Update the texture manager's water depth texture
+      const textureData = this.textureManager.waterDepthTexture.image.data as Float32Array;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const srcIdx = y * (bytesPerRow / 4) + x;
+          const dstIdx = (y * size + x) * 4;  // RGBA format
+          textureData[dstIdx] = data[srcIdx];  // R channel
+        }
+      }
+      this.textureManager.waterDepthTexture.needsUpdate = true;
+
+      // Use MeshFactory's method to update water mesh
+      this.meshFactory.updateWaterWithFluidTexture(this.textureManager.waterDepthTexture);
+    });
   }
 
   /**

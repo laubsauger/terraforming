@@ -3,6 +3,7 @@ struct FlattenOp {
   radius : f32,       // meters - area to flatten
   strength : f32,     // flattening strength (0-1)
   dt : f32,
+  mode : u32,         // 0=flatten, 1=flatten+raise, 2=flatten+lower
 };
 
 @group(0) @binding(0) var<storage, read> ops : array<FlattenOp>;
@@ -41,6 +42,32 @@ fn getHeight(coord: vec2<u32>) -> f32 {
   return fields.r + fields.g + fields.b; // soil + rock + lava
 }
 
+// Sample average height in neighborhood
+fn getNeighborhoodAverage(center: vec2<u32>, radius: i32) -> vec4<f32> {
+  var sumFields = vec4<f32>(0.0);
+  var count = 0.0;
+
+  for (var dy = -radius; dy <= radius; dy++) {
+    for (var dx = -radius; dx <= radius; dx++) {
+      let sampleCoord = vec2<i32>(center) + vec2<i32>(dx, dy);
+      if (sampleCoord.x >= 0 && sampleCoord.y >= 0 &&
+          u32(sampleCoord.x) < gridSize.x && u32(sampleCoord.y) < gridSize.y) {
+        let dist = length(vec2<f32>(f32(dx), f32(dy)));
+        if (dist <= f32(radius)) {
+          let fields = textureLoad(fieldsIn, vec2<u32>(sampleCoord));
+          sumFields += fields;
+          count += 1.0;
+        }
+      }
+    }
+  }
+
+  if (count > 0.0) {
+    return sumFields / count;
+  }
+  return vec4<f32>(0.0);
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let coord = gid.xy;
@@ -62,7 +89,14 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (dist <= op.radius) {
       // Get the target height from the center point of the brush
       let centerCoord = coord_of(op.center);
-      let centerHeight = getHeight(centerCoord);
+      var centerHeight = getHeight(centerCoord);
+
+      // Adjust target height based on mode
+      if (op.mode == 1u) { // flatten + raise
+        centerHeight += 0.5; // Bias upward by 0.5 meters
+      } else if (op.mode == 2u) { // flatten + lower
+        centerHeight -= 0.5; // Bias downward by 0.5 meters
+      }
 
       // Calculate falloff weight
       let kernelWeight = flatten_kernel(dist, op.radius);
@@ -75,42 +109,45 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
-  // Apply flattening if within range of any operation
+  // Apply flattening through material redistribution
   if (totalStrength > 0.0) {
-    // Calculate average target height
+    // Calculate target height
     let avgTargetHeight = targetHeight / accumulatedWeight;
     let currentHeight = originalFields.r + originalFields.g + originalFields.b;
 
-    // Calculate height difference
-    let heightDiff = avgTargetHeight - currentHeight;
+    // Calculate neighborhood average for material redistribution
+    let neighborhoodSize = 3; // Sample 7x7 area
+    let neighborAvg = getNeighborhoodAverage(coord, neighborhoodSize);
+    let neighborHeight = neighborAvg.r + neighborAvg.g + neighborAvg.b;
 
-    // Apply the height change proportionally to each material
+    // Blend between current, target, and neighborhood based on operation strength
     let blendFactor = clamp(totalStrength, 0.0, 1.0);
-    let adjustmentFactor = heightDiff * blendFactor;
 
-    // Distribute the adjustment proportionally among materials
-    let totalMaterial = originalFields.r + originalFields.g + originalFields.b;
-    if (totalMaterial > 0.001) {
-      let soilRatio = originalFields.r / totalMaterial;
-      let rockRatio = originalFields.g / totalMaterial;
-      let lavaRatio = originalFields.b / totalMaterial;
+    // Move toward target height by redistributing from neighborhood
+    if (abs(avgTargetHeight - currentHeight) > 0.001) {
+      let heightDiff = avgTargetHeight - currentHeight;
 
-      // Apply adjustment - but ensure we don't go negative
-      if (adjustmentFactor > 0.0) {
-        // Raising: distribute proportionally
-        flattenedFields.r = originalFields.r + adjustmentFactor * soilRatio;
-        flattenedFields.g = originalFields.g + adjustmentFactor * rockRatio;
-        flattenedFields.b = originalFields.b + adjustmentFactor * lavaRatio;
-      } else {
-        // Lowering: remove proportionally but don't go below zero
-        let removalFactor = min(1.0, abs(adjustmentFactor) / totalMaterial);
-        flattenedFields.r = originalFields.r * (1.0 - removalFactor);
-        flattenedFields.g = originalFields.g * (1.0 - removalFactor);
-        flattenedFields.b = originalFields.b * (1.0 - removalFactor);
+      // Blend toward target using neighborhood material distribution
+      if (heightDiff > 0.0 && neighborHeight > 0.001) {
+        // Need to raise: pull material from neighborhood proportions
+        let raiseAmount = min(heightDiff * blendFactor, neighborHeight * 0.5);
+        let soilRatio = neighborAvg.r / max(neighborHeight, 0.001);
+        let rockRatio = neighborAvg.g / max(neighborHeight, 0.001);
+        let lavaRatio = neighborAvg.b / max(neighborHeight, 0.001);
+
+        flattenedFields.r = mix(originalFields.r, originalFields.r + raiseAmount * soilRatio, blendFactor);
+        flattenedFields.g = mix(originalFields.g, originalFields.g + raiseAmount * rockRatio, blendFactor);
+        flattenedFields.b = mix(originalFields.b, originalFields.b + raiseAmount * lavaRatio, blendFactor);
+      } else if (heightDiff < 0.0 && currentHeight > 0.001) {
+        // Need to lower: remove material proportionally
+        let lowerAmount = min(abs(heightDiff) * blendFactor, currentHeight * 0.9);
+        let removalRatio = 1.0 - (lowerAmount / currentHeight);
+
+        flattenedFields.r = originalFields.r * removalRatio;
+        flattenedFields.g = originalFields.g * removalRatio;
+        flattenedFields.b = originalFields.b * removalRatio;
       }
     }
-    // If there's no material and we're trying to raise, we can't create material from nothing
-    // The flatten operation should only redistribute existing material
 
     // Clamp to reasonable values
     flattenedFields.r = clamp(flattenedFields.r, 0.0, 10.0);

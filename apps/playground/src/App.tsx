@@ -348,7 +348,14 @@ export function App() {
 
         // Handle smoothing tool differently
         if (activeTool === 'brush-smooth') {
+          // Check for Ctrl/Cmd modifier for raise/lower modes
+          let smoothMode: 'smooth' | 'smooth_raise' | 'smooth_lower' = 'smooth';
+          if (event.ctrlKey || event.metaKey) {
+            smoothMode = event.shiftKey ? 'smooth_lower' : 'smooth_raise';
+          }
+
           console.log('Queueing smooth operation:', {
+            mode: smoothMode,
             worldX: point.x,
             worldZ: point.z,
             radius: brushState.radius,
@@ -357,7 +364,7 @@ export function App() {
 
           // Queue the smooth operation
           engine.brush.enqueue({
-            mode: 'smooth',
+            mode: smoothMode,
             material: brushState.material, // Not used for smoothing but required by interface
             worldX: point.x,
             worldZ: point.z,
@@ -371,7 +378,14 @@ export function App() {
 
         // Handle flatten tool
         if (activeTool === 'brush-flatten') {
+          // Check for Ctrl/Cmd modifier for raise/lower modes
+          let flattenMode: 'flatten' | 'flatten_raise' | 'flatten_lower' = 'flatten';
+          if (event.ctrlKey || event.metaKey) {
+            flattenMode = event.shiftKey ? 'flatten_lower' : 'flatten_raise';
+          }
+
           console.log('Queueing flatten operation:', {
+            mode: flattenMode,
             worldX: point.x,
             worldZ: point.z,
             radius: brushState.radius,
@@ -380,7 +394,7 @@ export function App() {
 
           // Queue the flatten operation
           engine.brush.enqueue({
-            mode: 'flatten',
+            mode: flattenMode,
             material: brushState.material, // Not used for flattening but required by interface
             worldX: point.x,
             worldZ: point.z,

@@ -88,8 +88,8 @@ export function createDynamicWaterMaterialTSL(options: DynamicWaterMaterialOptio
   material.colorNode = finalColor;
   material.opacityNode = hasWater.mul(mix(float(0.7), float(opacity), smoothstep(float(0), float(0.1), waterDepth)));
 
-  // Position the water at terrain height + water depth
-  // This allows water to exist at any elevation
+  // IMPORTANT: Water mesh is a flat plane - we must REPLACE Y, not add to it
+  // This ensures water follows the actual displaced terrain surface
   const terrainElevation = terrainHeight.mul(float(heightScale));
   const waterSurfaceHeight = waterDepth.mul(float(heightScale * 0.5)); // Scale water depth appropriately
 
@@ -100,9 +100,12 @@ export function createDynamicWaterMaterialTSL(options: DynamicWaterMaterialOptio
   const waveTime = time.mul(1.5);
   const simpleWave = sin(uv().x.mul(15).add(waveTime)).mul(0.01).mul(hasWater);
 
-  // Final position: terrain height + water depth + wave displacement + small offset
-  const finalPosition = positionLocal.add(
-    vec3(0, terrainElevation.add(waterSurfaceHeight).add(verticalOffset).add(simpleWave), 0)
+  // Final position: Use X,Z from plane, REPLACE Y with terrain + water
+  const finalY = terrainElevation.add(waterSurfaceHeight).add(verticalOffset).add(simpleWave);
+  const finalPosition = vec3(
+    positionLocal.x,
+    finalY,
+    positionLocal.z
   );
   material.positionNode = finalPosition;
 

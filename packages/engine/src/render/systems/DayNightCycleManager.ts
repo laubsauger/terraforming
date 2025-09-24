@@ -70,8 +70,8 @@ export class DayNightCycleManager {
     const gradientTexture = this.createSkyGradientTexture();
     this.scene.environment = gradientTexture;
 
-    // Sun light - reduced intensity to prevent washing out colors
-    this.sunLight = new THREE.DirectionalLight(0xfff8e1, 1.2);
+    // Sun light - warm color, moderate intensity for better contrast
+    this.sunLight = new THREE.DirectionalLight(0xffebe0, 0.8);
     this.sunLight.castShadow = true;
 
     // Configure sun shadow camera
@@ -229,7 +229,7 @@ export class DayNightCycleManager {
     const isDaytime = sunElevation > 0.1;
 
     if (isDaytime) {
-      const dayIntensity = Math.max(0.3, sunElevation * 1.2);  // Reduced multiplier
+      const dayIntensity = Math.max(0.3, sunElevation * 0.9);  // Reduced for better contrast
       this.sunLight.intensity = dayIntensity;
       this.sunLight.castShadow = true;
       this.moonLight.intensity = 0.01;
@@ -237,13 +237,13 @@ export class DayNightCycleManager {
     } else {
       this.sunLight.intensity = 0.01;
       this.sunLight.castShadow = false;
-      this.moonLight.intensity = moonElevation * 0.15;  // Reduced moon intensity
+      this.moonLight.intensity = moonElevation * 0.1;  // Reduced moon intensity
       this.moonLight.castShadow = true;
     }
 
-    // Ambient light varies throughout the day - keep it subtle
+    // Ambient light varies throughout the day - very low for contrast
     const dayFactor = Math.max(0, Math.cos(angle));
-    const ambientIntensity = 0.05 + dayFactor * 0.1;  // Slightly higher base, still low overall
+    const ambientIntensity = 0.03 + dayFactor * 0.07;  // Lower for more contrast
     this.ambientLight.intensity = ambientIntensity;
 
     // Adjust ambient color

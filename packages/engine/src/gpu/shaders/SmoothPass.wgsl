@@ -3,6 +3,7 @@ struct SmoothOp {
   radius : f32,       // meters
   strength : f32,     // smoothing strength (0-1)
   dt : f32,
+  mode : u32,         // 0=smooth, 1=smooth+raise, 2=smooth+lower
 };
 
 @group(0) @binding(0) var<storage, read> ops : array<SmoothOp>;
@@ -173,10 +174,49 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let normalizedSmoothing = effectiveSmoothing / totalStrength;
     let blendFactor = clamp(totalStrength, 0.0, 1.0);
     smoothedFields = mix(originalFields, normalizedSmoothing, blendFactor);
+
+    // Apply raise/lower bias based on mode
+    var heightAdjustment = 0.0;
+    var totalModeWeight = 0.0;
+
+    for (var opIdx = 0u; opIdx < arrayLength(&ops); opIdx++) {
+      let op = ops[opIdx];
+      let dist = distance(wpos, op.center);
+
+      if (dist <= op.radius) {
+        let kernelWeight = smooth_kernel(dist, op.radius);
+        let opStrength = op.strength * kernelWeight * op.dt;
+
+        if (op.mode == 1u) { // smooth + raise
+          heightAdjustment += opStrength * 0.5; // Add material while smoothing
+          totalModeWeight += opStrength;
+        } else if (op.mode == 2u) { // smooth + lower
+          heightAdjustment -= opStrength * 0.5; // Remove material while smoothing
+          totalModeWeight += opStrength;
+        }
+      }
+    }
+
+    // Apply height adjustment distributed across materials
+    if (abs(heightAdjustment) > 0.001) {
+      let totalMaterial = smoothedFields.r + smoothedFields.g + smoothedFields.b;
+
+      if (heightAdjustment > 0.0) {
+        // Raising: add mostly soil
+        smoothedFields.r += heightAdjustment * 0.8; // 80% as soil
+        smoothedFields.g += heightAdjustment * 0.2; // 20% as rock
+      } else {
+        // Lowering: remove proportionally
+        if (totalMaterial > 0.001) {
+          let removalRatio = max(0.0, 1.0 + heightAdjustment / totalMaterial);
+          smoothedFields.r *= removalRatio;
+          smoothedFields.g *= removalRatio;
+          smoothedFields.b *= removalRatio;
+        }
+      }
+    }
   }
 
-  // Don't preserve local mass - smoothing SHOULD redistribute material
-  // The mass is conserved globally across the entire smoothing area, not per-pixel
   // Clamp to reasonable values to prevent extreme values
   smoothedFields.r = clamp(smoothedFields.r, 0.0, 10.0);
   smoothedFields.g = clamp(smoothedFields.g, 0.0, 10.0);

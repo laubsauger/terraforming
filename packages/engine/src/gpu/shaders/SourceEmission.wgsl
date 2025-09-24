@@ -25,10 +25,10 @@ struct Source {
 @group(0) @binding(4) var temperatureTex: texture_storage_2d<r32float, read_write>;
 
 const WORKGROUP_SIZE = 8u;
-const SOURCE_RADIUS = 3.0;        // Radius of source influence in texels
+const SOURCE_RADIUS = 8.0;        // Reasonable radius
 const LAVA_TEMPERATURE = 1200.0;  // Initial temperature of emitted lava (Celsius)
-const GAUSSIAN_SIGMA = 1.5;       // Sigma for Gaussian falloff
-const EMISSION_SCALE = 0.001;     // Scale down emission rate (L/s to m depth per texel)
+const GAUSSIAN_SIGMA = 3.0;       // Reasonable spread
+const EMISSION_SCALE = 0.00001;   // Much lower to prevent rapid pooling
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {

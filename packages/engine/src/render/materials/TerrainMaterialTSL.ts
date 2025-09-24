@@ -86,27 +86,40 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     }
   };
 
-  // === VIBRANT STYLIZED TERRAIN COLORS ===
-  // Beach sand colors - deep golden browns
-  const wetSandBase = vec3(0.65, 0.45, 0.25);      // Dark wet sand
-  const wetSandVariation = vec3(0.75, 0.55, 0.3);  // Medium brown sand
-  const drySandBase = vec3(0.9, 0.75, 0.5);        // Golden dry sand
-  const drySandVariation = vec3(0.85, 0.7, 0.45);  // Tan sand
+  // === RICH TERRAIN COLOR PALETTE WITH VARIANCE ===
+  // Underwater mud/sand - darker, richer
+  const underwaterMud = vec3(0.25, 0.2, 0.15);     // Dark underwater sediment
+  const underwaterSand = vec3(0.35, 0.3, 0.22);    // Murky sand
 
-  // Grass colors - rich, deep greens
-  const grassDark = vec3(0.05, 0.35, 0.05);        // Very dark forest green
-  const grassBright = vec3(0.15, 0.55, 0.1);       // Medium grass green
-  const grassDry = vec3(0.4, 0.5, 0.2);            // Olive green
+  // Beach zone - multiple sand layers
+  const wetSandBase = vec3(0.55, 0.42, 0.28);      // Dark wet sand
+  const wetSandVariation = vec3(0.62, 0.48, 0.32); // Wet sand variation
+  const dampSand = vec3(0.72, 0.58, 0.38);         // Damp sand transition
+  const drySandBase = vec3(0.82, 0.68, 0.45);      // Dry beach sand
+  const drySandVariation = vec3(0.88, 0.74, 0.52); // Light dry sand
 
-  // Rock colors - darker, more dramatic
-  const rockDark = vec3(0.2, 0.18, 0.16);          // Almost black rock
-  const rockMedium = vec3(0.35, 0.3, 0.28);        // Dark gray
-  const rockLight = vec3(0.5, 0.45, 0.4);          // Medium gray
-  const rockPale = vec3(0.65, 0.6, 0.55);          // Light gray
+  // Coastal transition - scrubland
+  const coastalScrub = vec3(0.45, 0.48, 0.28);     // Sandy grass mix
+  const dryGrass = vec3(0.52, 0.5, 0.25);          // Dry coastal grass
 
-  // Snow and high altitude - bright whites
-  const snowPure = vec3(0.95, 0.95, 0.97);         // Bright white
-  const snowBlue = vec3(0.8, 0.85, 0.92);          // Blue-tinted snow
+  // Grassland colors - varied greens
+  const grassDark = vec3(0.08, 0.28, 0.06);        // Dark forest floor
+  const grassMedium = vec3(0.15, 0.42, 0.1);       // Healthy grass
+  const grassBright = vec3(0.25, 0.55, 0.15);      // Bright meadow grass
+  const grassYellow = vec3(0.35, 0.45, 0.18);      // Yellow-green grass
+
+  // Mountain/Rock colors - earth tones
+  const soilBrown = vec3(0.28, 0.22, 0.18);        // Dark soil
+  const rockDark = vec3(0.22, 0.2, 0.19);          // Dark basalt
+  const rockMedium = vec3(0.38, 0.34, 0.3);        // Gray rock
+  const rockLight = vec3(0.52, 0.48, 0.42);        // Weathered rock
+  const rockPale = vec3(0.68, 0.64, 0.58);         // Light limestone
+
+  // Alpine/Snow zone
+  const alpineTundra = vec3(0.55, 0.52, 0.45);     // Rocky tundra
+  const snowDirty = vec3(0.75, 0.75, 0.72);        // Old snow
+  const snowFresh = vec3(0.92, 0.93, 0.95);        // Fresh snow
+  const snowPure = vec3(0.96, 0.97, 0.99);         // Pure white snow
 
   // Create TSL node material with matte appearance and rich colors
   const material = new THREE.MeshStandardNodeMaterial({
@@ -151,13 +164,19 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const mediumNoise = mediumNoise1.mul(0.7).add(mediumNoise2.mul(0.3));
 
   // === BIOME DEFINITIONS ===
-  // Define height thresholds for different terrain types - better distribution
-  const wetLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED - 0.005);     // Wet sand zone
-  const beachLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.005);   // Beach transition
-  const sandLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.02);     // Dry sand end
-  const grassLevel = float(0.3);                                          // Grass starts higher
-  const rockLevel = float(0.5);                                           // Rock/mountain transition
-  const snowLevel = float(0.75);                                          // Snow cap
+  // Define height thresholds with more granular zones
+  const deepWaterLevel = float(0.0);                                      // Ocean floor
+  const shallowWaterLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED - 0.02); // Shallow water
+  const wetSandLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED - 0.003);    // Wet sand
+  const beachLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.002);      // Beach line
+  const dryBeachLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.008);   // Dry beach
+  const coastalLevel = float(TerrainConfig.SEA_LEVEL_NORMALIZED + 0.02);     // Coastal scrub
+  const lowGrassLevel = float(0.22);                                         // Low grassland
+  const grassLevel = float(0.35);                                            // Main grassland
+  const foothillLevel = float(0.48);                                         // Foothills
+  const mountainLevel = float(0.6);                                          // Mountain
+  const alpineLevel = float(0.72);                                           // Alpine zone
+  const snowLevel = float(0.8);                                              // Snow line
 
   // === SAND BIOMES (Beach & Coastal) ===
   // Create varied sand colors using multiple noise layers
@@ -175,6 +194,10 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const grainPattern = detailNoise1.sub(0.5).mul(0.015);
   const texturedSand = drySandColor.add(vec3(ripplePattern)).add(vec3(grainPattern));
 
+  // === COASTAL TRANSITION ===
+  const coastalNoise = fbm(worldUV1.mul(float(2.1)), 3);
+  const coastalColor = mix(coastalScrub, dryGrass, coastalNoise);
+
   // === GRASS BIOMES (Varied vegetation) ===
   // Create varied grass using multiple noise scales and offsets
   const grassNoise1 = fbm(worldUV1.mul(float(1.3)), 4);
@@ -182,15 +205,20 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const grassVariation = fbm(coarseUV1.mul(float(0.7)), 2);
 
   // Mix different grass colors based on multiple noise layers
-  const grassColor1 = mix(grassDark, grassBright, grassNoise1);
-  const grassColor2 = mix(grassColor1, grassDry, grassVariation.mul(0.7));
-  const grassColor3 = mix(grassColor2, grassBright, grassNoise2.mul(0.3));
+  const grassColor1 = mix(grassDark, grassMedium, grassNoise1);
+  const grassColor2 = mix(grassColor1, grassBright, grassVariation.mul(0.6));
+  const grassColor3 = mix(grassColor2, grassYellow, grassNoise2.mul(0.4));
 
   // Multiple grass blade textures at different scales to break patterns
   const grassDetail1 = sin(worldUV1.x.mul(73.0)).mul(sin(worldUV1.y.mul(59.0))).mul(0.015);
   const grassDetail2 = sin(worldUV2.x.mul(67.0).add(worldUV2.y.mul(41.0))).mul(0.01); // Diagonal pattern
   const grassDetail = grassDetail1.add(grassDetail2);
   const grassColor = grassColor3.add(vec3(grassDetail));
+
+  // === FOOTHILL/MOUNTAIN ZONES ===
+  // Foothills have more soil mixed with rock
+  const foothillNoise = fbm(worldUV1.mul(float(1.5)), 3);
+  const foothillColor = mix(soilBrown, rockMedium, foothillNoise.mul(0.7));
 
   // === ROCK BIOMES (Cliffs & Mountains) ===
   // Create varied rock colors and cliff patterns using multi-scale noise
@@ -200,7 +228,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const cliffNoise2 = fbm(coarseUV2.mul(float(9.1)), 3);
 
   // Calculate elevation within rock zone for gradient
-  const rockZoneProgress = smoothstep(rockLevel, snowLevel, normalizedHeight);
+  const rockZoneProgress = smoothstep(mountainLevel, alpineLevel, normalizedHeight);
 
   // Base rock color that gets lighter with elevation
   const rockBaseColor = mix(rockDark, rockMedium, rockZoneProgress.mul(0.5));
@@ -220,38 +248,63 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const striationMask = striationMask1.add(striationMask2.mul(0.5));
   const rockColor = mix(rockColor3, rockColor3.mul(0.8), striationMask.mul(0.2));
 
-  // === SNOW BIOMES ===
+  // === ALPINE & SNOW BIOMES ===
+  // Alpine tundra zone
+  const alpineNoise = fbm(worldUV1.mul(float(3.2)), 2);
+  const alpineColor = mix(alpineTundra, rockPale, alpineNoise.mul(0.5));
+
+  // Snow zones with variation
   const snowNoise1 = noise(worldUV1.mul(float(2.8)));
   const snowNoise2 = noise(worldUV2.mul(float(4.2)));
   const snowNoise = snowNoise1.mul(0.7).add(snowNoise2.mul(0.3));
-  const snowColor = mix(snowPure, snowBlue, snowNoise.mul(0.3));
+
+  // Mix between dirty and fresh snow
+  const snowBase = mix(snowDirty, snowFresh, snowNoise);
+  const snowColor = mix(snowBase, snowPure, smoothstep(snowLevel, float(0.9), normalizedHeight));
 
   // === BIOME BLENDING ===
   // Create smooth transitions between biomes with noise-based edges
-  const transitionNoise = detailNoise.mul(0.02); // Small noise for natural edges
+  const transitionNoise = detailNoise.mul(0.015); // Small noise for natural edges
 
-  const wetToBeach = smoothstep(wetLevel.sub(transitionNoise), beachLevel.add(transitionNoise), normalizedHeight);
-  const beachToSand = smoothstep(beachLevel.sub(transitionNoise), sandLevel.add(transitionNoise), normalizedHeight);
-  const sandToGrass = smoothstep(sandLevel.sub(transitionNoise), grassLevel.add(transitionNoise), normalizedHeight);
-  const grassToRock = smoothstep(grassLevel.sub(transitionNoise), rockLevel.add(transitionNoise), normalizedHeight);
-  const rockToSnow = smoothstep(snowLevel.sub(transitionNoise.mul(2.0)), snowLevel.add(transitionNoise.mul(3.0)), normalizedHeight);
+  // Beach transitions
+  const wetToBeach = smoothstep(wetSandLevel, beachLevel, normalizedHeight);
+  const beachToDryBeach = smoothstep(beachLevel, dryBeachLevel, normalizedHeight);
+  const dryBeachToCoastal = smoothstep(dryBeachLevel, coastalLevel, normalizedHeight);
 
-  // Blend biomes with natural transitions
-  const color0 = mix(wetSandColor, texturedSand, wetToBeach);
-  const color1 = mix(color0, texturedSand, beachToSand);
-  const color2 = mix(color1, grassColor, sandToGrass);
-  const color3 = mix(color2, rockColor, grassToRock);
+  // Vegetation transitions
+  const coastalToLowGrass = smoothstep(coastalLevel.sub(transitionNoise), lowGrassLevel.add(transitionNoise), normalizedHeight);
+  const lowGrassToGrass = smoothstep(lowGrassLevel.sub(transitionNoise), grassLevel.add(transitionNoise), normalizedHeight);
+  const grassToFoothill = smoothstep(grassLevel.sub(transitionNoise), foothillLevel.add(transitionNoise), normalizedHeight);
 
-  // Mix rock with snow at high elevations for realistic alpine appearance
-  const snowRockMix = mix(rockColor, snowColor, rockToSnow.mul(0.7).add(snowNoise.mul(0.3)));
-  const terrainColorBase = mix(color3, snowRockMix, rockToSnow);
+  // Mountain transitions
+  const foothillToMountain = smoothstep(foothillLevel.sub(transitionNoise), mountainLevel.add(transitionNoise), normalizedHeight);
+  const mountainToAlpine = smoothstep(mountainLevel.sub(transitionNoise), alpineLevel.add(transitionNoise), normalizedHeight);
+  const alpineToSnow = smoothstep(alpineLevel.sub(transitionNoise.mul(2.0)), snowLevel.add(transitionNoise.mul(2.0)), normalizedHeight);
+
+  // Build terrain color through progressive blending
+  // Beach zone
+  const wetSandToDamp = mix(wetSandColor, dampSand, wetToBeach);
+  const dampToDry = mix(wetSandToDamp, drySandColor, beachToDryBeach);
+  const beachToCoastal = mix(dampToDry, coastalColor, dryBeachToCoastal);
+
+  // Lowland to highland
+  const coastalToGrassTransition = mix(beachToCoastal, grassColor, coastalToLowGrass);
+  const lowToMainGrass = mix(coastalToGrassTransition, grassColor, lowGrassToGrass);
+  const grassToFoothillTransition = mix(lowToMainGrass, foothillColor, grassToFoothill);
+
+  // Mountain zones
+  const foothillToRock = mix(grassToFoothillTransition, rockColor, foothillToMountain);
+  const rockToAlpine = mix(foothillToRock, alpineColor, mountainToAlpine);
+  const alpineToSnowTransition = mix(rockToAlpine, snowColor, alpineToSnow);
+
+  const terrainColorBase = alpineToSnowTransition;
 
   // === DYNAMIC MATERIAL PROPERTIES BY BIOME ===
   // Calculate biome weights for material property variation
-  const sandWeight = clamp(smoothstep(grassLevel.sub(0.03), sandLevel, normalizedHeight), float(0), float(1));
-  const grassWeight = clamp(smoothstep(rockLevel.sub(0.1), grassLevel.add(0.05), normalizedHeight).mul(smoothstep(sandLevel.sub(0.02), grassLevel.add(0.02), normalizedHeight)), float(0), float(1));
-  const rockWeight = clamp(smoothstep(grassLevel.sub(0.05), rockLevel.add(0.1), normalizedHeight), float(0), float(1));
-  const snowWeight = clamp(smoothstep(rockLevel, snowLevel.add(0.1), normalizedHeight), float(0), float(1));
+  const sandWeight = clamp(smoothstep(coastalLevel.sub(0.02), dryBeachLevel, normalizedHeight), float(0), float(1));
+  const grassWeight = clamp(smoothstep(foothillLevel.sub(0.1), grassLevel.add(0.05), normalizedHeight).mul(smoothstep(coastalLevel, grassLevel.add(0.02), normalizedHeight)), float(0), float(1));
+  const rockWeight = clamp(smoothstep(grassLevel.sub(0.05), mountainLevel.add(0.1), normalizedHeight), float(0), float(1));
+  const snowWeight = clamp(smoothstep(alpineLevel, snowLevel.add(0.1), normalizedHeight), float(0), float(1));
 
   // Dynamic roughness based on biome - all more matte to reduce specular
   // Sand is slightly rough, grass is rough, rocks are very rough, snow is medium rough

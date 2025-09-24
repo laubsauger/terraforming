@@ -134,16 +134,20 @@ export class DebugOverlaySystem {
    * Set active debug overlays
    */
   public setOverlays(overlays: DebugOverlay[]): void {
-    // Hide all current overlays
-    this.overlayMeshes.forEach(mesh => {
-      mesh.visible = false;
+    // First, hide overlays that are no longer active
+    this.overlayMeshes.forEach((mesh, type) => {
+      const shouldBeVisible = overlays.includes(type as DebugOverlay);
+      mesh.visible = shouldBeVisible;
     });
+
+    // Clear and rebuild active overlays set
     this.activeOverlays.clear();
 
     // Process new overlays
     for (const overlay of overlays) {
       if (overlay === 'contours') {
         // Contours are handled by terrain material
+        this.activeOverlays.add(overlay);
         continue;
       }
 
@@ -165,6 +169,8 @@ export class DebugOverlaySystem {
         console.warn(`DebugOverlaySystem: Failed to create/get mesh for ${overlay}`);
       }
     }
+
+    console.log(`DebugOverlaySystem: Active overlays: ${Array.from(this.activeOverlays).join(', ')}`);
   }
 
   /**

@@ -102,9 +102,25 @@ export class FluidSystem {
     }
     if (!this.fields.waterDepth) {
       this.fields.waterDepth = createDepthTex(this.device, w, h);
+      // Initialize to zero
+      const zeros = new Float32Array(w * h);
+      this.device.queue.writeTexture(
+        { texture: this.fields.waterDepth },
+        zeros,
+        { bytesPerRow: w * 4, rowsPerImage: h },
+        { width: w, height: h }
+      );
     }
     if (!this.fields.waterDepthOut) {
       this.fields.waterDepthOut = createDepthTex(this.device, w, h);
+      // Initialize to zero
+      const zeros = new Float32Array(w * h);
+      this.device.queue.writeTexture(
+        { texture: this.fields.waterDepthOut },
+        zeros,
+        { bytesPerRow: w * 4, rowsPerImage: h },
+        { width: w, height: h }
+      );
     }
     if (!this.fields.waterDepthSampled) {
       this.fields.waterDepthSampled = this.device.createTexture({
@@ -112,6 +128,14 @@ export class FluidSystem {
         format: 'r32float',
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
       });
+      // Initialize to zero
+      const zeros = new Float32Array(w * h);
+      this.device.queue.writeTexture(
+        { texture: this.fields.waterDepthSampled },
+        zeros,
+        { bytesPerRow: w * 4, rowsPerImage: h },
+        { width: w, height: h }
+      );
     }
     if (!this.fields.flowAccumulation) {
       this.fields.flowAccumulation = createFieldTex(this.device, w, h);

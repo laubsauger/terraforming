@@ -139,7 +139,7 @@ export class BrushSystem {
   }
 
   public addBrushOp(
-    mode: 'pickup' | 'deposit' | 'smooth' | 'smooth_raise' | 'smooth_lower' | 'flatten',
+    mode: 'pickup' | 'deposit' | 'smooth' | 'smooth_raise' | 'smooth_lower' | 'flatten' | 'flatten_raise' | 'flatten_lower',
     material: 'soil' | 'rock' | 'lava',
     worldX: number,
     worldZ: number,
@@ -148,40 +148,37 @@ export class BrushSystem {
     dt: number,
     heightMeters?: number
   ): void {
-    if (mode === 'smooth') {
-      // Handle smoothing operations separately
+    if (mode === 'smooth' || mode === 'smooth_raise' || mode === 'smooth_lower') {
+      // Handle smoothing operations - now with mode field for raise/lower variants
+      let smoothMode = 0; // 0=smooth, 1=smooth+raise, 2=smooth+lower
+      if (mode === 'smooth_raise') smoothMode = 1;
+      if (mode === 'smooth_lower') smoothMode = 2;
+
       this.pendingSmoothOps.push({
         center: [worldX, worldZ],
         radius,
         strength: Math.min(strength / 1000, 1.0), // Convert strength to 0-1 range
         dt,
+        mode: smoothMode,
       });
-      console.log('Added smooth op:', { worldX, worldZ, radius, strength });
+      console.log('Added smooth op:', { mode, smoothMode, worldX, worldZ, radius, strength });
       return;
     }
 
-    if (mode === 'smooth_raise' || mode === 'smooth_lower') {
-      // Handle directional smoothing
-      this.pendingSmoothDirectionalOps.push({
-        center: [worldX, worldZ],
-        radius,
-        strength: Math.min(strength / 1000, 1.0),
-        mode: mode === 'smooth_raise' ? 1 : -1, // 1 = raise only, -1 = lower only
-        dt,
-      });
-      console.log('Added smooth directional op:', { mode, worldX, worldZ, radius, strength });
-      return;
-    }
-
-    if (mode === 'flatten') {
+    if (mode === 'flatten' || mode === 'flatten_raise' || mode === 'flatten_lower') {
       // Handle flatten operations
+      let flattenMode = 0; // 0=flatten, 1=flatten+raise, 2=flatten+lower
+      if (mode === 'flatten_raise') flattenMode = 1;
+      if (mode === 'flatten_lower') flattenMode = 2;
+
       this.pendingFlattenOps.push({
         center: [worldX, worldZ],
         radius,
         strength: Math.min(strength / 100, 1.0), // Flatten strength scale
         dt,
+        mode: flattenMode,
       });
-      console.log('Added flatten op:', { worldX, worldZ, radius, strength });
+      console.log('Added flatten op:', { mode, flattenMode, worldX, worldZ, radius, strength });
       return;
     }
 
@@ -335,15 +332,16 @@ export class BrushSystem {
 
     // Handle smoothing operations
     if (hasSmoothOps) {
-      // Update smooth ops buffer
-      const smoothOpsData = new Float32Array(this.pendingSmoothOps.length * 5); // 5 floats per op
+      // Update smooth ops buffer - now includes mode field
+      const smoothOpsData = new Float32Array(this.pendingSmoothOps.length * 6); // 6 floats per op (added mode)
       this.pendingSmoothOps.forEach((op, i) => {
-        const offset = i * 5;
+        const offset = i * 6;
         smoothOpsData[offset] = op.center[0];     // x
         smoothOpsData[offset + 1] = op.center[1]; // z
         smoothOpsData[offset + 2] = op.radius;
         smoothOpsData[offset + 3] = op.strength;
         smoothOpsData[offset + 4] = op.dt;
+        smoothOpsData[offset + 5] = op.mode || 0; // mode: 0=smooth, 1=smooth+raise, 2=smooth+lower
       });
       this.device.queue.writeBuffer(this.smoothOpsBuffer, 0, smoothOpsData);
 
