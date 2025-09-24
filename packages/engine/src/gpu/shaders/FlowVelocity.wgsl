@@ -20,10 +20,10 @@ struct Params {
 @group(0) @binding(5) var waterDepthTex: texture_storage_2d<r32float, read>; // Water depth
 
 const WORKGROUP_SIZE = 8u;
-const FLOW_INERTIA = 0.3;  // Lower inertia so water responds quicker to terrain
-const MIN_FLOW_SPEED = 0.01;  // Higher minimum to ensure flow happens
-const MAX_FLOW_SPEED = 50.0;  // Higher max for steep slopes
-const ROUGHNESS_DAMPING = 0.8;  // Less damping  // How much roughness slows flow
+const FLOW_INERTIA = 0.0;     // No inertia - instant response to terrain
+const MIN_FLOW_SPEED = 1.0;   // Much higher minimum for visible flow
+const MAX_FLOW_SPEED = 500.0; // Very high for waterfalls
+const ROUGHNESS_DAMPING = 0.95; // Almost no damping
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -63,18 +63,34 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var velocity = vec2<f32>(0.0);
 
   // Calculate flow for any water present
-  if (water_center > 0.0001) {
-    // Simple approach: just use the gradient directly as velocity
-    // This ensures water ALWAYS flows downhill
-    velocity = -gradient * params.gravity * params.deltaTime;
+  if (water_center > 0.00001) {
+    // Only flow downhill - check each neighbor individually
+    var flow_x = 0.0;
+    var flow_y = 0.0;
 
-    // Clamp to reasonable speeds
+    // Flow to left if lower
+    if (h_left < h_center) {
+      flow_x -= (h_center - h_left) * params.gravity;
+    }
+    // Flow to right if lower
+    if (h_right < h_center) {
+      flow_x += (h_center - h_right) * params.gravity;
+    }
+    // Flow up (negative Y) if lower
+    if (h_up < h_center) {
+      flow_y -= (h_center - h_up) * params.gravity;
+    }
+    // Flow down (positive Y) if lower
+    if (h_down < h_center) {
+      flow_y += (h_center - h_down) * params.gravity;
+    }
+
+    velocity = vec2<f32>(flow_x, flow_y) * 100.0; // Massive multiplier for fast flow
+
+    // Clamp to max speed
     let speed = length(velocity);
     if (speed > MAX_FLOW_SPEED) {
       velocity = (velocity / speed) * MAX_FLOW_SPEED;
-    }
-    if (speed < MIN_FLOW_SPEED && speed > 0.0001) {
-      velocity = (velocity / speed) * MIN_FLOW_SPEED;
     }
   }
 
@@ -83,12 +99,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let damping = mix(1.0, ROUGHNESS_DAMPING, roughness);
   velocity *= damping;
 
-  // Apply inertia - blend with previous flow
-  let prev_flow = textureLoad(flowTexIn, coord).rg;
-  velocity = mix(velocity, prev_flow, FLOW_INERTIA);
-
-  // Add some numerical damping to prevent instability
-  velocity *= 0.99;
+  // No inertia - water instantly responds to terrain
+  // No damping - let water flow freely
 
   // Store the flow velocity
   textureStore(flowTexOut, coord, vec4<f32>(velocity, 0.0, 0.0));

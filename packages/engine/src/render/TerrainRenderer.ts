@@ -598,11 +598,11 @@ export class TerrainRenderer extends BaseRenderer {
   }
 
   private lastSimulationTime = 0;
-  private simulationInterval = 1000 / 15; // Run simulation at 15 FPS for debug
+  private simulationInterval = 1000 / 30; // Run simulation at 30 FPS for smooth flow
   private lastMaterialUpdateTime = 0;
   private materialUpdateInterval = 2000; // Update materials every 2 seconds
   private lastWaterMeshUpdateTime = 0;
-  private waterMeshUpdateInterval = 50; // Update water mesh at 20fps for debug
+  private waterMeshUpdateInterval = 1000 / 30; // Update water mesh at 30fps to match
 
   /**
    * Update fluid simulation - throttled for performance

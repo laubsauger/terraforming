@@ -422,6 +422,83 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   // Apply dynamic roughness based on biome
   let dynamicRoughness = biomeRoughness;
 
+  // === WET SAND EFFECT FOR BEACHES ===
+  // Create wetness zones for beaches and areas affected by waves
+  // Water level is at 0.15, waves can displace up to ~0.005 height
+  const waveZone = float(0.155); // Water level (0.15) + max wave height (~0.005)
+  const beachWetnessZone = float(0.158); // Very narrow transition zone for wet sand
+
+  // Check if we're in the beach wetness zone based on static height
+  const isInWetZone = step(normalizedHeight, waterLevelNode); // Below water is always wet
+  const wetZoneGradient = smoothstep(waterLevelNode, waveZone, normalizedHeight); // Gradient up to wave peak
+
+  // Areas below or near water are wet (including wave zone)
+  let beachWetness = isInWetZone.add(
+    float(1).sub(isInWetZone).mul(float(1).sub(wetZoneGradient))
+  );
+
+  // If we have dynamic water depth, use it to enhance wetness
+  if (waterDepthMap) {
+    const waterDepth = texture(waterDepthMap, uv()).r;
+    // Any area with water on it is wet
+    const hasWater = step(float(0.0001), waterDepth);
+    // Areas that recently had water (wave recession) stay wet longer
+    const recentlyWet = smoothstep(float(0), float(0.002), waterDepth);
+    // Combine with height-based wetness - use mix with step for max-like behavior
+    const waterWetness = hasWater.add(recentlyWet.mul(0.5));
+    const useWaterWetness = step(beachWetness, waterWetness);
+    beachWetness = mix(beachWetness, waterWetness, useWaterWetness);
+  }
+
+  // Only apply wetness to sand/beach areas below beach level top, not to grass or rock
+  // Beach level is at 0.16, so cut off wetness there
+  const beachLevelCutoff = float(0.16);
+  const isBelowBeachLevel = float(1).sub(step(beachLevelCutoff, normalizedHeight));
+  const isBeachArea = float(1).sub(step(coastalLevel, normalizedHeight));
+  const beachWetnessFinal = clamp(beachWetness.mul(isBeachArea).mul(isBelowBeachLevel), float(0), float(1));
+
+  // Wet sand is darker and glossier
+  // Darken the sand color for wet areas with gradient based on wetness intensity
+  const wetSandDarkening = mix(float(1.0), float(0.65), beachWetnessFinal); // Progressive darkening
+
+  // Add subtle blue-ish tint to wet sand (like real wet beach sand)
+  const wetTint = vec3(0.95, 0.97, 1.0); // Very subtle blue tint
+  let wetColorTinted = mix(
+    finalTerrainColor,
+    finalTerrainColor.mul(wetSandDarkening).mul(wetTint),
+    beachWetnessFinal
+  );
+
+  // Add foam line at water's edge (where waves break)
+  const foamLine = waterLevelNode.add(float(0.002)); // Right at water surface with tiny offset for waves
+  const foamWidth = float(0.002); // Very narrow foam line
+  const foamIntensity = smoothstep(
+    foamLine.sub(foamWidth),
+    foamLine,
+    normalizedHeight
+  ).mul(
+    float(1).sub(smoothstep(foamLine, foamLine.add(foamWidth), normalizedHeight))
+  );
+
+  // Add time-based variation to foam (simulated with noise)
+  const foamNoise = noise(worldUV1.mul(float(12.0))).mul(0.4).add(0.6);
+  const foamColor = vec3(0.92, 0.92, 0.88); // Subtle off-white foam
+  const foamEffect = foamIntensity.mul(foamNoise).mul(isBeachArea).mul(isBelowBeachLevel);
+
+  // Apply foam to the color
+  wetColorTinted = mix(wetColorTinted, foamColor, foamEffect.mul(0.4));
+
+  material.colorNode = wetColorTinted;
+
+  // Make wet sand glossier (lower roughness) with variation
+  // Fully wet sand is very glossy, partially wet is less so
+  const wetSandRoughness = mix(float(0.4), float(0.2), beachWetnessFinal); // Variable glossiness
+  dynamicRoughness = mix(dynamicRoughness, wetSandRoughness, beachWetnessFinal);
+
+  // Add metalness to wet sand for subtle specular highlights
+  const wetSandMetalness = beachWetnessFinal.mul(0.05); // Very subtle metalness for wet areas
+  material.metalnessNode = wetSandMetalness;
+
   // Reduce roughness in wet areas (streams/rivers)
   if (accumulationMap) {
     const accumulation = texture(accumulationMap, uv()).r;
@@ -431,7 +508,7 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     dynamicRoughness = newRoughness.add(float(0)); // Keep as OperatorNode
   }
 
-  material.roughnessNode = clamp(dynamicRoughness, float(0.6), float(1.0)); // Minimum 0.6 roughness to reduce specular
+  material.roughnessNode = clamp(dynamicRoughness, float(0.1), float(1.0)); // Allow glossier wet sand
 
   // Compute normals from height gradient for proper lighting
   if (normalMap) {

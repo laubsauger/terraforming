@@ -18,9 +18,9 @@ struct Params {
 @group(0) @binding(4) var heightTex: texture_2d<f32>;                    // Terrain height
 
 const WORKGROUP_SIZE = 8u;
-const ADVECTION_SCALE = 20.0;    // Much higher to make water actually flow
-const MIN_WATER_DEPTH = 0.0001;  // Minimum water depth threshold
-const VISCOSITY = 0.005;         // Lower viscosity for more fluid flow
+const ADVECTION_SCALE = 1.0;     // Direct 1:1 mapping of flow to movement
+const MIN_WATER_DEPTH = 0.00001; // Very low threshold
+const VISCOSITY = 0.0;            // No viscosity - free flow
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
