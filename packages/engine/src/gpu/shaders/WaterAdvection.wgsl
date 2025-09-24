@@ -18,9 +18,10 @@ struct Params {
 @group(0) @binding(4) var heightTex: texture_2d<f32>;                    // Terrain height
 
 const WORKGROUP_SIZE = 8u;
-const ADVECTION_SCALE = 1.0;     // Direct 1:1 mapping of flow to movement
+const ADVECTION_SCALE = 2.0;     // Moderate for stable flow
 const MIN_WATER_DEPTH = 0.00001; // Very low threshold
 const VISCOSITY = 0.0;            // No viscosity - free flow
+const MAX_FLOW_SPEED = 500.0;    // Need this constant here too
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -30,76 +31,56 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let coord = vec2<i32>(id.xy);
   let uv = vec2<f32>(id.xy) / vec2<f32>(dims);
 
-  // Get flow velocity
-  let flow = textureLoad(flowTex, coord).rg;
-  let flow_speed = length(flow);
-
   // Get current water depth
   let current_depth = textureLoad(waterDepthTexIn, coord).r;
 
-  // Early exit if no water
-  if (current_depth < MIN_WATER_DEPTH) {
-    textureStore(waterDepthTexOut, coord, vec4<f32>(0.0, 0.0, 0.0, 0.0));
-    return;
-  }
+  // SIMPLE APPROACH: Just spread water based on flow field
+  var new_depth = 0.0;
 
-  // Semi-Lagrangian advection - trace backward along flow
-  let advection_distance = flow_speed * ADVECTION_SCALE * params.deltaTime;
-  let source_pos = vec2<f32>(coord) - flow * advection_distance;
-
-  // Bilinear interpolation of water depth from source position
-  let x0 = i32(floor(source_pos.x));
-  let y0 = i32(floor(source_pos.y));
-  let fx = fract(source_pos.x);
-  let fy = fract(source_pos.y);
-
-  // Clamp coordinates
-  let x0_clamped = clamp(x0, 0, i32(dims.x) - 1);
-  let x1_clamped = clamp(x0 + 1, 0, i32(dims.x) - 1);
-  let y0_clamped = clamp(y0, 0, i32(dims.y) - 1);
-  let y1_clamped = clamp(y0 + 1, 0, i32(dims.y) - 1);
-
-  // Sample water depth at four corners
-  let d00 = textureLoad(waterDepthTexIn, vec2<i32>(x0_clamped, y0_clamped)).r;
-  let d10 = textureLoad(waterDepthTexIn, vec2<i32>(x1_clamped, y0_clamped)).r;
-  let d01 = textureLoad(waterDepthTexIn, vec2<i32>(x0_clamped, y1_clamped)).r;
-  let d11 = textureLoad(waterDepthTexIn, vec2<i32>(x1_clamped, y1_clamped)).r;
-
-  // Bilinear interpolation
-  let d0 = mix(d00, d10, fx);
-  let d1 = mix(d01, d11, fx);
-  var advected_depth = mix(d0, d1, fy);
-
-  // Apply mass conservation correction
-  // Calculate divergence of flow field
-  let flow_left = textureLoad(flowTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
-  let flow_right = textureLoad(flowTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
-  let flow_up = textureLoad(flowTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
-  let flow_down = textureLoad(flowTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1)).rg;
-
-  let div_x = (flow_right.x - flow_left.x) * 0.5;
-  let div_y = (flow_down.y - flow_up.y) * 0.5;
-  let divergence = div_x + div_y;
-
-  // Apply divergence correction (negative divergence = convergence = pooling)
-  advected_depth *= (1.0 - divergence * params.deltaTime * 0.1);
-
-  // Apply viscosity damping
-  var viscous_depth = advected_depth;
+  // Look at all 9 cells (including self)
   for (var dy = -1; dy <= 1; dy++) {
     for (var dx = -1; dx <= 1; dx++) {
-      if (dx == 0 && dy == 0) { continue; }
-
-      let neighbor_coord = clamp(
+      let source_coord = clamp(
         coord + vec2<i32>(dx, dy),
         vec2<i32>(0),
         vec2<i32>(dims) - 1
       );
-      let neighbor_depth = textureLoad(waterDepthTexIn, neighbor_coord).r;
-      viscous_depth += neighbor_depth * VISCOSITY / 8.0;
+
+      let source_water = textureLoad(waterDepthTexIn, source_coord).r;
+      if (source_water < MIN_WATER_DEPTH) { continue; }
+
+      let source_flow = textureLoad(flowTex, source_coord).rg;
+      let flow_speed = length(source_flow);
+
+      if (dx == 0 && dy == 0) {
+        // This is our own cell - keep water that doesn't flow away
+        if (flow_speed < 0.01) {
+          // No flow - keep all water
+          new_depth += source_water;
+        } else {
+          // Has flow - most water flows away on slopes
+          let keep_fraction = max(0.0, 1.0 - flow_speed / 100.0);
+          new_depth += source_water * keep_fraction;
+        }
+      } else {
+        // This is a neighbor - check if its flow brings water here
+        if (flow_speed > 0.01) {
+          // Does the flow point toward us?
+          let to_us = vec2<f32>(-f32(dx), -f32(dy));
+          let flow_dir = source_flow / flow_speed;
+          let alignment = dot(flow_dir, normalize(to_us));
+
+          // Transfer water if flow points our way (even partially)
+          if (alignment > 0.0) {
+            let transfer = source_water * min(alignment * flow_speed / 100.0, 0.9);
+            new_depth += transfer;
+          }
+        }
+      }
     }
   }
-  advected_depth = mix(advected_depth, viscous_depth, VISCOSITY);
+
+  var advected_depth = new_depth;
 
   // Apply evaporation
   advected_depth = max(advected_depth - params.evaporationRate * params.deltaTime, 0.0);

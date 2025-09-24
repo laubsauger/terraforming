@@ -9,7 +9,8 @@ import {
   floor,
   step,
   mix,
-  clamp
+  clamp,
+  min
 } from 'three/tsl';
 
 export interface CheckerDebugMaterialOptions {
@@ -58,16 +59,17 @@ export function createCheckerDebugMaterialTSL(options: CheckerDebugMaterialOptio
   material.colorNode = debugColor;
   material.opacityNode = hasWater.mul(float(0.9));  // 90% opacity where there's water
 
-  // Position the mesh above terrain for visibility
+  // Position the mesh on terrain surface
   const terrainElevation = terrainHeight.mul(float(heightScale));
 
-  // Place directly on water surface (water depth is already in world units)
-  const waterSurfaceHeight = waterDepth;  // Water depth is the actual height
-  const debugOffset = float(0.1);  // Small offset to avoid z-fighting
-  const debugHeight = waterSurfaceHeight.add(debugOffset);
+  // Water depth is how deep the water is, not its absolute height
+  // Place mesh at terrain + water depth (clamped to reasonable values)
+  const maxWaterHeight = float(5.0);  // Cap water height at 5 meters
+  const clampedWaterDepth = min(waterDepth, maxWaterHeight);
+  const debugOffset = float(0.01);  // Tiny offset to avoid z-fighting
 
-  // Final position: terrain height + big offset
-  const finalY = terrainElevation.add(debugHeight);
+  // Final position: terrain height + water depth
+  const finalY = terrainElevation.add(clampedWaterDepth).add(debugOffset);
   const finalPosition = vec3(
     positionLocal.x,
     finalY,

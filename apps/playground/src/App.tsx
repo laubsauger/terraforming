@@ -171,15 +171,18 @@ export function App() {
     }
   }, [engine, state]); // Only depend on engine and state, not activeTool to avoid loops
 
-  const addWaterSource = useCallback((position: [number, number], rate?: number) => {
+  const addWaterSource = useCallback((position: [number, number] | [number, number, number], rate?: number) => {
     const flowRate = rate ?? waterSourceFlowRate;
     if (engine) {
       // Place the source in the engine - returns the ID if successful
-      const sourceId = engine.addWaterSource(position[0], position[1], flowRate);
+      // Use Y coordinate from raycast if provided (3-element array)
+      const sourceId = position.length === 3
+        ? engine.addWaterSource(position[0], position[2], flowRate, position[1])
+        : engine.addWaterSource(position[0], position[1], flowRate);
       if (sourceId) {
         const newSource: Source = {
           id: sourceId,
-          position,
+          position: position.length === 3 ? [position[0], position[2]] : position as [number, number],
           rate: flowRate
         };
         setWaterSources(prev => [...prev, newSource]);
@@ -188,15 +191,18 @@ export function App() {
     }
   }, [engine, waterSourceFlowRate]);
 
-  const addLavaSource = useCallback((position: [number, number], rate?: number) => {
+  const addLavaSource = useCallback((position: [number, number] | [number, number, number], rate?: number) => {
     const flowRate = rate ?? lavaSourceFlowRate;
     if (engine) {
       // Place the source in the engine - returns the ID if successful
-      const sourceId = engine.addLavaSource(position[0], position[1], flowRate);
+      // Use Y coordinate from raycast if provided (3-element array)
+      const sourceId = position.length === 3
+        ? engine.addLavaSource(position[0], position[2], flowRate, position[1])
+        : engine.addLavaSource(position[0], position[1], flowRate);
       if (sourceId) {
         const newSource: Source = {
           id: sourceId,
-          position,
+          position: position.length === 3 ? [position[0], position[2]] : position as [number, number],
           rate: flowRate
         };
         setLavaSources(prev => [...prev, newSource]);
@@ -465,9 +471,10 @@ export function App() {
 
       if (raycastResult) {
         const point = raycastResult.point;
-        const position: [number, number] = [point.x, point.z];
+        // Pass full 3D position including Y coordinate from raycast
+        const position: [number, number, number] = [point.x, point.y, point.z];
 
-        console.log('Placing source at:', position, 'Active tool:', activeTool);
+        console.log('Placing source at 3D position:', position, 'Active tool:', activeTool);
 
         if (activeTool === 'add-water-source') {
           addWaterSource(position); // Uses current waterSourceFlowRate

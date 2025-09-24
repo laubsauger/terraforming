@@ -439,7 +439,8 @@ export function createWaterMaterialTSL(options: WaterMaterialTSLOptions = {}): T
   } else {
     // Fallback - simple wave pattern for lakes/rivers
     const simpleWaves = sin(uv().x.mul(10).add(time)).mul(cos(uv().y.mul(10).sub(time))).mul(0.1);
-    material.normalNode = normalize(vec3(simpleWaves, simpleWaves, float(1)));
+    // For Y-up coordinate system: Normal = (dx, 1, dz)
+    material.normalNode = normalize(vec3(simpleWaves, float(1), simpleWaves));
   }
 
   return material;

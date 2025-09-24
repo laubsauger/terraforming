@@ -9,6 +9,10 @@ export type Fields = {
   // Additional texture for thermal repose ping-pong
   soilOut: GPUTexture;
 
+  // Canonical height texture (soil + rock combined)
+  // This is the single source of truth for terrain height
+  height: GPUTexture;
+
   // Fluid simulation fields
   flow: GPUTexture;         // RG32F for u,v velocity components (storage)
   flowOut: GPUTexture;      // Ping-pong buffer for flow (storage)
@@ -70,6 +74,9 @@ export function createFields(device: GPUDevice, w: number, h: number): Fields {
     deltaRock: createFieldTex(device, w, h),
     deltaLava: createFieldTex(device, w, h),
     soilOut: createFieldTex(device, w, h),
+
+    // Canonical height texture
+    height: createFieldTex(device, w, h),
 
     // Fluid simulation fields
     flow: createFlowTex(device, w, h),                    // RG32F for u,v (storage)

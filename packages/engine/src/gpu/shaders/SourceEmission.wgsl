@@ -25,10 +25,10 @@ struct Source {
 @group(0) @binding(4) var temperatureTex: texture_storage_2d<r32float, read_write>;
 
 const WORKGROUP_SIZE = 8u;
-const SOURCE_RADIUS = 2.0;        // Small radius on terrain surface
+const SOURCE_RADIUS = 0.5;        // Tiny radius - natural spring point
 const LAVA_TEMPERATURE = 1200.0;  // Initial temperature of emitted lava (Celsius)
-const GAUSSIAN_SIGMA = 1.0;       // Natural spread from point
-const EMISSION_SCALE = 0.001;     // Higher since smaller area
+const GAUSSIAN_SIGMA = 0.5;       // Tight point source
+const EMISSION_SCALE = 0.001;     // Higher rate since smaller area
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -53,10 +53,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let source_texel = source.position * vec2<f32>(dims);
     let distance = length(vec2<f32>(coord) - source_texel);
 
-    // Only emit very close to source (like a spring)
+    // Only emit close to source
     if (distance > SOURCE_RADIUS) { continue; }
 
-    // Gaussian falloff for natural spread
+    // Gaussian falloff from source center
     let falloff = exp(-(distance * distance) / (2.0 * GAUSSIAN_SIGMA * GAUSSIAN_SIGMA));
 
     // Simple emission rate without over-concentration

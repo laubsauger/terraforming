@@ -8,6 +8,7 @@ import sourceEmissionShaderSrc from '../gpu/shaders/SourceEmission.wgsl?raw';
 import waterAdvectionShaderSrc from '../gpu/shaders/WaterAdvection.wgsl?raw';
 import poolDetectionShaderSrc from '../gpu/shaders/PoolDetection.wgsl?raw';
 import hydraulicErosionShaderSrc from '../gpu/shaders/HydraulicErosion.wgsl?raw';
+import combineHeightShaderSrc from '../gpu/shaders/CombineHeight.wgsl?raw';
 
 export interface FluidSystemOptions {
   device: GPUDevice;
@@ -42,6 +43,7 @@ export class FluidSystem {
   private hydraulicErosionPipeline: GPUComputePipeline | null = null;
   private hydraulicErosionBindGroupLayout: GPUBindGroupLayout | null = null;
   private sourceEmissionPipeline: GPUComputePipeline | null = null;
+  private combineHeightPipeline: GPUComputePipeline | null = null;
 
   // Bind groups for each pipeline
   private flowVelocityBindGroup: GPUBindGroup | null = null;
@@ -50,6 +52,7 @@ export class FluidSystem {
   private poolDetectionBindGroup: GPUBindGroup | null = null;
   private hydraulicErosionBindGroup: GPUBindGroup | null = null;
   private sourceEmissionBindGroup: GPUBindGroup | null = null;
+  private combineHeightBindGroup: GPUBindGroup | null = null;
 
   // Uniform buffers
   private paramsBuffer: GPUBuffer;
@@ -287,6 +290,18 @@ export class FluidSystem {
         console.error('FluidSystem: Failed to create Hydraulic Erosion pipeline:', e);
       }
 
+      // Create combine height pipeline to update canonical height after erosion
+      try {
+        const combineHeightShader = this.device.createShaderModule({
+          label: 'CombineHeight',
+          code: combineHeightShaderSrc,
+        });
+        this.createCombineHeightPipeline(combineHeightShader);
+        console.log('FluidSystem: Combine Height pipeline created successfully');
+      } catch (e) {
+        console.error('FluidSystem: Failed to create Combine Height pipeline:', e);
+      }
+
     } catch (error) {
       console.error('FluidSystem: Failed to initialize pipelines', error);
     }
@@ -314,7 +329,7 @@ export class FluidSystem {
       layout: bindGroupLayout,
       entries: [
         { binding: 0, resource: { buffer: this.paramsBuffer } },
-        { binding: 1, resource: this.fields.soil.createView() }, // Use soil as height for now
+        { binding: 1, resource: this.fields.height.createView() }, // Use canonical height texture
         { binding: 2, resource: this.fields.flow.createView() },
         { binding: 3, resource: this.fields.flowOut.createView() },
         { binding: 4, resource: this.fields.rock.createView() }, // Use rock as roughness for now
@@ -345,7 +360,7 @@ export class FluidSystem {
         { binding: 0, resource: { buffer: this.paramsBuffer } },
         { binding: 1, resource: this.fields.flowSampled.createView() }, // Flow field as sampled texture
         { binding: 2, resource: this.fields.flowAccumulation.createView() },
-        { binding: 3, resource: this.fields.soil.createView() }, // Use soil as height field
+        { binding: 3, resource: this.fields.height.createView() }, // Use canonical height field
       ]
     });
   }
@@ -374,7 +389,7 @@ export class FluidSystem {
         { binding: 1, resource: this.fields.flow.createView() },
         { binding: 2, resource: this.fields.waterDepth.createView() },
         { binding: 3, resource: this.fields.waterDepthOut.createView() },
-        { binding: 4, resource: this.fields.soil.createView() }, // Use soil as height
+        { binding: 4, resource: this.fields.height.createView() }, // Use canonical height
       ]
     });
   }
@@ -403,7 +418,7 @@ export class FluidSystem {
         { binding: 1, resource: this.fields.flowSampled.createView() }, // Use sampled flow texture
         { binding: 2, resource: this.fields.waterDepth.createView() }, // Water depth storage texture
         { binding: 3, resource: this.fields.poolMask.createView() },
-        { binding: 4, resource: this.fields.soil.createView() }, // Use soil as height
+        { binding: 4, resource: this.fields.height.createView() }, // Use canonical height
       ]
     });
   }
@@ -414,10 +429,11 @@ export class FluidSystem {
         { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } }, // params
         { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow (sampled)
         { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // water depth (sampled)
-        { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // soil
-        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // sediment in
-        { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // sediment out
-        { binding: 6, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow accumulation
+        { binding: 3, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // height (soil + rock)
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-write', format: 'r32float' } }, // soil
+        { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'r32float' } }, // sediment in
+        { binding: 6, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // sediment out
+        { binding: 7, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } }, // flow accumulation
       ]
     });
 
@@ -458,6 +474,51 @@ export class FluidSystem {
         { binding: 4, resource: this.fields.temperature.createView() },
       ]
     });
+  }
+
+  private createCombineHeightPipeline(shaderModule: GPUShaderModule): void {
+    // Create explicit bind group layout for storage textures
+    const bindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: {
+            access: 'read-only',
+            format: 'rgba32float'
+          }
+        },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.COMPUTE,
+          storageTexture: {
+            access: 'write-only',
+            format: 'r32float'
+          }
+        }
+      ]
+    });
+
+    this.combineHeightPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] }),
+      compute: { module: shaderModule, entryPoint: 'main' },
+    });
+
+    // Check if we have the optimized fields structure with RGBA texture
+    const fieldsTexture = (this.fields as any).fields;
+    if (fieldsTexture) {
+      // Create bind group for combining height using optimized fields
+      this.combineHeightBindGroup = this.device.createBindGroup({
+        layout: bindGroupLayout,
+        entries: [
+          { binding: 0, resource: fieldsTexture.createView() }, // RGBA fields texture (R=soil, G=rock)
+          { binding: 1, resource: this.fields.height.createView() }, // Output combined height
+        ]
+      });
+    } else {
+      console.warn('FluidSystem: Optimized fields structure not found, height combine disabled');
+      this.combineHeightBindGroup = null;
+    }
   }
 
   // Public API
@@ -622,6 +683,7 @@ export class FluidSystem {
 
     // 2. Calculate flow velocity from height gradient
     if (this.flowVelocityPipeline && this.flowVelocityBindGroup) {
+      console.log('FluidSystem: Running flow velocity compute pass');
       const pass = encoder.beginComputePass({ label: 'Flow Velocity' });
       pass.setPipeline(this.flowVelocityPipeline);
       pass.setBindGroup(0, this.flowVelocityBindGroup);
@@ -631,6 +693,11 @@ export class FluidSystem {
       );
       pass.end();
       this.pingPongState.flow = !this.pingPongState.flow;
+    } else {
+      console.warn('FluidSystem: Flow velocity pipeline or bind group missing!', {
+        hasPipeline: !!this.flowVelocityPipeline,
+        hasBindGroup: !!this.flowVelocityBindGroup
+      });
 
       // Debug log flow velocity pass
       if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
@@ -715,10 +782,11 @@ export class FluidSystem {
           { binding: 0, resource: { buffer: this.paramsBuffer } },
           { binding: 1, resource: this.fields.flowSampled.createView() },
           { binding: 2, resource: this.fields.waterDepthSampled.createView() },
-          { binding: 3, resource: this.fields.soil.createView() },
-          { binding: 4, resource: currentSediment.createView() }, // Read from current
-          { binding: 5, resource: outputSediment.createView() }, // Write to output
-          { binding: 6, resource: this.fields.flowAccumulation.createView() },
+          { binding: 3, resource: this.fields.height.createView() }, // Canonical height
+          { binding: 4, resource: this.fields.soil.createView() },
+          { binding: 5, resource: currentSediment.createView() }, // Read from current
+          { binding: 6, resource: outputSediment.createView() }, // Write to output
+          { binding: 7, resource: this.fields.flowAccumulation.createView() },
         ]
       });
 
@@ -731,6 +799,18 @@ export class FluidSystem {
       );
       pass.end();
       this.pingPongState.sediment = !this.pingPongState.sediment;
+
+      // Update canonical height after erosion modifies soil
+      if (this.combineHeightPipeline && this.combineHeightBindGroup) {
+        const heightPass = encoder.beginComputePass({ label: 'Update Height After Erosion' });
+        heightPass.setPipeline(this.combineHeightPipeline);
+        heightPass.setBindGroup(0, this.combineHeightBindGroup);
+        heightPass.dispatchWorkgroups(
+          Math.ceil(this.resolution / 8),
+          Math.ceil(this.resolution / 8)
+        );
+        heightPass.end();
+      }
     }
   }
 
@@ -776,6 +856,10 @@ export class FluidSystem {
 
   public getLavaDepthTexture(): GPUTexture {
     return this.fields.lava;
+  }
+
+  public getHeightTexture(): GPUTexture {
+    return this.fields.height;
   }
 
   // Debug method to read back water depth values

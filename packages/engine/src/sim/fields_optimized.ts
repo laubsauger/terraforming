@@ -6,6 +6,10 @@ export type Fields = {
   // Additional textures for other passes
   fieldsOut: GPUTexture;   // For ping-pong operations like thermal repose
 
+  // Canonical height texture (soil + rock combined)
+  // This is the single source of truth for terrain height
+  height: GPUTexture;
+
   // Legacy individual textures (for compatibility during transition)
   soil?: GPUTexture;
   rock?: GPUTexture;
@@ -44,6 +48,9 @@ export function createFields(device: GPUDevice, w: number, h: number): Fields {
   const deltas = createRGBAFieldTex(device, w, h);
   const fieldsOut = createRGBAFieldTex(device, w, h);
 
+  // Create canonical height texture
+  const height = createFieldTex(device, w, h);
+
   // Also create legacy individual textures for compatibility
   // These can be removed once all shaders are updated
   const soil = createFieldTex(device, w, h);
@@ -59,6 +66,7 @@ export function createFields(device: GPUDevice, w: number, h: number): Fields {
     fields,
     deltas,
     fieldsOut,
+    height,
 
     // Legacy compatibility
     soil,

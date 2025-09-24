@@ -32,6 +32,7 @@ export interface Source {
 export type DebugOverlay =
   | 'height'
   | 'flow'
+  | 'flowField'
   | 'accumulation'
   | 'erosion'
   | 'pools'
@@ -39,7 +40,8 @@ export type DebugOverlay =
   | 'sediment'
   | 'lava'
   | 'temperature'
-  | 'contours';
+  | 'contours'
+  | 'normals';
 
 export interface PerfGpuPassTiming {
   name: string;

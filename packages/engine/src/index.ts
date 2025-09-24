@@ -302,20 +302,22 @@ class StubEngine implements Engine {
 
   /**
    * Add a water source at the specified position
+   * @param worldY - Optional Y position, if not provided will be calculated from terrain height
    */
-  addWaterSource(worldX: number, worldZ: number, flowRate: number = 10): string | null {
+  addWaterSource(worldX: number, worldZ: number, flowRate: number = 10, worldY?: number): string | null {
     if (this.renderer) {
-      return this.renderer.addWaterSource(worldX, worldZ, flowRate);
+      return this.renderer.addWaterSource(worldX, worldZ, flowRate, worldY);
     }
     return null;
   }
 
   /**
    * Add a lava source at the specified position
+   * @param worldY - Optional Y position, if not provided will be calculated from terrain height
    */
-  addLavaSource(worldX: number, worldZ: number, flowRate: number = 10): string | null {
+  addLavaSource(worldX: number, worldZ: number, flowRate: number = 10, worldY?: number): string | null {
     if (this.renderer) {
-      return this.renderer.addLavaSource(worldX, worldZ, flowRate);
+      return this.renderer.addLavaSource(worldX, worldZ, flowRate, worldY);
     }
     return null;
   }

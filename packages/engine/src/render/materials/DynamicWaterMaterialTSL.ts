@@ -110,11 +110,11 @@ export function createDynamicWaterMaterialTSL(options: DynamicWaterMaterialOptio
   material.positionNode = finalPosition;
 
   // Simplified wave normals for performance
-  const waveNormal = sin(animatedUV.x.mul(8)).mul(0.2);
-  const dx = waveNormal;
-  const dy = cos(animatedUV.y.mul(8)).mul(0.2);
+  // For Y-up coordinate system: Normal = (dx, 1, dz)
+  const waveNormalX = sin(animatedUV.x.mul(8)).mul(0.2);
+  const waveNormalZ = cos(animatedUV.y.mul(8)).mul(0.2);
 
-  material.normalNode = normalize(vec3(dx, dy, float(1)));
+  material.normalNode = normalize(vec3(waveNormalX, float(1), waveNormalZ));
 
   // Simple roughness for performance
   const baseRoughness = mix(float(0.35), float(0.25), normalizedDepth);

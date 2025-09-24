@@ -6,6 +6,7 @@ import { createReposePipeline, createReposeBindGroupLayout } from '../gpu/pipeli
 import { createSmoothPipeline, createSmoothBindGroupLayout } from '../gpu/pipelines/smooth';
 import { createSmoothDirectionalPipeline, SmoothDirectionalPipeline, SmoothDirectionalOp, executeSmoothDirectionalPass } from '../gpu/pipelines/smoothDirectional';
 import { createFlattenPipeline, FlattenPipeline, FlattenOp, executeFlattenPass } from '../gpu/pipelines/flatten';
+import combineHeightShaderSrc from '../gpu/shaders/CombineHeight.wgsl?raw';
 
 export interface BrushSystemOptions {
   gridSize: [number, number];  // [width, height] in cells
@@ -26,12 +27,14 @@ export class BrushSystem {
   private smoothPipeline!: GPUComputePipeline;
   private smoothDirectionalPipeline!: SmoothDirectionalPipeline;
   private flattenPipeline!: FlattenPipeline;
+  private combineHeightPipeline!: GPUComputePipeline;
 
   // Bind group layouts
   private brushLayout!: GPUBindGroupLayout;
   private applyLayout!: GPUBindGroupLayout;
   private reposeLayout!: GPUBindGroupLayout;
   private smoothLayout!: GPUBindGroupLayout;
+  private combineHeightBindGroup!: GPUBindGroup;
 
   // Buffers
   private opsBuffer!: GPUBuffer;
@@ -78,6 +81,33 @@ export class BrushSystem {
 
     this.smoothDirectionalPipeline = createSmoothDirectionalPipeline(this.device);
     this.flattenPipeline = createFlattenPipeline(this.device);
+
+    // Create combine height pipeline to maintain canonical height texture
+    const combineHeightShader = this.device.createShaderModule({
+      label: 'Combine Height Shader',
+      code: combineHeightShaderSrc,
+    });
+
+    const combineHeightBindGroupLayout = this.device.createBindGroupLayout({
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'read-only', format: 'rgba32float' } }, // fields texture (RGBA)
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: 'write-only', format: 'r32float' } }, // height output
+      ]
+    });
+
+    this.combineHeightPipeline = this.device.createComputePipeline({
+      layout: this.device.createPipelineLayout({ bindGroupLayouts: [combineHeightBindGroupLayout] }),
+      compute: { module: combineHeightShader, entryPoint: 'main' },
+    });
+
+    // Create bind group
+    this.combineHeightBindGroup = this.device.createBindGroup({
+      layout: combineHeightBindGroupLayout,
+      entries: [
+        { binding: 0, resource: this.fields.fields.createView() }, // RGBA texture with soil/rock/lava
+        { binding: 1, resource: this.fields.height.createView() }, // Output height texture
+      ]
+    });
   }
 
   private initializeBuffers(): void {
@@ -459,6 +489,17 @@ export class BrushSystem {
         { width: this.options.gridSize[0], height: this.options.gridSize[1] }
       );
     }
+
+    // Update canonical height texture (soil + rock)
+    // This combines soil and rock into a single height texture that all systems can use
+    const updateHeightPass = commandEncoder.beginComputePass({ label: 'Update Canonical Height' });
+    updateHeightPass.setPipeline(this.combineHeightPipeline);
+    updateHeightPass.setBindGroup(0, this.combineHeightBindGroup);
+    updateHeightPass.dispatchWorkgroups(
+      Math.ceil(this.options.gridSize[0] / 8),
+      Math.ceil(this.options.gridSize[1] / 8)
+    );
+    updateHeightPass.end();
 
     // Clear pending ops
     this.pendingOps = [];

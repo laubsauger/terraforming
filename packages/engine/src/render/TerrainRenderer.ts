@@ -165,7 +165,7 @@ export class TerrainRenderer extends BaseRenderer {
         terrainSize: this.terrainSize,
         fluidSystem: this.fluidSystem,
         heightTexture: this.textureManager.heightTexture,
-        heightScale: this.HEIGHT_SCALE
+        heightScale: TerrainConfig.HEIGHT_SCALE
       });
       console.log('TerrainRenderer: Debug overlay system initialized');
     }
@@ -357,21 +357,46 @@ export class TerrainRenderer extends BaseRenderer {
     // Copy data to brush system GPU textures
     const fields = this.brushSystem.getFields();
 
-    // Write rock data
+    // Write to optimized RGBA fields texture (R=soil, G=rock, B=lava, A=unused)
+    const rgbaData = new Float32Array(size * size * 4);
+    for (let i = 0; i < size * size; i++) {
+      rgbaData[i * 4 + 0] = soilData[i];  // R = soil
+      rgbaData[i * 4 + 1] = rockData[i];  // G = rock
+      rgbaData[i * 4 + 2] = 0;            // B = lava (none initially)
+      rgbaData[i * 4 + 3] = 0;            // A = unused
+    }
+
+    // Write RGBA fields data
     device.queue.writeTexture(
-      { texture: fields.rock },
-      rockData,
-      { bytesPerRow: size * 4, rowsPerImage: size },
+      { texture: fields.fields },
+      rgbaData,
+      { bytesPerRow: size * 4 * 4, rowsPerImage: size },
       { width: size, height: size }
     );
 
-    // Write soil data
-    device.queue.writeTexture(
-      { texture: fields.soil },
-      soilData,
-      { bytesPerRow: size * 4, rowsPerImage: size },
-      { width: size, height: size }
-    );
+    // Also write to legacy individual textures for compatibility
+    if (fields.rock) {
+      device.queue.writeTexture(
+        { texture: fields.rock },
+        rockData,
+        { bytesPerRow: size * 4, rowsPerImage: size },
+        { width: size, height: size }
+      );
+    }
+
+    if (fields.soil) {
+      device.queue.writeTexture(
+        { texture: fields.soil },
+        soilData,
+        { bytesPerRow: size * 4, rowsPerImage: size },
+        { width: size, height: size }
+      );
+    }
+
+    // Trigger a brush system execute to update the canonical height texture
+    const commandEncoder = device.createCommandEncoder();
+    this.brushSystem.execute(commandEncoder); // This will trigger height combine
+    device.queue.submit([commandEncoder.finish()]);
   }
 
   // Public API methods
@@ -532,9 +557,11 @@ export class TerrainRenderer extends BaseRenderer {
 
   /**
    * Add a water source at the specified position
+   * @param worldY - Optional Y position, if not provided will be calculated from terrain height
    */
-  public addWaterSource(worldX: number, worldZ: number, flowRate: number = 10): string {
-    const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
+  public addWaterSource(worldX: number, worldZ: number, flowRate: number = 10, worldY?: number): string {
+    // Use provided Y or calculate from terrain height
+    const height = worldY !== undefined ? worldY : this.heightSampler.getHeightAtWorldPos(worldX, worldZ) + 0.5;
     const position = new THREE.Vector3(worldX, height, worldZ);
     const sourceId = this.sourceEmitterManager.addSource(position, 'water', flowRate);
 
@@ -560,9 +587,11 @@ export class TerrainRenderer extends BaseRenderer {
 
   /**
    * Add a lava source at the specified position
+   * @param worldY - Optional Y position, if not provided will be calculated from terrain height
    */
-  public addLavaSource(worldX: number, worldZ: number, flowRate: number = 10): string {
-    const height = this.heightSampler.getHeightAtWorldPos(worldX, worldZ);
+  public addLavaSource(worldX: number, worldZ: number, flowRate: number = 10, worldY?: number): string {
+    // Use provided Y or calculate from terrain height
+    const height = worldY !== undefined ? worldY : this.heightSampler.getHeightAtWorldPos(worldX, worldZ) + 0.5;
     const position = new THREE.Vector3(worldX, height, worldZ);
     const sourceId = this.sourceEmitterManager.addSource(position, 'lava', flowRate);
 

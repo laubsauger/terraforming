@@ -15,10 +15,11 @@ struct Params {
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var flowTex: texture_2d<f32>;              // Flow velocity
 @group(0) @binding(2) var waterDepthTex: texture_2d<f32>;        // Water depth
-@group(0) @binding(3) var soilTex: texture_storage_2d<r32float, read_write>;      // Soil height
-@group(0) @binding(4) var sedimentTexIn: texture_storage_2d<r32float, read>;      // Current sediment
-@group(0) @binding(5) var sedimentTexOut: texture_storage_2d<r32float, write>;   // Updated sediment
-@group(0) @binding(6) var flowAccumulationTex: texture_2d<f32>;  // Flow accumulation for capacity
+@group(0) @binding(3) var heightTex: texture_2d<f32>;            // Combined height (soil + rock) for slope
+@group(0) @binding(4) var soilTex: texture_storage_2d<r32float, read_write>;      // Soil height (modified by erosion)
+@group(0) @binding(5) var sedimentTexIn: texture_storage_2d<r32float, read>;      // Current sediment
+@group(0) @binding(6) var sedimentTexOut: texture_storage_2d<r32float, write>;   // Updated sediment
+@group(0) @binding(7) var flowAccumulationTex: texture_2d<f32>;  // Flow accumulation for capacity
 
 const WORKGROUP_SIZE = 8u;
 
@@ -51,12 +52,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
 
-  // Calculate terrain slope
-  let h_center = soil_height;
-  let h_left = textureLoad(soilTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).r;
-  let h_right = textureLoad(soilTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1)).r;
-  let h_up = textureLoad(soilTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1)).r;
-  let h_down = textureLoad(soilTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1)).r;
+  // Calculate terrain slope using combined height (soil + rock)
+  let h_center = textureLoad(heightTex, coord, 0).r;
+  let h_left = textureLoad(heightTex, clamp(coord + vec2<i32>(-1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
+  let h_right = textureLoad(heightTex, clamp(coord + vec2<i32>(1, 0), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
+  let h_up = textureLoad(heightTex, clamp(coord + vec2<i32>(0, -1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
+  let h_down = textureLoad(heightTex, clamp(coord + vec2<i32>(0, 1), vec2<i32>(0), vec2<i32>(dims) - 1), 0).r;
 
   let dx = (h_right - h_left) * 0.5;
   let dy = (h_down - h_up) * 0.5;

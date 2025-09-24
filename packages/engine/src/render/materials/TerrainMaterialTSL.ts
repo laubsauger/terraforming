@@ -138,7 +138,10 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const heightSample = texture(heightMap, uvCoords).r;
   const displacement = heightSample.mul(float(heightScale));
 
-  // Apply displacement only to Y position (since plane is rotated, Y is up)
+  // Apply displacement along the normal direction
+  // The plane is created in XY (facing +Z) then rotated -90° around X
+  // After rotation: original Z becomes Y (up), original Y becomes -Z
+  // normalLocal is already in the rotated space, pointing up (0,1,0)
   const displacedPosition = positionLocal.add(normalLocal.mul(displacement));
   material.positionNode = displacedPosition;
 
@@ -433,12 +436,12 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   const wetZoneGradient = smoothstep(waterLevelNode, waveZone, normalizedHeight); // Gradient up to wave peak
 
   // Areas below or near water are wet (including wave zone)
-  let beachWetness = isInWetZone.add(
+  const baseWetness = isInWetZone.add(
     float(1).sub(isInWetZone).mul(float(1).sub(wetZoneGradient))
   );
 
   // If we have dynamic water depth, use it to enhance wetness
-  if (waterDepthMap) {
+  const beachWetness = waterDepthMap ? (() => {
     const waterDepth = texture(waterDepthMap, uv()).r;
     // Any area with water on it is wet
     const hasWater = step(float(0.0001), waterDepth);
@@ -446,9 +449,9 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     const recentlyWet = smoothstep(float(0), float(0.002), waterDepth);
     // Combine with height-based wetness - use mix with step for max-like behavior
     const waterWetness = hasWater.add(recentlyWet.mul(0.5));
-    const useWaterWetness = step(beachWetness, waterWetness);
-    beachWetness = mix(beachWetness, waterWetness, useWaterWetness);
-  }
+    const useWaterWetness = step(baseWetness, waterWetness);
+    return mix(baseWetness, waterWetness, useWaterWetness);
+  })() : baseWetness;
 
   // Only apply wetness to sand/beach areas below beach level top, not to grass or rock
   // Beach level is at 0.16, so cut off wetness there
@@ -493,22 +496,21 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
   // Make wet sand glossier (lower roughness) with variation
   // Fully wet sand is very glossy, partially wet is less so
   const wetSandRoughness = mix(float(0.4), float(0.2), beachWetnessFinal); // Variable glossiness
-  dynamicRoughness = mix(dynamicRoughness, wetSandRoughness, beachWetnessFinal);
+  const wetAdjustedRoughness = mix(dynamicRoughness, wetSandRoughness, beachWetnessFinal);
 
   // Add metalness to wet sand for subtle specular highlights
   const wetSandMetalness = beachWetnessFinal.mul(0.05); // Very subtle metalness for wet areas
   material.metalnessNode = wetSandMetalness;
 
   // Reduce roughness in wet areas (streams/rivers)
-  if (accumulationMap) {
+  const finalRoughness = accumulationMap ? (() => {
     const accumulation = texture(accumulationMap, uv()).r;
     const wetnessMask = smoothstep(float(0), float(0.05), accumulation);
     // Wet areas are glossier (lower roughness)
-    const newRoughness = mix(dynamicRoughness, float(0.1), wetnessMask.mul(0.8));
-    dynamicRoughness = newRoughness.add(float(0)); // Keep as OperatorNode
-  }
+    return mix(wetAdjustedRoughness, float(0.1), wetnessMask.mul(0.8));
+  })() : wetAdjustedRoughness;
 
-  material.roughnessNode = clamp(dynamicRoughness, float(0.1), float(1.0)); // Allow glossier wet sand
+  material.roughnessNode = clamp(finalRoughness, float(0.1), float(1.0)); // Allow glossier wet sand
 
   // Compute normals from height gradient for proper lighting
   if (normalMap) {
@@ -536,16 +538,20 @@ export function createTerrainMaterialTSL(options: TerrainMaterialTSLOptions): TH
     // Calculate the normal vector
     const worldStep = float(terrainSize).mul(texelSize);
 
-    // Cross product of tangent vectors
-    const tangentX = vec3(worldStep.mul(2), float(0), sobelX);
-    const tangentY = vec3(float(0), worldStep.mul(2), sobelY);
+    // The plane geometry is rotated -90° around X axis
+    // After rotation: XY plane becomes XZ plane with Y pointing up
+    // Height displacement is along Y (up), texture coords map to X and Z
+    const gradientScale = worldStep.mul(2);
 
-    // For a plane in XY with Z up (before rotation), the normal calculation is:
-    const nx = sobelX.div(worldStep.mul(2)).mul(-1);
-    const ny = sobelY.div(worldStep.mul(2)).mul(-1);
-    const nz = float(1);
+    // For a height field with vertical (Y) displacement:
+    // The gradient in texture U direction affects the X component of the normal
+    // The gradient in texture V direction affects the Z component of the normal
+    // Normal = (-dh/du, 1, -dh/dv) for Y-up coordinate system
+    const nx = sobelX.div(gradientScale).mul(-1);
+    const ny = float(1);
+    const nz = sobelY.div(gradientScale).mul(-1);
 
-    // Build and normalize the normal
+    // Build and normalize the normal (in rotated object space)
     const normalRaw = vec3(nx, ny, nz);
     const normalizedNormal = normalize(normalRaw);
 

@@ -1,5 +1,7 @@
 import * as THREE from 'three/webgpu';
 import { createDebugOverlayMaterialTSL } from '../materials/DebugOverlayMaterialTSL';
+import { createFlowFieldDebugMaterialTSL } from '../materials/FlowFieldDebugMaterialTSL';
+import { createNormalVisualizationMaterial } from '../materials/NormalVisualizationMaterial';
 import type { DebugOverlay } from '@terraforming/types';
 import type { FluidSystem } from '../../sim/FluidSystem';
 
@@ -42,6 +44,9 @@ export class DebugOverlaySystem {
       case 'flow':
         overlayTexture = this.fluidSystem.getFlowTexture();
         break;
+      case 'flowField':
+        overlayTexture = this.fluidSystem.getFlowTexture();  // Same texture, different visualization
+        break;
       case 'accumulation':
         overlayTexture = this.fluidSystem.getFlowAccumulationTexture?.() ?? null;
         break;
@@ -58,8 +63,8 @@ export class DebugOverlaySystem {
         overlayTexture = this.fluidSystem.getTemperatureTexture?.() ?? null;
         break;
       case 'height':
-        // Height would come from terrain renderer
-        return undefined;
+        overlayTexture = this.fluidSystem.getHeightTexture();
+        break;
       case 'erosion':
         // Erosion visualization would need erosion rate texture
         return undefined;
@@ -69,8 +74,39 @@ export class DebugOverlaySystem {
       case 'contours':
         // Contours are handled by terrain material directly
         return undefined;
+      case 'normals':
+        // Normals visualization doesn't need fluid system texture
+        // We'll handle this separately below
+        break;
       default:
         return undefined;
+    }
+
+    // Special handling for normals overlay
+    if (type === 'normals') {
+      // Create overlay plane geometry with same subdivision as terrain
+      const subdivisions = 127;
+      const geometry = new THREE.PlaneGeometry(
+        this.terrainSize,
+        this.terrainSize,
+        subdivisions,
+        subdivisions
+      );
+      geometry.rotateX(-Math.PI / 2);
+
+      // Create normal visualization material
+      const material = createNormalVisualizationMaterial({
+        heightTexture: this.heightTexture,
+        heightScale: this.heightScale,
+        terrainSize: this.terrainSize,
+        gridSize: this.gridSize
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = 100;
+      mesh.frustumCulled = true;
+
+      return mesh;
     }
 
     if (!overlayTexture) {
@@ -80,13 +116,13 @@ export class DebugOverlaySystem {
 
     // Create a placeholder DataTexture for WebGPU compatibility
     const size = this.gridSize;
-    const channels = type === 'flow' ? 2 : 1;
+    const channels = (type === 'flow' || type === 'flowField') ? 2 : 1;
     const data = new Float32Array(size * size * channels);
     const threeTexture = new THREE.DataTexture(
       data,
       size,
       size,
-      type === 'flow' ? THREE.RGFormat : THREE.RedFormat,
+      (type === 'flow' || type === 'flowField') ? THREE.RGFormat : THREE.RedFormat,
       THREE.FloatType
     );
 
@@ -110,13 +146,19 @@ export class DebugOverlaySystem {
     geometry.rotateX(-Math.PI / 2);
 
     // Create material with terrain displacement
-    const material = createDebugOverlayMaterialTSL({
-      overlayTexture: threeTexture,
-      overlayType: type as any,
-      opacity: 0.7,
-      heightTexture: this.heightTexture,
-      heightScale: this.heightScale
-    });
+    const material = type === 'flowField'
+      ? createFlowFieldDebugMaterialTSL({
+          flowTexture: threeTexture,
+          heightTexture: this.heightTexture,
+          heightScale: this.heightScale
+        })
+      : createDebugOverlayMaterialTSL({
+          overlayTexture: threeTexture,
+          overlayType: type as any,
+          opacity: 0.7,
+          heightTexture: this.heightTexture,
+          heightScale: this.heightScale
+        });
 
     // Create mesh
     const mesh = new THREE.Mesh(geometry, material);
@@ -194,6 +236,9 @@ export class DebugOverlaySystem {
           break;
         case 'sediment':
           currentTexture = this.fluidSystem.getSedimentTexture();
+          break;
+        case 'height':
+          currentTexture = this.fluidSystem.getHeightTexture();
           break;
         // Add other dynamic textures as needed
       }
