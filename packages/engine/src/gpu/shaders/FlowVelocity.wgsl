@@ -145,12 +145,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // This ensures empty cells have flow direction for water to spread into
 
     // Use real terrain gradient to calculate flow
-    velocity = -gradient * 10000.0;  // Big multiplier to make flow visible
+    velocity = -gradient * 100.0;  // Reasonable multiplier for flow
 
     // Override with steepest direction if there's a clear drop
-    if (max_drop > 0.0001) {  // Lower threshold
-      // Strong downhill flow in steepest direction
-      velocity = steepest_dir * max_drop * 50000.0;  // Much larger multiplier
+    if (max_drop > 0.001) {  // Threshold for significant slope
+      // Downhill flow in steepest direction
+      velocity = steepest_dir * max_drop * 500.0;  // Scaled to reasonable speed
     }
 
     // Add pressure-driven flow only if water exists

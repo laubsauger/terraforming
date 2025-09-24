@@ -1,4 +1,8 @@
 // WaterAdvection.wgsl - Move water along the flow field using semi-Lagrangian advection
+// CRITICAL: The water transfer rate and conservation are extremely important!
+// Too conservative = water piles up and never flows (our original bug)
+// Too aggressive = instant flooding (current issue)
+// The key is balancing how much water leaves vs arrives at each cell
 
 struct Params {
   gravity: f32,
@@ -18,11 +22,11 @@ struct Params {
 @group(0) @binding(4) var heightTex: texture_2d<f32>;                    // Terrain height
 
 const WORKGROUP_SIZE = 8u;
-const ADVECTION_SCALE = 2.0;     // Moderate for stable flow
+const ADVECTION_SCALE = 1.0;     // Reduced for more controlled flow
 const MIN_WATER_DEPTH = 0.00001; // Very low threshold
 const VISCOSITY = 0.0;            // No viscosity - free flow
-const MAX_FLOW_SPEED = 500.0;    // Need this constant here too
-const FLOW_TRANSFER_RATE = 0.9;  // Transfer 90% of water per frame at max flow - water shouldn't stick on steep slopes!
+const MAX_FLOW_SPEED = 500.0;    // Maximum flow speed from FlowVelocity shader
+const FLOW_TRANSFER_RATE = 0.15; // Transfer 15% per frame - more conservative to prevent water loss
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -55,17 +59,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
       if (dx == 0 && dy == 0) {
         // This is our own cell - keep water that doesn't flow away
-        if (flow_speed < 1.0) {
-          // Very low flow - keep most water
-          new_depth += source_water * 0.95;
+        if (flow_speed < 0.1) {
+          // Almost no flow - keep all water
+          new_depth += source_water;
         } else {
           // Has flow - water flows away based on flow speed
           // Normalized flow speed (0 to 1)
           let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
 
-          // On steep slopes (high flow speed), almost no water should remain!
-          // Use exponential falloff for more realistic behavior
-          let keep_fraction = pow(1.0 - normalized_speed, 2.0) * 0.5;
+          // Keep more water to prevent it from disappearing
+          // On flat: keep ~95%, on steep slopes: keep ~50%
+          let keep_fraction = 0.95 - (normalized_speed * 0.45);
           new_depth += source_water * keep_fraction;
         }
       } else {
@@ -77,14 +81,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
           let alignment = max(0.0, dot(flow_dir, normalize(to_us)));
 
           // Only transfer if reasonably aligned
-          if (alignment > 0.3) {
+          if (alignment > 0.2) {  // Lower threshold to allow more water transfer
             // Normalized flow speed (0 to 1)
             let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
 
-            // Transfer a significant portion when well-aligned and fast-flowing
-            // On steep slopes, most water should transfer in the flow direction
-            let base_transfer = normalized_speed * FLOW_TRANSFER_RATE;
-            let transfer = source_water * alignment * base_transfer;
+            // Transfer based on alignment and speed
+            // Maximum transfer is FLOW_TRANSFER_RATE when perfectly aligned and fast
+            let transfer_fraction = alignment * normalized_speed * FLOW_TRANSFER_RATE;
+            let transfer = source_water * transfer_fraction;
             new_depth += transfer;
           }
         }
@@ -94,11 +98,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   var advected_depth = new_depth;
 
-  // Apply evaporation
-  advected_depth = max(advected_depth - params.evaporationRate * params.deltaTime, 0.0);
+  // Apply evaporation (DISABLED for debugging - water was disappearing)
+  // advected_depth = max(advected_depth - params.evaporationRate * params.deltaTime, 0.0);
 
-  // Add rain
-  advected_depth += params.rainIntensity * params.deltaTime;
+  // Add rain (DISABLED for debugging)
+  // advected_depth += params.rainIntensity * params.deltaTime;
 
   // Ensure non-negative and apply minimum threshold
   if (advected_depth < MIN_WATER_DEPTH) {
