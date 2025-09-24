@@ -112,6 +112,12 @@ export function App() {
     return map;
   }, [toolbarActions]);
 
+  // Use refs to track initialization state and engine instance
+  // These persist across renders and help prevent double initialization
+  const initializingRef = useRef(false);
+  const engineInstanceRef = useRef<Engine | null>(null);
+  const initPromiseRef = useRef<Promise<Engine> | null>(null);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -121,33 +127,96 @@ export function App() {
       return;
     }
 
+    // If we already have an engine instance, use it
+    if (engineInstanceRef.current) {
+      console.log('[App] Using existing engine instance');
+      setEngine(engineInstanceRef.current);
+      setState('ready');
+      return;
+    }
+
+    // If we're already initializing, wait for that to complete
+    if (initializingRef.current && initPromiseRef.current) {
+      console.log('[App] Already initializing, waiting for existing initialization');
+      initPromiseRef.current
+        .then((instance) => {
+          setEngine(instance);
+          setState('ready');
+        })
+        .catch((err) => {
+          console.error('[App] Existing initialization failed:', err);
+          setError(err instanceof Error ? err.message : 'Unknown error');
+          setState('error');
+        });
+      return;
+    }
+
+    initializingRef.current = true;
     let active = true;
 
-    initEngine(canvas)
+    const promise = initEngine(canvas)
       .then((instance) => {
+        // Store the instance regardless of active state
+        engineInstanceRef.current = instance;
+
         if (!active) {
-          instance.dispose();
-          return;
+          // Component unmounted during initialization
+          // Don't dispose - the next mount might use it
+          console.log('[App] Component unmounted during init, keeping instance for remount');
+          return instance;
         }
+
         setEngine(instance);
         setState('ready');
+        return instance;
       })
       .catch((err: unknown) => {
         console.error(err);
         setError(err instanceof Error ? err.message : 'Unknown error');
         setState('error');
+        throw err; // Re-throw to propagate to other waiters
+      })
+      .finally(() => {
+        // Only clear the initializing flag if this effect is still active
+        if (active) {
+          initializingRef.current = false;
+          initPromiseRef.current = null;
+        }
       });
 
+    // Store the promise so other mounts can wait for it
+    initPromiseRef.current = promise;
+
     return () => {
+      console.log('[App] Cleaning up engine initialization effect...');
       active = false;
-      setState('pending');
-      setEngine((value) => {
-        value?.dispose();
-        return null;
-      });
+
+      // In StrictMode, React will unmount and immediately remount
+      // We don't want to dispose the engine in this case
+      // Only dispose if we're truly unmounting (e.g., navigating away)
+
+      // For now, don't dispose anything in the cleanup
+      // The engine will be reused by the next mount
+      // Real disposal should happen when the component is truly unmounting
+      // (which we can't easily distinguish from StrictMode remount)
+
+      console.log('[App] Engine cleanup complete (keeping instance for potential remount)');
     };
   }, []);
 
+  // Separate cleanup effect for when the component truly unmounts
+  // This will run when navigating away or when the app closes
+  useEffect(() => {
+    return () => {
+      // This cleanup only runs when the component is truly unmounting
+      // (not during StrictMode double-mount)
+      if (engineInstanceRef.current) {
+        console.log('[App] Component unmounting, disposing engine');
+        engineInstanceRef.current.dispose();
+        engineInstanceRef.current = null;
+      }
+    };
+  }, []); // Empty deps means this only runs on final unmount
 
   const handleSnapshot = (sample: PerfSample | null) => {
     console.log('snapshot requested', sample);

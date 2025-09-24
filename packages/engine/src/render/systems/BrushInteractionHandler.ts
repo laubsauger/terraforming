@@ -3,6 +3,9 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import type { BrushSystem } from '../../sim/BrushSystem';
 import { createBrushDecalMaterialTSL } from '../materials/BrushDecalMaterialTSL';
 
+// Global singleton to track active event listeners and prevent duplicates
+let globalActiveHandler: BrushInteractionHandler | null = null;
+
 export interface BrushInteractionHandlerOptions {
   camera: THREE.Camera;
   canvas: HTMLCanvasElement;
@@ -44,10 +47,13 @@ export class BrushInteractionHandler {
   private animationFrameId: number | null = null;
   private eventHandlers: any = {};
   private lastMouseEvent?: MouseEvent;
+  private lastDebugClickTime = 0;
+  private isInitialized = false;
 
   // Callbacks
   private getHeightAtWorldPos?: (x: number, z: number) => number;
   private getTerrainMesh?: () => THREE.Mesh | undefined;
+  private debugReadCallback?: (x: number, z: number) => void;
 
   constructor(options: BrushInteractionHandlerOptions) {
     this.camera = options.camera;
@@ -58,8 +64,24 @@ export class BrushInteractionHandler {
   }
 
   public initialize(scene: THREE.Scene): void {
+    // Prevent duplicate initialization (can happen in React StrictMode)
+    if (this.isInitialized) {
+      console.warn('BrushInteractionHandler: Already initialized, skipping duplicate initialization');
+      return;
+    }
+
+    // Clean up any existing global handler before setting up this one
+    // This prevents duplicate event handlers when React StrictMode creates multiple instances
+    if (globalActiveHandler && globalActiveHandler !== this) {
+      console.log('[BrushInteractionHandler] Cleaning up previous global handler to prevent duplicates');
+      globalActiveHandler.dispose();
+    }
+
     this.createBrushCursor(scene);
     this.setupEventHandlers();
+    this.isInitialized = true;
+    globalActiveHandler = this;
+    console.log('[BrushInteractionHandler] Initialized and set as global handler');
   }
 
   public setBrushSystem(brushSystem: BrushSystem): void {
@@ -72,6 +94,10 @@ export class BrushInteractionHandler {
 
   public setTerrainMeshCallback(callback: () => THREE.Mesh | undefined): void {
     this.getTerrainMesh = callback;
+  }
+
+  public setDebugReadCallback(callback: (x: number, z: number) => void): void {
+    this.debugReadCallback = callback;
   }
 
   public syncBrushFromUI(): void {
@@ -398,6 +424,25 @@ export class BrushInteractionHandler {
     };
 
     const handleMouseDown = (event: MouseEvent) => {
+      // Debug mode: Ctrl+Click (or Cmd+Click) to log terrain values
+      if (event.ctrlKey && event.button === 0 && lastWorldPos) {
+        event.preventDefault();
+        event.stopPropagation();
+
+        // Debounce - ignore if clicked within 100ms
+        const now = Date.now();
+        if (now - this.lastDebugClickTime < 100) {
+          return;
+        }
+        this.lastDebugClickTime = now;
+
+        console.log('Debug mode: Reading terrain data at click position...');
+        if (this.debugReadCallback) {
+          this.debugReadCallback(lastWorldPos.x, lastWorldPos.z);
+        }
+        return;
+      }
+
       if (event.altKey && event.button === 0) {
         this.brushActive = true;
         this.temporaryModeInvert = event.metaKey;
@@ -756,6 +801,14 @@ export class BrushInteractionHandler {
   }
 
   public dispose(): void {
+    // Only clean up if initialized
+    if (!this.isInitialized) {
+      console.log('[BrushInteractionHandler] Not initialized, skipping disposal');
+      return;
+    }
+
+    console.log('[BrushInteractionHandler] Disposing and removing event listeners...');
+
     if (this.eventHandlers) {
       const { handleKeyDown, handleKeyUp, handleMouseMove, handleMouseDown, handleMouseUp, handleMouseLeave } = this.eventHandlers;
       window.removeEventListener('keydown', handleKeyDown);
@@ -766,7 +819,25 @@ export class BrushInteractionHandler {
       if (handleMouseLeave) {
         this.canvas.removeEventListener('mouseleave', handleMouseLeave);
       }
+      // Clear the handlers object
+      this.eventHandlers = {};
+      console.log('[BrushInteractionHandler] Event listeners removed');
     }
+
+    // Cancel any pending animation frames
+    if (this.animationFrameId !== null) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
+
+    // Clear global handler reference if it's this instance
+    if (globalActiveHandler === this) {
+      globalActiveHandler = null;
+      console.log('[BrushInteractionHandler] Cleared global handler reference');
+    }
+
+    // Reset initialization flag
+    this.isInitialized = false;
 
     if (this.brushCursorSphere) {
       this.brushCursorSphere.geometry.dispose();

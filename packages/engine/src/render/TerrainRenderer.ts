@@ -49,6 +49,7 @@ export class TerrainRenderer extends BaseRenderer {
 
   // State
   private showContours = false; // Start with contours off
+  private heightTextureInitialized = false;
 
   constructor(options: TerrainRendererOptions) {
     const { canvas, gridSize = 256, terrainSize = 100 } = options;
@@ -122,6 +123,7 @@ export class TerrainRenderer extends BaseRenderer {
     // Setup callbacks
     this.brushInteractionHandler.setHeightCallback((x, z) => this.heightSampler.getHeightAtWorldPos(x, z));
     this.brushInteractionHandler.setTerrainMeshCallback(() => this.meshFactory.terrainMesh);
+    this.brushInteractionHandler.setDebugReadCallback((x, z) => this.debugReadTextureAt(x, z));
   }
 
   protected override async onRendererReady(): Promise<void> {
@@ -134,7 +136,7 @@ export class TerrainRenderer extends BaseRenderer {
       return;
     }
 
-    console.log('Device maxStorageTexturesPerShaderStage:', device.limits?.maxStorageTexturesPerShaderStage);
+    // console.log('Device maxStorageTexturesPerShaderStage:', device.limits?.maxStorageTexturesPerShaderStage);
 
     // Initialize brush system with WebGPU device
     this.brushSystem = new BrushSystem(device, {
@@ -188,19 +190,19 @@ export class TerrainRenderer extends BaseRenderer {
     this.setupEnvironmentMap();
 
     // Log verification that environment is set
-    setTimeout(() => {
-      console.log('ENVIRONMENT MAP VERIFICATION:', {
-        hasEnvironment: !!this.scene.environment,
-        environmentType: this.scene.environment?.constructor.name,
-        isTexture: this.scene.environment?.isTexture,
-        hasImage: !!(this.scene.environment as any)?.image,
-        mapping: (this.scene.environment as any)?.mapping,
-        oceanMeshExists: !!this.meshFactory.oceanMesh,
-        oceanMaterial: this.meshFactory.oceanMesh?.material?.constructor.name,
-        waterMeshExists: !!this.meshFactory.waterMesh,
-        waterMaterial: this.meshFactory.waterMesh?.material?.constructor.name
-      });
-    }, 100);
+    // setTimeout(() => {
+    //   console.log('ENVIRONMENT MAP VERIFICATION:', {
+    //     hasEnvironment: !!this.scene.environment,
+    //     environmentType: this.scene.environment?.constructor.name,
+    //     isTexture: this.scene.environment?.isTexture,
+    //     hasImage: !!(this.scene.environment as any)?.image,
+    //     mapping: (this.scene.environment as any)?.mapping,
+    //     oceanMeshExists: !!this.meshFactory.oceanMesh,
+    //     oceanMaterial: this.meshFactory.oceanMesh?.material?.constructor.name,
+    //     waterMeshExists: !!this.meshFactory.waterMesh,
+    //     waterMaterial: this.meshFactory.waterMesh?.material?.constructor.name
+    //   });
+    // }, 100);
 
     // Update terrain material with fluid textures now that meshFactory exists
     this.updateTerrainMaterialWithFluid();
@@ -281,17 +283,17 @@ export class TerrainRenderer extends BaseRenderer {
       this.scene.backgroundIntensity = 0.3; // Dim background
       this.scene.environmentIntensity = 1.0; // Full intensity for reflections
 
-      console.log('TerrainRenderer: Environment map set up successfully');
-      console.log('Environment texture details:', {
-        isCanvasTexture: texture.isTexture,
-        hasImage: !!texture.image,
-        imageWidth: texture.image?.width,
-        imageHeight: texture.image?.height,
-        mapping: texture.mapping === THREE.EquirectangularReflectionMapping ? 'EquirectangularReflection' : 'Other',
-        colorSpace: texture.colorSpace === THREE.SRGBColorSpace ? 'SRGB' : 'Linear',
-        sceneHasEnvironment: !!this.scene.environment,
-        environmentIntensity: this.scene.environmentIntensity
-      });
+      // console.log('TerrainRenderer: Environment map set up successfully');
+      // console.log('Environment texture details:', {
+      //   isCanvasTexture: texture.isTexture,
+      //   hasImage: !!texture.image,
+      //   imageWidth: texture.image?.width,
+      //   imageHeight: texture.image?.height,
+      //   mapping: texture.mapping === THREE.EquirectangularReflectionMapping ? 'EquirectangularReflection' : 'Other',
+      //   colorSpace: texture.colorSpace === THREE.SRGBColorSpace ? 'SRGB' : 'Linear',
+      //   sceneHasEnvironment: !!this.scene.environment,
+      //   environmentIntensity: this.scene.environmentIntensity
+      // });
     } catch (error) {
       console.warn('TerrainRenderer: Failed to setup environment map, water will reflect default environment', error);
     }
@@ -306,7 +308,7 @@ export class TerrainRenderer extends BaseRenderer {
       await this.terrainGenerator.loadDefaultHeightmap(this.textureManager.heightTexture);
 
       // Initialize brush system with terrain data after loading
-      this.initializeBrushSystemWithTerrain();
+      await this.initializeBrushSystemWithTerrain();
 
       console.log('TerrainRenderer: Default heightmap loaded successfully');
     } catch (error) {
@@ -318,7 +320,7 @@ export class TerrainRenderer extends BaseRenderer {
   /**
    * Initialize brush system fields with current terrain height data
    */
-  private initializeBrushSystemWithTerrain(): void {
+  private async initializeBrushSystemWithTerrain(): Promise<void> {
     if (!this.brushSystem) return;
 
     const device = (this.renderer as any).backend?.device;
@@ -359,12 +361,18 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Write to optimized RGBA fields texture (R=soil, G=rock, B=lava, A=unused)
     const rgbaData = new Float32Array(size * size * 4);
+    let minHeight = Infinity, maxHeight = -Infinity;
     for (let i = 0; i < size * size; i++) {
       rgbaData[i * 4 + 0] = soilData[i];  // R = soil
       rgbaData[i * 4 + 1] = rockData[i];  // G = rock
       rgbaData[i * 4 + 2] = 0;            // B = lava (none initially)
       rgbaData[i * 4 + 3] = 0;            // A = unused
+
+      const totalHeight = soilData[i] + rockData[i];
+      minHeight = Math.min(minHeight, totalHeight);
+      maxHeight = Math.max(maxHeight, totalHeight);
     }
+    console.log(`TerrainRenderer: Initializing height data - min: ${minHeight.toFixed(2)}m, max: ${maxHeight.toFixed(2)}m`);
 
     // Write RGBA fields data
     device.queue.writeTexture(
@@ -373,6 +381,20 @@ export class TerrainRenderer extends BaseRenderer {
       { bytesPerRow: size * 4 * 4, rowsPerImage: size },
       { width: size, height: size }
     );
+
+    // CRITICAL: Also write the combined height directly to the height texture
+    // This ensures it's available immediately without waiting for compute shader
+    const combinedHeightData = new Float32Array(size * size);
+    for (let i = 0; i < size * size; i++) {
+      combinedHeightData[i] = soilData[i] + rockData[i]; // Combine soil + rock
+    }
+    device.queue.writeTexture(
+      { texture: fields.height },
+      combinedHeightData,
+      { bytesPerRow: size * 4, rowsPerImage: size },
+      { width: size, height: size }
+    );
+    console.log('TerrainRenderer: Wrote height data directly to height texture');
 
     // Also write to legacy individual textures for compatibility
     if (fields.rock) {
@@ -393,10 +415,18 @@ export class TerrainRenderer extends BaseRenderer {
       );
     }
 
-    // Trigger a brush system execute to update the canonical height texture
-    const commandEncoder = device.createCommandEncoder();
-    this.brushSystem.execute(commandEncoder); // This will trigger height combine
-    device.queue.submit([commandEncoder.finish()]);
+    // Height texture is now populated directly via writeTexture above
+    // No need to wait for compute shader on initialization
+    this.heightTextureInitialized = true;
+    console.log('TerrainRenderer: Height texture initialized directly');
+
+    // Run one fluid system update to calculate initial flow field
+    if (this.fluidSystem) {
+      const encoder = device.createCommandEncoder();
+      this.fluidSystem.update(encoder, 0.016, 0);
+      device.queue.submit([encoder.finish()]);
+      console.log('TerrainRenderer: Initial flow field calculated');
+    }
   }
 
   // Public API methods
@@ -433,10 +463,10 @@ export class TerrainRenderer extends BaseRenderer {
   /**
    * Update heightmap data
    */
-  public updateHeightmap(data: Float32Array): void {
+  public async updateHeightmap(data: Float32Array): Promise<void> {
     this.textureManager.updateHeightmap(data);
     if (this.brushSystem) {
-      this.initializeBrushSystemWithTerrain();
+      await this.initializeBrushSystemWithTerrain();
     }
   }
 
@@ -794,12 +824,16 @@ export class TerrainRenderer extends BaseRenderer {
     this.sourceEmitterManager.update(0.016); // ~60fps
 
     // Execute brush system if available
+    // Always run at least once to ensure height texture is populated
     if (this.brushSystem && this.renderer) {
       const device = (this.renderer as any).backend?.device;
       if (device) {
-        const commandEncoder = device.createCommandEncoder();
-        this.brushSystem.execute(commandEncoder);
-        device.queue.submit([commandEncoder.finish()]);
+        // Force execute on first frame even if physics not running
+        if (!this.heightTextureInitialized || true) { // Always execute for now
+          const commandEncoder = device.createCommandEncoder();
+          this.brushSystem.execute(commandEncoder);
+          device.queue.submit([commandEncoder.finish()]);
+        }
       }
     }
 
@@ -810,6 +844,85 @@ export class TerrainRenderer extends BaseRenderer {
 
     // Render the scene
     super.render();
+  }
+
+  /**
+   * Debug: Read GPU texture values at a specific world coordinate
+   */
+  public async debugReadTextureAt(x: number, z: number): Promise<void> {
+    const device = (this.renderer as any).backend?.device;
+    if (!device || !this.fluidSystem || !this.brushSystem) {
+      console.error('Debug: Device or systems not available');
+      return;
+    }
+
+    const fields = this.brushSystem.getFields();
+    const gridSize = this.gridSize;
+
+    // Convert world coordinates to grid coordinates
+    const gridX = Math.floor((x / this.terrainSize + 0.5) * gridSize);
+    const gridZ = Math.floor((z / this.terrainSize + 0.5) * gridSize);
+
+    console.log(`\n=== DEBUG TEXTURE VALUES AT WORLD (${x.toFixed(2)}, ${z.toFixed(2)}) ===`);
+    console.log(`Grid coordinates: (${gridX}, ${gridZ}) of ${gridSize}x${gridSize}`);
+
+    // Read height texture
+    const readHeight = async () => {
+      const buffer = device.createBuffer({
+        size: 256, // Enough for one pixel
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+
+      const encoder = device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture: fields.height, origin: { x: gridX, y: gridZ, z: 0 } },
+        { buffer, bytesPerRow: 256, rowsPerImage: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      device.queue.submit([encoder.finish()]);
+
+      await buffer.mapAsync(GPUMapMode.READ);
+      const data = new Float32Array(buffer.getMappedRange());
+      const value = data[0];
+      buffer.unmap();
+      buffer.destroy();
+      return value;
+    };
+
+    // Read flow texture
+    const readFlow = async () => {
+      const buffer = device.createBuffer({
+        size: 256,
+        usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ
+      });
+
+      const flowTex = this.fluidSystem!.getFlowTexture();
+      const encoder = device.createCommandEncoder();
+      encoder.copyTextureToBuffer(
+        { texture: flowTex, origin: { x: gridX, y: gridZ, z: 0 } },
+        { buffer, bytesPerRow: 256, rowsPerImage: 1 },
+        { width: 1, height: 1, depthOrArrayLayers: 1 }
+      );
+      device.queue.submit([encoder.finish()]);
+
+      await buffer.mapAsync(GPUMapMode.READ);
+      const data = new Float32Array(buffer.getMappedRange());
+      const flow = { x: data[0], y: data[1] };
+      buffer.unmap();
+      buffer.destroy();
+      return flow;
+    };
+
+    try {
+      const [height, flow] = await Promise.all([readHeight(), readFlow()]);
+
+      console.log(`Height: ${height.toFixed(3)}m`);
+      console.log(`Flow velocity: (${flow.x.toFixed(3)}, ${flow.y.toFixed(3)})`);
+      console.log(`Flow magnitude: ${Math.sqrt(flow.x * flow.x + flow.y * flow.y).toFixed(3)}`);
+      console.log('=== END DEBUG ===\n');
+    } catch (error) {
+      console.error('Debug read failed:', error);
+    }
   }
 
   /**

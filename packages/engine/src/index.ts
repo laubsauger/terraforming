@@ -396,6 +396,7 @@ class StubEngine implements Engine {
   }
 
   dispose(): void {
+    console.log('[Engine] Disposing engine...');
     this.disposed = true;
     this.renderingActive = false;
 
@@ -405,22 +406,26 @@ class StubEngine implements Engine {
     }
 
     if (this.renderer) {
+      console.log('[Engine] Disposing renderer...');
       this.renderer.dispose();
       this.renderer = undefined;
     }
 
     if (this.brushSystem) {
+      console.log('[Engine] Destroying brush system...');
       this.brushSystem.destroy();
       this.brushSystem = undefined;
     }
 
     if (this.gpuDevice) {
+      console.log('[Engine] Destroying GPU device...');
       this.gpuDevice.destroy();
       this.gpuDevice = undefined;
     }
 
     this.sampleListeners.clear();
     this.brushQueue.length = 0;
+    console.log('[Engine] Engine disposed successfully');
   }
 
   private startLoop() {

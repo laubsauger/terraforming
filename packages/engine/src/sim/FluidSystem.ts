@@ -90,7 +90,12 @@ export class FluidSystem {
     const w = this.resolution;
     const h = this.resolution;
 
-    // Start with the provided fields (should have soil, rock, lava from BrushSystem)
+    // Debug: verify height texture exists
+    if (!inputFields.height) {
+      console.error('FluidSystem: CRITICAL ERROR - No height texture in input fields! Flow will not work.');
+    }
+
+    // Start with the provided fields (should have soil, rock, lava, height from BrushSystem)
     this.fields = { ...inputFields } as Fields;
 
     // Create fluid-specific textures if they don't exist
@@ -206,86 +211,83 @@ export class FluidSystem {
 
   private initPipelines(): void {
     try {
-      // Create shader modules with individual error handling
-      console.log('FluidSystem: Creating shader modules...');
-
       const flowVelocityShader = this.device.createShaderModule({
         label: 'Flow Velocity Shader',
         code: flowVelocityShaderSrc,
       });
-      console.log('FluidSystem: Flow Velocity shader created successfully');
+      // console.log('FluidSystem: Flow Velocity shader created successfully');
 
       const flowAccumulationShader = this.device.createShaderModule({
         label: 'Flow Accumulation Shader',
         code: flowAccumulationShaderSrc,
       });
-      console.log('FluidSystem: Flow Accumulation shader created successfully');
+      // console.log('FluidSystem: Flow Accumulation shader created successfully');
 
       const sourceEmissionShader = this.device.createShaderModule({
         label: 'Source Emission Shader',
         code: sourceEmissionShaderSrc,
       });
-      console.log('FluidSystem: Source Emission shader created successfully');
+      // console.log('FluidSystem: Source Emission shader created successfully');
 
       const waterAdvectionShader = this.device.createShaderModule({
         label: 'Water Advection Shader',
         code: waterAdvectionShaderSrc,
       });
-      console.log('FluidSystem: Water Advection shader created successfully');
+      // console.log('FluidSystem: Water Advection shader created successfully');
 
       const poolDetectionShader = this.device.createShaderModule({
         label: 'Pool Detection Shader',
         code: poolDetectionShaderSrc,
       });
-      console.log('FluidSystem: Pool Detection shader created successfully');
+      // console.log('FluidSystem: Pool Detection shader created successfully');
 
       const hydraulicErosionShader = this.device.createShaderModule({
         label: 'Hydraulic Erosion Shader',
         code: hydraulicErosionShaderSrc,
       });
-      console.log('FluidSystem: Hydraulic Erosion shader created successfully');
+      // console.log('FluidSystem: Hydraulic Erosion shader created successfully');
 
       // Create pipelines with individual error handling
-      console.log('FluidSystem: Creating compute pipelines...');
+      // console.log('FluidSystem: Creating compute pipelines...');
 
       try {
         this.createFlowVelocityPipeline(flowVelocityShader);
-        console.log('FluidSystem: Flow Velocity pipeline created successfully');
+        // console.log('FluidSystem: Flow Velocity pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Flow Velocity pipeline:', e);
       }
 
       try {
         this.createFlowAccumulationPipeline(flowAccumulationShader);
-        console.log('FluidSystem: Flow Accumulation pipeline created successfully');
+        // console.log('FluidSystem: Flow Accumulation pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Flow Accumulation pipeline:', e);
       }
 
       try {
         this.createSourceEmissionPipeline(sourceEmissionShader);
-        console.log('FluidSystem: Source Emission pipeline created successfully');
+        // console.log('FluidSystem: Source Emission pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Source Emission pipeline:', e);
       }
 
       try {
         this.createWaterAdvectionPipeline(waterAdvectionShader);
-        console.log('FluidSystem: Water Advection pipeline created successfully');
+        // console.log('FluidSystem: Water Advection pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Water Advection pipeline:', e);
       }
 
       try {
         this.createPoolDetectionPipeline(poolDetectionShader);
-        console.log('FluidSystem: Pool Detection pipeline created successfully');
+        // console.log('FluidSystem: Pool Detection pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Pool Detection pipeline:', e);
       }
 
       try {
         this.createHydraulicErosionPipeline(hydraulicErosionShader);
-        console.log('FluidSystem: Hydraulic Erosion pipeline created successfully');
+        // console.log('FluidSystem: Hydraulic Erosion pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Hydraulic Erosion pipeline:', e);
       }
@@ -297,7 +299,7 @@ export class FluidSystem {
           code: combineHeightShaderSrc,
         });
         this.createCombineHeightPipeline(combineHeightShader);
-        console.log('FluidSystem: Combine Height pipeline created successfully');
+        // console.log('FluidSystem: Combine Height pipeline created successfully');
       } catch (e) {
         console.error('FluidSystem: Failed to create Combine Height pipeline:', e);
       }
@@ -640,15 +642,6 @@ export class FluidSystem {
   }
 
   public update(encoder: GPUCommandEncoder, deltaTime: number, time: number): void {
-    // Debug logging to verify simulation is running
-    if (Math.floor(time) % 2 === 0 && Math.floor(time * 10) % 10 === 0) { // Log every 2 seconds
-      console.log('FluidSystem: Running simulation update', {
-        deltaTime,
-        time,
-        waterSources: this.waterSources.size,
-        lavaSources: this.lavaSources.size
-      });
-    }
     // Update parameters
     this.updateParams(deltaTime, time);
 
@@ -683,16 +676,21 @@ export class FluidSystem {
 
     // 2. Calculate flow velocity from height gradient
     if (this.flowVelocityPipeline && this.flowVelocityBindGroup) {
-      console.log('FluidSystem: Running flow velocity compute pass');
       const pass = encoder.beginComputePass({ label: 'Flow Velocity' });
       pass.setPipeline(this.flowVelocityPipeline);
       pass.setBindGroup(0, this.flowVelocityBindGroup);
-      pass.dispatchWorkgroups(
-        Math.ceil(this.resolution / 8),
-        Math.ceil(this.resolution / 8)
-      );
+      const workgroups = Math.ceil(this.resolution / 8);
+      pass.dispatchWorkgroups(workgroups, workgroups);
       pass.end();
+
+      // Toggle ping pong AFTER writing
+      const wasState = this.pingPongState.flow;
       this.pingPongState.flow = !this.pingPongState.flow;
+
+      // Debug log occasionally
+      if (Math.floor(time * 10) % 100 === 0) {
+        console.log(`FlowVelocity: Dispatched ${workgroups}x${workgroups} workgroups, pingpong: ${wasState} -> ${this.pingPongState.flow}`);
+      }
     } else {
       console.warn('FluidSystem: Flow velocity pipeline or bind group missing!', {
         hasPipeline: !!this.flowVelocityPipeline,

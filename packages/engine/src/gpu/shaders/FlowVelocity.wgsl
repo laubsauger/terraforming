@@ -176,7 +176,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // No roughness damping - let water flow freely
   // No inertia - water instantly responds to terrain
 
-  // Store the calculated flow velocity
+  // Store the actual velocity for proper flow visualization
   textureStore(flowTexOut, coord, vec4<f32>(velocity, 0.0, 0.0));
 }
 
