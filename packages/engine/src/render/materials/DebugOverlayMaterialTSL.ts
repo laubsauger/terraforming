@@ -48,27 +48,32 @@ export function createDebugOverlayMaterialTSL(options: DebugOverlayMaterialOptio
     // Show flow magnitude as color gradient (blue=flat, yellow=moderate, red=steep)
     // Flow velocity is in units/second, typical values 0-500
     const flowVec = vec2(overlayData.r, overlayData.g);
-    const flowMag = length(flowVec).div(100); // Normalize to 0-5 range
+    const flowSpeed = length(flowVec);
+    // Normalize to 0-1 range (MAX_FLOW_SPEED = 500)
+    const flowMag = clamp(flowSpeed.div(200), float(0), float(1)); // Divide by 200 for better visibility
 
-    // Create gradient: blue (flat) -> green -> yellow -> red (steep)
-    const lowColor = vec3(0, 0, 1);     // Blue for flat/slow
-    const midColor = vec3(0, 1, 0);     // Green for moderate
-    const highColor = vec3(1, 1, 0);    // Yellow for fast
-    const maxColor = vec3(1, 0, 0);     // Red for very fast
+    // Create gradient: blue (flat) -> cyan -> green -> yellow -> red (steep)
+    const veryLowColor = vec3(0, 0, 0.5);   // Dark blue for very flat
+    const lowColor = vec3(0, 0.5, 1);       // Cyan for slight slopes
+    const midColor = vec3(0, 1, 0);         // Green for moderate
+    const highColor = vec3(1, 1, 0);        // Yellow for steep
+    const maxColor = vec3(1, 0, 0);         // Red for very steep
 
-    // Interpolate between colors based on flow magnitude
-    const t1 = clamp(flowMag.mul(3), float(0), float(1));        // 0-0.33 -> 0-1
-    const t2 = clamp(flowMag.sub(0.33).mul(3), float(0), float(1)); // 0.33-0.66 -> 0-1
-    const t3 = clamp(flowMag.sub(0.66).mul(3), float(0), float(1)); // 0.66-1 -> 0-1
+    // More granular interpolation for better visualization
+    const t1 = clamp(flowMag.mul(4), float(0), float(1));           // 0-0.25 -> 0-1
+    const t2 = clamp(flowMag.sub(0.25).mul(4), float(0), float(1)); // 0.25-0.5 -> 0-1
+    const t3 = clamp(flowMag.sub(0.5).mul(4), float(0), float(1));  // 0.5-0.75 -> 0-1
+    const t4 = clamp(flowMag.sub(0.75).mul(4), float(0), float(1)); // 0.75-1 -> 0-1
 
-    const color = lowColor.mul(float(1).sub(t1))
-      .add(midColor.mul(t1).mul(float(1).sub(t2)))
-      .add(highColor.mul(t2).mul(float(1).sub(t3)))
-      .add(maxColor.mul(t3));
+    const color = veryLowColor.mul(float(1).sub(t1))
+      .add(lowColor.mul(t1).mul(float(1).sub(t2)))
+      .add(midColor.mul(t2).mul(float(1).sub(t3)))
+      .add(highColor.mul(t3).mul(float(1).sub(t4)))
+      .add(maxColor.mul(t4));
 
-    // Show color with opacity based on magnitude (always show some color even for flat areas)
-    const minOpacity = float(0.3); // Always show at least 30% opacity
-    const visOpacity = minOpacity.add(clamp(flowMag, float(0), float(1)).mul(float(1).sub(minOpacity)));
+    // Higher base opacity for better visibility
+    const minOpacity = float(0.5); // Always show at least 50% opacity
+    const visOpacity = minOpacity.add(flowMag.mul(float(1).sub(minOpacity)));
     material.colorNode = vec4(color, visOpacity.mul(opacity));
   } else {
     // Default: grayscale

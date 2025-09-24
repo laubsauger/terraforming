@@ -22,6 +22,7 @@ const ADVECTION_SCALE = 2.0;     // Moderate for stable flow
 const MIN_WATER_DEPTH = 0.00001; // Very low threshold
 const VISCOSITY = 0.0;            // No viscosity - free flow
 const MAX_FLOW_SPEED = 500.0;    // Need this constant here too
+const FLOW_TRANSFER_RATE = 0.9;  // Transfer 90% of water per frame at max flow - water shouldn't stick on steep slopes!
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -54,25 +55,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
       if (dx == 0 && dy == 0) {
         // This is our own cell - keep water that doesn't flow away
-        if (flow_speed < 0.01) {
-          // No flow - keep all water
-          new_depth += source_water;
+        if (flow_speed < 1.0) {
+          // Very low flow - keep most water
+          new_depth += source_water * 0.95;
         } else {
-          // Has flow - most water flows away on slopes
-          let keep_fraction = max(0.0, 1.0 - flow_speed / 100.0);
+          // Has flow - water flows away based on flow speed
+          // Normalized flow speed (0 to 1)
+          let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
+
+          // On steep slopes (high flow speed), almost no water should remain!
+          // Use exponential falloff for more realistic behavior
+          let keep_fraction = pow(1.0 - normalized_speed, 2.0) * 0.5;
           new_depth += source_water * keep_fraction;
         }
       } else {
         // This is a neighbor - check if its flow brings water here
-        if (flow_speed > 0.01) {
+        if (flow_speed > 0.1 && source_water > MIN_WATER_DEPTH) {
           // Does the flow point toward us?
           let to_us = vec2<f32>(-f32(dx), -f32(dy));
-          let flow_dir = source_flow / flow_speed;
-          let alignment = dot(flow_dir, normalize(to_us));
+          let flow_dir = normalize(source_flow);
+          let alignment = max(0.0, dot(flow_dir, normalize(to_us)));
 
-          // Transfer water if flow points our way (even partially)
-          if (alignment > 0.0) {
-            let transfer = source_water * min(alignment * flow_speed / 100.0, 0.9);
+          // Only transfer if reasonably aligned
+          if (alignment > 0.3) {
+            // Normalized flow speed (0 to 1)
+            let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
+
+            // Transfer a significant portion when well-aligned and fast-flowing
+            // On steep slopes, most water should transfer in the flow direction
+            let base_transfer = normalized_speed * FLOW_TRANSFER_RATE;
+            let transfer = source_water * alignment * base_transfer;
             new_depth += transfer;
           }
         }

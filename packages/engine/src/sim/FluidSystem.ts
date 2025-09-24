@@ -47,8 +47,10 @@ export class FluidSystem {
 
   // Bind groups for each pipeline
   private flowVelocityBindGroup: GPUBindGroup | null = null;
+  private flowVelocityBindGroupLayout: GPUBindGroupLayout | null = null;
   private flowAccumulationBindGroup: GPUBindGroup | null = null;
   private waterAdvectionBindGroup: GPUBindGroup | null = null;
+  private waterAdvectionBindGroupLayout: GPUBindGroupLayout | null = null;
   private poolDetectionBindGroup: GPUBindGroup | null = null;
   private hydraulicErosionBindGroup: GPUBindGroup | null = null;
   private sourceEmissionBindGroup: GPUBindGroup | null = null;
@@ -326,18 +328,10 @@ export class FluidSystem {
       compute: { module: shaderModule, entryPoint: 'main' },
     });
 
-    // Create bind group
-    this.flowVelocityBindGroup = this.device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.paramsBuffer } },
-        { binding: 1, resource: this.fields.height.createView() }, // Use canonical height texture
-        { binding: 2, resource: this.fields.flow.createView() },
-        { binding: 3, resource: this.fields.flowOut.createView() },
-        { binding: 4, resource: this.fields.rock.createView() }, // Use rock as roughness for now
-        { binding: 5, resource: this.fields.waterDepth.createView() }, // Water depth
-      ]
-    });
+    // Store bind group layout for dynamic bind group creation
+    this.flowVelocityBindGroupLayout = bindGroupLayout;
+    // Don't create bind group here - will be created dynamically with correct ping-pong textures
+    this.flowVelocityBindGroup = null;
   }
 
   private createFlowAccumulationPipeline(shaderModule: GPUShaderModule): void {
@@ -383,17 +377,10 @@ export class FluidSystem {
       compute: { module: shaderModule, entryPoint: 'main' },
     });
 
-    // Create bind group
-    this.waterAdvectionBindGroup = this.device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.paramsBuffer } },
-        { binding: 1, resource: this.fields.flow.createView() },
-        { binding: 2, resource: this.fields.waterDepth.createView() },
-        { binding: 3, resource: this.fields.waterDepthOut.createView() },
-        { binding: 4, resource: this.fields.height.createView() }, // Use canonical height
-      ]
-    });
+    // Store bind group layout for dynamic bind group creation
+    this.waterAdvectionBindGroupLayout = bindGroupLayout;
+    // Don't create bind group here - will be created dynamically with correct ping-pong textures
+    this.waterAdvectionBindGroup = null;
   }
 
   private createPoolDetectionPipeline(shaderModule: GPUShaderModule): void {
@@ -675,40 +662,47 @@ export class FluidSystem {
     }
 
     // 2. Calculate flow velocity from height gradient
-    if (this.flowVelocityPipeline && this.flowVelocityBindGroup) {
+    if (this.flowVelocityPipeline && this.flowVelocityBindGroupLayout) {
+      // Determine current ping-pong textures
+      const flowIn = this.pingPongState.flow ? this.fields.flowOut : this.fields.flow;
+      const flowOut = this.pingPongState.flow ? this.fields.flow : this.fields.flowOut;
+      const waterDepthIn = this.pingPongState.water ? this.fields.waterDepthOut : this.fields.waterDepth;
+
+      // Create bind group with correct ping-pong textures
+      const bindGroup = this.device.createBindGroup({
+        layout: this.flowVelocityBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.paramsBuffer } },
+          { binding: 1, resource: this.fields.height.createView() },
+          { binding: 2, resource: flowIn.createView() },
+          { binding: 3, resource: flowOut.createView() },
+          { binding: 4, resource: this.fields.rock.createView() },
+          { binding: 5, resource: waterDepthIn.createView() },
+        ]
+      });
+
       const pass = encoder.beginComputePass({ label: 'Flow Velocity' });
       pass.setPipeline(this.flowVelocityPipeline);
-      pass.setBindGroup(0, this.flowVelocityBindGroup);
+      pass.setBindGroup(0, bindGroup);
       const workgroups = Math.ceil(this.resolution / 8);
       pass.dispatchWorkgroups(workgroups, workgroups);
       pass.end();
 
       // Toggle ping pong AFTER writing
-      const wasState = this.pingPongState.flow;
       this.pingPongState.flow = !this.pingPongState.flow;
 
-      // Debug log occasionally
-      if (Math.floor(time * 10) % 100 === 0) {
-        console.log(`FlowVelocity: Dispatched ${workgroups}x${workgroups} workgroups, pingpong: ${wasState} -> ${this.pingPongState.flow}`);
-      }
-    } else {
-      console.warn('FluidSystem: Flow velocity pipeline or bind group missing!', {
-        hasPipeline: !!this.flowVelocityPipeline,
-        hasBindGroup: !!this.flowVelocityBindGroup
-      });
-
-      // Debug log flow velocity pass
-      if (Math.floor(time) % 5 === 0 && Math.floor(time * 10) % 10 === 0) {
-        console.log('FluidSystem: Flow Velocity pass executed');
-      }
-
       // Copy the updated flow texture to sampled texture for use in other passes
-      const currentFlow = this.pingPongState.flow ? this.fields.flow : this.fields.flowOut;
+      const currentFlow = this.pingPongState.flow ? this.fields.flowOut : this.fields.flow;
       encoder.copyTextureToTexture(
         { texture: currentFlow },
         { texture: this.fields.flowSampled },
         { width: this.resolution, height: this.resolution }
       );
+    } else {
+      console.warn('FluidSystem: Flow velocity pipeline or bind group layout missing!', {
+        hasPipeline: !!this.flowVelocityPipeline,
+        hasBindGroupLayout: !!this.flowVelocityBindGroupLayout
+      });
     }
 
     // 3. Accumulate flow
@@ -724,10 +718,27 @@ export class FluidSystem {
     }
 
     // 4. Advect water along flow field
-    if (this.waterAdvectionPipeline && this.waterAdvectionBindGroup) {
+    if (this.waterAdvectionPipeline && this.waterAdvectionBindGroupLayout) {
+      // Determine current ping-pong textures
+      const flowIn = this.pingPongState.flow ? this.fields.flowOut : this.fields.flow;
+      const waterDepthIn = this.pingPongState.water ? this.fields.waterDepthOut : this.fields.waterDepth;
+      const waterDepthOut = this.pingPongState.water ? this.fields.waterDepth : this.fields.waterDepthOut;
+
+      // Create bind group with correct ping-pong textures
+      const bindGroup = this.device.createBindGroup({
+        layout: this.waterAdvectionBindGroupLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.paramsBuffer } },
+          { binding: 1, resource: flowIn.createView() },
+          { binding: 2, resource: waterDepthIn.createView() },
+          { binding: 3, resource: waterDepthOut.createView() },
+          { binding: 4, resource: this.fields.height.createView() },
+        ]
+      });
+
       const pass = encoder.beginComputePass({ label: 'Water Advection' });
       pass.setPipeline(this.waterAdvectionPipeline);
-      pass.setBindGroup(0, this.waterAdvectionBindGroup);
+      pass.setBindGroup(0, bindGroup);
       pass.dispatchWorkgroups(
         Math.ceil(this.resolution / 8),
         Math.ceil(this.resolution / 8)
