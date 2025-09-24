@@ -1,4 +1,4 @@
-import * as THREE from 'three';
+import * as THREE from 'three/webgpu';
 import {
   texture,
   uv,
@@ -38,7 +38,7 @@ export function createBrushDecalMaterialTSL(options: BrushDecalMaterialOptions =
     brushState = 0
   } = options;
 
-  const material = (THREE as any).MeshStandardNodeMaterial ? new (THREE as any).MeshStandardNodeMaterial() : new THREE.MeshStandardMaterial();
+  const material = new THREE.MeshStandardNodeMaterial();
 
   // Uniforms for dynamic updates
   const brushPosUniform = uniform(vec2(brushPosition.x, brushPosition.y));

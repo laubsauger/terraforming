@@ -50,6 +50,7 @@ export class TerrainRenderer extends BaseRenderer {
   // State
   private showContours = false; // Start with contours off
   private heightTextureInitialized = false;
+  private physicsRunning = true; // Track whether physics simulation is running
 
   constructor(options: TerrainRendererOptions) {
     const { canvas, gridSize = 256, terrainSize = 100 } = options;
