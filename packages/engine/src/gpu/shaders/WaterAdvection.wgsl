@@ -26,7 +26,7 @@ const ADVECTION_SCALE = 1.0;     // Reduced for more controlled flow
 const MIN_WATER_DEPTH = 0.00001; // Very low threshold
 const VISCOSITY = 0.0;            // No viscosity - free flow
 const MAX_FLOW_SPEED = 500.0;    // Maximum flow speed from FlowVelocity shader
-const FLOW_TRANSFER_RATE = 0.15; // Transfer 15% per frame - more conservative to prevent water loss
+const FLOW_TRANSFER_RATE = 0.15; // Transfer 15% per frame - conservative to prevent water loss
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -39,62 +39,71 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // Get current water depth
   let current_depth = textureLoad(waterDepthTexIn, coord).r;
 
-  // SIMPLE APPROACH: Just spread water based on flow field
-  var new_depth = 0.0;
+  // SEMI-LAGRANGIAN ADVECTION: Follow flow backward to find where water came from
+  var new_depth = current_depth;  // Start with current water
 
-  // Look at all 9 cells (including self)
-  for (var dy = -1; dy <= 1; dy++) {
-    for (var dx = -1; dx <= 1; dx++) {
-      let source_coord = clamp(
-        coord + vec2<i32>(dx, dy),
-        vec2<i32>(0),
-        vec2<i32>(dims) - 1
-      );
+  // Get flow at current position
+  let current_flow = textureLoad(flowTex, coord).rg;
+  let flow_speed = length(current_flow);
 
-      let source_water = textureLoad(waterDepthTexIn, source_coord).r;
-      if (source_water < MIN_WATER_DEPTH) { continue; }
-
-      let source_flow = textureLoad(flowTex, source_coord).rg;
-      let flow_speed = length(source_flow);
-
-      if (dx == 0 && dy == 0) {
-        // This is our own cell - keep water that doesn't flow away
-        if (flow_speed < 0.1) {
-          // Almost no flow - keep all water
-          new_depth += source_water;
-        } else {
-          // Has flow - water flows away based on flow speed
-          // Normalized flow speed (0 to 1)
-          let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
-
-          // Keep more water to prevent it from disappearing
-          // On flat: keep ~95%, on steep slopes: keep ~50%
-          let keep_fraction = 0.95 - (normalized_speed * 0.45);
-          new_depth += source_water * keep_fraction;
-        }
-      } else {
-        // This is a neighbor - check if its flow brings water here
-        if (flow_speed > 0.1 && source_water > MIN_WATER_DEPTH) {
-          // Does the flow point toward us?
-          let to_us = vec2<f32>(-f32(dx), -f32(dy));
-          let flow_dir = normalize(source_flow);
-          let alignment = max(0.0, dot(flow_dir, normalize(to_us)));
-
-          // Only transfer if reasonably aligned
-          if (alignment > 0.2) {  // Lower threshold to allow more water transfer
-            // Normalized flow speed (0 to 1)
-            let normalized_speed = clamp(flow_speed / MAX_FLOW_SPEED, 0.0, 1.0);
-
-            // Transfer based on alignment and speed
-            // Maximum transfer is FLOW_TRANSFER_RATE when perfectly aligned and fast
-            let transfer_fraction = alignment * normalized_speed * FLOW_TRANSFER_RATE;
-            let transfer = source_water * transfer_fraction;
-            new_depth += transfer;
-          }
-        }
-      }
-    }
+  // PRESSURE-DRIVEN ENHANCEMENT: Deep water creates additional pressure flow
+  // This prevents huge pileups by forcing water to flow faster when deep
+  var enhanced_flow = current_flow;
+  if (current_depth > 0.01) {
+    // Add pressure-driven flow based on depth
+    // Deeper water = more pressure = faster flow
+    // Moderate boost to prevent water loss
+    let pressure_boost = min(current_depth * 100.0, 3.0); // Up to 3x speed for deep water
+    enhanced_flow = current_flow * (1.0 + pressure_boost);
   }
+
+  // Calculate where water would have come from (backward trace)
+  // Scale dt for stability but allow faster flow
+  let dt = params.deltaTime;
+
+  // Adaptive velocity scaling based on depth and flow
+  // Shallow water flows slower, deep water flows much faster
+  // Conservative scaling to maintain mass
+  let depth_factor = min(current_depth * 10.0, 1.0);
+  let velocity_scale = mix(0.03, 0.15, depth_factor); // Scale from 0.03 to 0.15 based on depth
+
+  let velocity = enhanced_flow * velocity_scale;
+
+  // Find source position (where water came from)
+  let source_pos = vec2<f32>(coord) - velocity * dt;
+
+  // Bilinear interpolation of water depth at source position
+  let x0 = i32(floor(source_pos.x));
+  let x1 = x0 + 1;
+  let y0 = i32(floor(source_pos.y));
+  let y1 = y0 + 1;
+
+  let fx = fract(source_pos.x);
+  let fy = fract(source_pos.y);
+
+  // Clamp coordinates
+  let x0c = clamp(x0, 0, i32(dims.x) - 1);
+  let x1c = clamp(x1, 0, i32(dims.x) - 1);
+  let y0c = clamp(y0, 0, i32(dims.y) - 1);
+  let y1c = clamp(y1, 0, i32(dims.y) - 1);
+
+  // Sample depths at four corners
+  let d00 = textureLoad(waterDepthTexIn, vec2<i32>(x0c, y0c)).r;
+  let d10 = textureLoad(waterDepthTexIn, vec2<i32>(x1c, y0c)).r;
+  let d01 = textureLoad(waterDepthTexIn, vec2<i32>(x0c, y1c)).r;
+  let d11 = textureLoad(waterDepthTexIn, vec2<i32>(x1c, y1c)).r;
+
+  // Bilinear interpolation
+  let d0 = mix(d00, d10, fx);
+  let d1 = mix(d01, d11, fx);
+  let advected_water = mix(d0, d1, fy);
+
+  // Balance between pool stability and flow responsiveness
+  // Conservative to prevent water disappearing
+  let flow_normalized = min(flow_speed / 20.0, 1.0);
+  let advection_strength = mix(0.4, 0.8, flow_normalized); // 40% to 80% advection - prevents loss
+
+  new_depth = mix(current_depth, advected_water, advection_strength);
 
   var advected_depth = new_depth;
 

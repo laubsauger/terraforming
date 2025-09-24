@@ -24,7 +24,7 @@ const FLOW_INERTIA = 0.0;     // No inertia - instant response to terrain
 const MIN_FLOW_SPEED = 10.0;   // Reasonable minimum flow
 const MAX_FLOW_SPEED = 500.0;  // Cap at reasonable speed
 const ROUGHNESS_DAMPING = 1.0; // No damping at all
-const PRESSURE_SCALE = 50.0;   // Water pushes water ahead of it
+const PRESSURE_SCALE = 100.0;  // Moderate pressure gradient for deep water
 
 @compute @workgroup_size(WORKGROUP_SIZE, WORKGROUP_SIZE, 1)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
